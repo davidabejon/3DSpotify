@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Convertir la aplicación antigua de `client/source` en un cliente que se conecte directamente a Spotify, busque una canción y la reproduzca en la propia Nintendo 3DS. La pantalla superior mostrará la carátula de la pista actual. La aplicación no dependerá del servidor proxy ni controlará la reproducción de otro dispositivo.
+Mantener el cliente nativo de `client/source/app` conectado directamente a Spotify para buscar y reproducir canciones en la Nintendo 3DS. La pantalla superior muestra la carátula. La aplicación no depende de un servidor proxy ni controla otro dispositivo.
 
 El plan reutiliza las rutas directas ya probadas en `probe_pair`, `probe_ap`, `probe_meta` y `probe_play`. No propone reimplementar OAuth, el protocolo de acceso, la descarga de audio ni la decodificación si ya existe un módulo que cumple esa función.
 
@@ -22,29 +22,27 @@ Queda fuera de alcance: playlists y navegación por biblioteca, recomendaciones,
 
 ## Estado actual y piezas reutilizables
 
-- `client/source/fetch.c` solicita JSON al proxy por HTTP sin TLS; sus funciones no deben ser la capa de red del cliente nuevo.
-- `client/source/parse.c` extrae valores JSON mediante búsquedas de texto. La lógica nueva debe usar las estructuras de dominio que ya devuelven los módulos Spotify.
-- `client/source/main.c` concentra el teclado, la pantalla inferior, el estado de reproducción remoto, las peticiones al proxy y la descarga de carátulas.
-- `client/source/image_display.c` contiene el dibujo de la imagen en la pantalla superior, pero también inicialización y descarga de red. Se conservará el dibujo y se desacoplará de la red.
+- El punto de entrada y la interfaz del cliente están en `client/source/app/main.c`; portada y lógica pura de transporte están en módulos de esa carpeta.
 - `client/source/platform3ds/pair3ds.c`, `cfg3ds.c`, `ap3ds.c`, `login5.c`, `spclient.c`, `track.c`, `tls3ds.c` y `http3ds.c` contienen los módulos directos que ya usa el flujo de los probes.
 - `sp_search_tracks` busca canciones y devuelve URIs; `sp_track_metadata_batch` obtiene nombres, artistas, duración y URLs de carátula.
 - `track_stream_begin` obtiene metadatos, la ubicación del audio y la clave; requiere una sesión AP activa para solicitar esa clave. `track_stream_download` descarga y descifra el contenido, admite cancelación y reanudación.
 - `probe_play/main.c` demuestra la cadena de reproducción y el uso de NDSP, pero actualmente emplea una pista fija y `track_fetch` con un límite de 1 MiB. No es todavía un reproductor interactivo de canción completa.
 - El probe de audio local demuestra la decodificación Vorbis y la salida NDSP. Es una referencia para el llenado de buffers, no una capa de red.
+- El cliente proxy antiguo, sus cuatro fuentes y cabeceras, el Makefile y el servidor Python se retiraron; los probes siguen siendo targets separados.
 
 ## Fases
 
 ### Fase 0: fijar el target y sanear el build
 
-**Propósito:** poder desarrollar y probar el cliente integrado sin compilar accidentalmente la aplicación del proxy ni depender de fuentes de terceros ausentes.
+**Propósito:** compilar el único cliente nativo desde un checkout limpio sin depender del cliente proxy retirado ni de fuentes de terceros ausentes.
 
 **Trabajo:**
 
 1. Definir un único target de aplicación para el cliente nativo y documentar cómo se construye y se carga en la consola.
-2. Revisar la lista de fuentes en `client/source/build.py`. Excluir `fetch.c` y `parse.c` del nuevo target; mantenerlos temporalmente solo si otro target aún los necesita.
-3. Comprobar la unidad de implementación de `stb_image`: `main.c` antiguo define `STB_IMAGE_IMPLEMENTATION`, mientras el target también declara `deps/stb_image_impl.c`. Dejar una sola definición y eliminar del build la referencia a la fuente inexistente o crearla de forma intencional.
+2. Mantener la lista explícita de fuentes del target nativo y eliminar el antiguo punto de entrada proxy y los módulos que solo usaba.
+3. Mantener una única implementación de `stb_image` en el cliente nativo.
 4. Confirmar que `stb_vorbis.c` se resuelve de manera reproducible con la descarga fijada y verificada añadida al build. No depender de una descarga sin hash ni de una copia local no documentada.
-5. Mantener el compilado de mbedTLS y las opciones TLS alineados con el target nativo, no con el código HTTP antiguo.
+5. Mantener el compilado de mbedTLS y las opciones TLS alineados con el target nativo.
 
 **Entregable:** el target compila desde una copia limpia del repositorio con `--fetch-deps` y, una vez descargadas las dependencias, también sin esa opción.
 
@@ -52,7 +50,7 @@ Queda fuera de alcance: playlists y navegación por biblioteca, recomendaciones,
 
 ### Fase 1: arranque, identidad y sesión directa
 
-**Estado:** implementada en `client/source/native`; verificada compilando el
+**Estado:** implementada en `client/source/app`; verificada compilando el
 target `spotify3ds`. La sesión puede iniciarse con credenciales guardadas o
 mediante emparejamiento, y muestra errores recuperables para volver a intentar.
 
@@ -74,7 +72,7 @@ mediante emparejamiento, y muestra errores recuperables para volver a intentar.
 
 ### Fase 2: búsqueda y selección de canciones
 
-**Estado:** implementada en `client/source/native`; verificada compilando el
+**Estado:** implementada en `client/source/app`; verificada compilando el
 target `spotify3ds` y ejecutando los tests de build. La búsqueda y los
 metadatos se cargan en un worker, y la selección prepara una cola de resultados.
 
@@ -88,7 +86,7 @@ metadatos se cargan en un worker, y la selección prepara una cola de resultados
 4. Para los URIs recibidos, obtener los metadatos con `sp_track_metadata_batch`, evitando una petición independiente por cada fila.
 5. Presentar una lista paginada o desplazable con título, artista y duración; mostrar estado vacío, progreso, reintento y errores de red.
 6. Al confirmar una fila, conservar el resultado completo como pista seleccionada y preparar la cola con los demás resultados en el orden mostrado.
-7. No reutilizar `get()` de `parse.c` para interpretar la respuesta. Mantener los límites de longitud de los campos que ya define `sp_track`.
+7. Interpretar las respuestas con las estructuras de dominio de Spotify y mantener los límites de longitud de los campos que define `sp_track`.
 
 **Entregable:** búsqueda funcional y lista seleccionable sin reproducción.
 
@@ -96,7 +94,7 @@ metadatos se cargan en un worker, y la selección prepara una cola de resultados
 
 ### Fase 3: motor de reproducción local
 
-**Estado:** implementada en `client/source/native`; el target incluye Vorbis
+**Estado:** implementada en `client/source/app`; el target incluye Vorbis
 pushdata y reproducción NDSP con descarga cancelable, watermark y liberación
 ordenada. La compilación local no sustituye la validación de reproducción
 completa en una 3DS real, que sigue pendiente.
@@ -122,7 +120,7 @@ de reproduccion y la cola se describen en la fase 4.
 
 ### Fase 4: controles y cola de reproducción
 
-**Estado:** implementada en `client/source/native`; controles locales de
+**Estado:** implementada en `client/source/app`; controles locales de
 pausa, volumen y navegación por la cola, con comportamiento explícito en los
 extremos. Se ha compilado el target nativo y pasado el conjunto de pruebas de
 build; la validación de botones y audio en hardware real sigue pendiente.
@@ -164,7 +162,7 @@ conexión y de las respuestas de Spotify.
 
 ### Fase 5: carátula en pantalla superior
 
-**Estado:** implementada en `client/source/native`; descarga HTTPS limitada al
+**Estado:** implementada en `client/source/app`; descarga HTTPS limitada al
 host `i.scdn.co`, decodificación stb_image en worker, fondo de reserva y
 renderizado desde el hilo principal. La validación en hardware real sigue
 pendiente.
@@ -176,7 +174,7 @@ pendiente.
 1. Obtener la URL grande de `sp_track.art_large` para la canción seleccionada o en reproducción.
 2. Descargarla mediante `http_get_url` u otra ruta directa existente, con límite de bytes, validación del certificado y rechazo de hosts ajenos al CDN esperado (`i.scdn.co`). No reutilizar el `SSLCOPT_DisableVerify` de la descarga antigua.
 3. Decodificar con stb_image fuera del bucle de dibujo, validando dimensiones, formato y asignación de memoria.
-4. Conservar `drawImageToScreen` y el fondo de reserva de `image_display.c`, separándolos de `initNetwork`, `cleanupNetwork` y `downloadImage` antiguos.
+4. Mantener el dibujo y el fondo de reserva en el módulo de portada nativo, sin inicialización de red separada ni HTTP antiguo.
 5. Actualizar la carátula solo al cambiar de pista; liberar los píxeles anteriores una vez que ya no se dibujen. Si la imagen falta o falla, mostrar un fondo neutro sin interrumpir el audio.
 6. Coordinar el render con el framebuffer desde el hilo principal; los workers de red solo descargan/decodifican y publican un resultado listo.
 
@@ -187,21 +185,22 @@ pendiente.
 ### Fase 6: integración, robustez y documentación
 
 **Estado:** integración del target nativo, cancelación recuperable de
-búsquedas, pruebas focalizadas y documentación en ambos idiomas implementadas.
-La aceptación de reproducción completa, controles y carátula en hardware real
-sigue pendiente; no se considera validada por compilar el target.
+búsquedas, pruebas focalizadas, documentación y retirada del cliente proxy y
+servidor Python implementadas. La aceptación de reproducción completa,
+controles y carátula en hardware real sigue pendiente; no se considera validada
+por compilar el target.
 
 **Propósito:** retirar el comportamiento de mando remoto y validar el alcance completo en consola.
 
 **Trabajo:**
 
 1. Integrar autenticación, búsqueda, cola, audio, controles y carátula en el target de aplicación. Evitar que operaciones de red bloqueantes se ejecuten en el frame loop.
-2. Eliminar del flujo nuevo `server_ip`, `/now-playing`, `/play`, `/pause`, `/next`, `/previous`, `/volume` y las dependencias de `fetch.c` y `parse.c`.
+2. Retirar por completo el cliente proxy antiguo (`client/source/main.c`, `image_display.c`, `parse.c` y `fetch.c`, junto con sus cabeceras, Makefile y scripts de compilación/carga) y el servidor Python de `server/`.
 3. Centralizar cancelación y limpieza para salida, fallo de red, nueva búsqueda, siguiente/anterior y fallo de decodificación.
 4. Revisar eventos de Wi-Fi perdido, respuesta 401/403/429, rechazo de clave, timeout, falta de memoria, canción no compatible y CDN caído. Presentar acciones recuperables.
 5. Añadir pruebas focalizadas para codificación de búsqueda, transiciones de estado, cola y liberación/cancelación de recursos. Mantener las pruebas del build y de protocolos existentes.
 6. Probar en hardware: emparejamiento nuevo y renovación, búsqueda, selección, reproducción completa, pausa/reanudación, anterior/siguiente, volumen, carátula y salida limpia. Confirmar también que la app sigue usable durante esperas de red.
-7. Actualizar `README_es.md` y `README.md`: describir el cliente nativo, el emparejamiento, los controles y el build; mover las instrucciones del proxy a una sección histórica o eliminarlas del flujo principal una vez que el modo antiguo deje de ser compatible.
+7. Actualizar `README_es.md` y `README.md` para documentar el cliente nativo, el emparejamiento, los controles y el build; retirar las instrucciones del proxy ya obsoleto.
 
 **Entregable:** cliente nativo reproducible desde el repositorio y guía de uso/build alineada con el producto.
 

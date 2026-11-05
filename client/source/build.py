@@ -5,7 +5,8 @@ From the repository root:
 
 Python 3.12+ is required. --fetch-deps downloads pinned dependencies when
 missing; subsequent builds can run offline without that option. The native
-application is separate from the legacy proxy client built with client/Makefile.
+application is the only supported client target; the legacy proxy client has
+been removed.
 """
 import argparse
 import hashlib
@@ -27,7 +28,7 @@ STB_VORBIS_SHA256 = "4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e
 # name -> (source directories, extra defines, mbedTLS flavour or None,
 #          extra single sources relative to this script)
 APPS = {
-    "spotify3ds": (["native", "platform3ds"], [], "release",
+    "spotify3ds": (["app", "platform3ds"], [], "release",
                    ["deps/stb_vorbis.c"]),
     "probe_tls": (["probe_tls", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
     "probe_pair": (["probe_pair", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),

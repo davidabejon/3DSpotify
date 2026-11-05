@@ -2,9 +2,8 @@ Nota: Esta documentación también está disponible en español: `README_es.md`
 
 # Spotify 3DS
 
-Unofficial Spotify client for the Nintendo 3DS. The native client connects
-directly to Spotify over HTTPS; the older proxy mode is retained as historical
-reference.
+Unofficial Spotify client for the Nintendo 3DS. The app connects directly to
+Spotify over HTTPS.
 
 <div style="display: flex; gap: 10px">
   <img src="https://i.imgur.com/BiwIS82.png" alt="Top playing" width="350">
@@ -13,8 +12,8 @@ reference.
 
 ## Overview
 This repository contains:
-- The native 3DS client in [client/source/native](client/source/native), which pairs the account on-console, searches for tracks, and plays audio locally with album artwork.
-- The legacy FastAPI proxy and proxy-mode client, retained for reference: [server/server.py](server/server.py) and [client/Makefile](client/Makefile).
+- The native 3DS client in [client/source/app](client/source/app), which pairs the account on-console, searches for tracks, and plays audio locally with album artwork.
+- Independent protocol probes and build/test tooling in `client/source` and `client/tests`.
 
 ## Requirements
 - A Nintendo 3DS with Homebrew Launcher and Wi-Fi access.
@@ -30,8 +29,8 @@ Python 3.12 or newer. From the repository root:
 python client\source\build.py --fetch-deps
 ```
 
-The default target is `spotify3ds`, separate from the legacy proxy application
-built with `client\Makefile`. The pinned downloads verify mbedTLS 3.6.7 and
+The default and only full-client target is `spotify3ds`. The pinned downloads
+verify mbedTLS 3.6.7 and
 `stb_vorbis`; the Vorbis header is generated from that same verified source.
 Once dependencies have been downloaded, builds can omit `--fetch-deps`.
 
@@ -70,8 +69,8 @@ pauses/resumes, left/right changes track, up/down adjusts local volume, B
 returns to results, and START stops and exits. The queue follows search-result
 order and does not wrap at either end. No remote-control proxy is involved.
 Complete playback, artwork, and controls still need validation on real
-hardware. The probes remain available as separate targets. The native target
-does not compile `fetch.c` or `parse.c` from the legacy flow.
+hardware. The probes remain available as separate targets. The old proxy
+client and its server source have been removed.
 
 ## Building the native TLS probe
 
@@ -110,85 +109,7 @@ Tracing adds overhead and is opt-in through `tls_set_trace()`; other apps do not
 enable it by default. Copy the full log after a run, before launching the probe
 again: each run replaces it. Verbose events stay off the console screen.
 
-## Legacy proxy client (historical)
-
-The following instructions describe the older proxy-based client. They are
-not required to build or use `spotify3ds`; its server, configuration, and
-credentials are separate from the native client.
-
-### Deploy the proxy server
-You can deploy the server with Docker (recommended) or run it directly with Python.
-
-### 1.a) Proxy server with Docker
-1. Download the release `spotify3ds-proxy.tar` from the project's Releases.
-2. Load the Docker image:
-   ```sh
-   docker load -i spotify3ds-proxy.tar
-   ```
-3. Run the container:
-   ```sh
-   docker run -d --name spotify3ds-proxy -p 8000:8000 spotify3ds-proxy
-   ```
-4. Check container status:
-   ```sh
-   docker ps
-   ```
-5. Enter the container to edit configuration:
-   ```sh
-   docker exec -it spotify3ds-proxy bash
-   apt update && apt install nano -y
-   nano spotify_config.json
-   ```
-   Fill `client_id` and `client_secret` (from the Spotify dashboard) and save.
-6. On the first run the server will try to open the authorization URL from the container host; if it doesn't open you will see the URL in the container or host console. Open it in a browser and authorize. After authorization the server will store the `code`/`refresh_token` in `spotify_config.json`.
-
-### 1.b) Proxy server directly with Python
-
-1. Clone the repo and enter the server folder:
-   ```sh
-   git clone https://github.com/davidabejon/spotify-3ds.git
-   cd spotify-3ds/server
-   ```
-
-2. Create and activate a virtual environment (Windows):
-   ```ps
-   python -m venv .venv
-   .venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```ps
-   pip install -r requirements.txt
-   ```
-   (If there is no requirements.txt, install FastAPI and Uvicorn: `pip install fastapi uvicorn requests`.)
-
-4. Edit `spotify_config.json` and add `client_id` and `client_secret` from the Spotify Dashboard. Optionally adjust `redirect_uri`.
-
-5. Run the server with Uvicorn (from the `server` folder):
-   ```ps
-   uvicorn server:app --host 0.0.0.0 --port 8000 --reload --reload-include spotify_config.json
-   ```
-   - If the main module name differs adjust `module:app` accordingly.
-   - On first run the server will show or open the authorization URL; complete the flow in the browser so the `refresh_token` is saved to `spotify_config.json`.
-
-### Legacy proxy-mode application
-- Easiest: download `Spotify3DS.cia` from [Releases](https://github.com/davidabejon/spotify-3ds/releases), copy to the SD card and install with FBI or another CIA installer
-- Alternatively download `spotify-3ds.zip` package from [Releases](https://github.com/davidabejon/spotify-3ds/releases): extract into `/3ds` on the SD card and run via the Homebrew Launcher.
-
-On first run the app will prompt you to enter the proxy server's IP address; after submitting it will attempt to connect automatically.
-
-To change the IP later, press Y to reopen the on-screen keyboard and enter a new address.
-
-#### Controls
- - A — Play / Pause
- - Y — Open IP entry (on-screen keyboard)
- - D-Pad Right — Next track
- - D-Pad Left — Previous track
- - D-Pad Up — Volume up
- - D-Pad Down — Volume down
- - START — Exit the app
-
 ## License and credits
 - License: Apache License 2.0 — see the `LICENSE` file at the repository root.
 - Original author: David Abejón.
-- Included libraries: stbi (stb_image) at `client/include/stb_image.h` and other dependencies listed in Docker/requirements.
+- Included libraries: stbi (stb_image) at `client/include/stb_image.h` and other dependencies pinned by the native build.

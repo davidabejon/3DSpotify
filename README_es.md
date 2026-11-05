@@ -1,8 +1,7 @@
 # Spotify 3DS
 
-Cliente no oficial de Spotify para Nintendo 3DS. El cliente nativo se conecta
-directamente a Spotify por HTTPS; el antiguo modo con proxy se conserva como
-referencia histórica.
+Cliente no oficial de Spotify para Nintendo 3DS. La aplicación se conecta
+directamente a Spotify por HTTPS.
 
 <div style="display: flex; gap: 10px">
   <img src="https://i.imgur.com/BiwIS82.png" alt="Top playing" width="350">
@@ -11,8 +10,8 @@ referencia histórica.
 
 ## Resumen
 Este repositorio contiene:
-- El cliente nativo para 3DS en [client/source/native](client/source/native), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
-- El proxy FastAPI y el cliente antiguo en modo proxy, conservados como componentes heredados: [server/server.py](server/server.py) y [client/Makefile](client/Makefile).
+- El cliente nativo para 3DS en [client/source/app](client/source/app), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
+- Probes independientes de protocolo y herramientas de build/tests en `client/source` y `client/tests`.
 
 ## Requisitos
 - Una Nintendo 3DS con Homebrew Launcher y conexión Wi-Fi.
@@ -28,11 +27,10 @@ de Python 3.12 o posterior. Desde la raíz del repositorio:
 python client\source\build.py --fetch-deps
 ```
 
-El target predeterminado es `spotify3ds`, separado de la aplicación antigua del
-proxy, que conserva su `client\Makefile`. La descarga fija y verifica mbedTLS
-3.6.7 y `stb_vorbis`; también genera la cabecera de Vorbis desde esa misma
-fuente verificada. Tras descargar las dependencias, se puede compilar sin
-`--fetch-deps`.
+El target predeterminado y único cliente completo es `spotify3ds`. La descarga
+fija y verifica mbedTLS 3.6.7 y `stb_vorbis`; también genera la cabecera de
+Vorbis desde esa misma fuente verificada. Tras descargar las dependencias, se
+puede compilar sin `--fetch-deps`.
 
 Las pruebas de build e integración se ejecutan desde la raíz con:
 
@@ -70,8 +68,8 @@ volumen local, B vuelve a resultados y START detiene y sale. La cola sigue el
 orden de los resultados y no envuelve en sus extremos. No hay control remoto
 ni dependencia del servidor proxy. La reproducción completa, carátulas y
 controles aún deben validarse en una 3DS real. Los probes siguen disponibles
-como targets independientes; el target nativo no compila `fetch.c` ni
-`parse.c` del flujo antiguo.
+como targets independientes. El antiguo cliente proxy y sus fuentes de
+servidor se han eliminado.
 
 ## Compilar el probe TLS nativo
 
@@ -111,84 +109,7 @@ Tras cada intervalo se comprueba el peer, incluso sin eventos de poll.
 `op=tcp_confirmed poll_rc=0` indica que se confirmo el peer sin notificacion
 de disponibilidad; `total_ms` mide el tiempo desde el inicio de la conexion TCP.
 
-## Cliente proxy heredado (histórico)
-
-Esta sección describe el cliente antiguo. No es necesaria para compilar ni
-utilizar `spotify3ds`; sus comandos, configuración y credenciales son
-independientes del cliente nativo.
-
-### Desplegar el servidor proxy
- - Puedes elegir desplegar el servidor con Docker (recomendado) o ejecutarlo directamente desde Python clonando el repositorio.
-### 1.a) Servidor proxy con Docker
-1. Descarga la release `spotify3ds-proxy.tar` desde las Releases del proyecto.
-2. Carga la imagen Docker:
-   ```sh
-   docker load -i spotify3ds-proxy.tar
-   ```
-3. Ejecuta el contenedor:
-   ```sh
-   docker run -d --name spotify3ds-proxy -p 8000:8000 spotify3ds-proxy
-   ```
-4. Obtén el ID/estado del contenedor:
-   ```sh
-   docker ps
-   ```
-5. Entra al contenedor para editar la configuración:
-   ```sh
-   docker exec -it spotify3ds-proxy bash
-   apt update && apt install nano -y
-   nano spotify_config.json
-   ```
-   Rellena `client_id` y `client_secret` (consigue estos valores desde el dashboard de Spotify) y guarda.
-6. Desde el host/terminal del contenedor, la primera vez el servidor intentará abrir la URL de autorización. Si no se abre, la verás en la consola. Ábrela en un navegador. Tras autorizar, el servidor almacenará el `code`/`refresh_token` en `spotify_config.json`.
-
-### 1.b) Servidor proxy directamente en Python
-
-1. Clona el repositorio y entra en la carpeta del servidor:
-   ```sh
-   git clone https://github.com/davidabejon/spotify-3ds.git
-   cd spotify-3ds/server
-   ```
-
-2. Crea y activa un entorno virtual (Windows):
-   ```ps
-   python -m venv .venv
-   .venv\Scripts\activate
-   ```
-
-3. Instala dependencias:
-   ```ps
-   pip install -r requirements.txt
-   ```
-
-4. Edita `spotify_config.json` y añade `client_id` y `client_secret` obtenidos desde el Dashboard de Spotify.
-
-5. Ejecuta el servidor con Uvicorn (desde la carpeta `server`):
-   ```ps
-   uvicorn server:app --host 0.0.0.0 --port 8000 --reload --reload-include spotify_config.json
-   ```
-   - Si el servidor imprime un mensaje advirtiendo de que client_id y client_secret no han sido rellenados abre el archivo `spotify_config.json`
-
-6. Desde el terminal, el servidor intentará abrir la URL de autorización. Si no se abre, la verás en la consola. Ábrela en un navegador. Tras autorizar, el servidor almacenará el `code`/`refresh_token` en `spotify_config.json`.
-
-### Aplicación antigua en modo proxy
-- Lo más sencillo: descarga `Spotify3DS.cia` desde las [Releases](https://github.com/davidabejon/spotify-3ds/releases), cópialo a la tarjeta SD e instálalo con FBI u otro instalador de CIA
-- Alternativamente, descarga `spotify-3ds.zip` desde las [Releases](https://github.com/davidabejon/spotify-3ds/releases): extráelo en la carpeta `/3ds` de la tarjeta SD y ejecútalo desde el Homebrew Launcher.
-
-Al iniciar la aplicación por primera vez, te pedirá la dirección IP del servidor proxy; tras introducirla intentará conectarse automáticamente.
-
-Para cambiar la IP más tarde, pulsa Y para volver a abrir el teclado en pantalla y escribe la nueva dirección IP.
-
-#### Controles
- - A — Reproducir / Pausar
- - Y — Abrir entrada de IP (teclado en pantalla)
- - Cruceta derecha — Siguiente canción
- - Cruceta izquierda — Anterior canción
- - Cruceta arriba — Subir volumen
- - Cruceta abajo — Bajar volumen
- - Botón START — Salir de la aplicación
-
 ## Licencia y créditos
 - Licencia: Apache License 2.0 — ver el archivo `LICENSE` en la raíz del repositorio.
 - Proyecto original / autor: David Abejón.
-- Librerías incluidas: stbi (stb_image) en `client/include/stb_image.h` y demás dependencias listadas en el Docker image / requirements.
+- Librerías incluidas: stbi (stb_image) en `client/include/stb_image.h` y demás dependencias fijadas por el build nativo.
