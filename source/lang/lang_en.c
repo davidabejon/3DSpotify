@@ -38,7 +38,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_KEYS_SESSION_PAIR] = "Y: pair another account",
 
 	/* Session start-up. */
-	[STR_LOGIN_TITLE] = "Spotify 3DS - direct sign-in",
+	[STR_LOGIN_TITLE] = "3DSpotify - direct sign-in",
 	[STR_LOGIN_CONNECTING] = "Renewing credentials and connecting...",
 	[STR_CREDENTIAL_RENEWING] = "Renewing the Spotify credential...",
 	[STR_CREDENTIAL_EXPIRED] = "The saved credential has expired.",
@@ -77,7 +77,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_CAT_SAVE_CREDENTIALS] = "Could not save the credentials",
 
 	/* Pairing. */
-	[STR_PAIR_TITLE] = "Spotify 3DS - pairing",
+	[STR_PAIR_TITLE] = "3DSpotify - pairing",
 	[STR_PAIR_OPEN_URL] = "Open this address on another device:",
 	[STR_PAIR_DIRECT_LINK] = "Direct link:",
 	[STR_PAIR_POLL_FMT] = "Checking every %d s. B cancels.",

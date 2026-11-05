@@ -3,6 +3,9 @@
 From the repository root:
     python source/build.py --app spotify3ds --fetch-deps
 
+Add --cia to also package dist/3ds/spotify3ds/spotify3ds.cia for FBI and
+similar installers (needs makerom and bannertool from devkitPro's tools).
+
 Python 3.12+ is required. --fetch-deps downloads pinned dependencies when
 missing; subsequent builds can run offline without that option. The native
 application is the only supported client target; the legacy proxy client has
@@ -16,6 +19,7 @@ import subprocess
 import tarfile
 import time
 import urllib.request
+import wave
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -24,6 +28,17 @@ MBEDTLS_VERSION = "3.6.7"
 MBEDTLS_SHA256 = "a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6"
 STB_VORBIS_COMMIT = "d14d46f6b44456eb88beac58cba833a4135d4c89"
 STB_VORBIS_SHA256 = "4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636"
+
+# Icon, banner and makerom settings for the installable app, kept in scripts/
+# at the repository root.
+ASSETS = ROOT.parent / "scripts"
+APP_TITLE = "3DSpotify"
+APP_DESCRIPTION = "Native Spotify client for Nintendo 3DS"
+APP_PUBLISHER = "David Abejon"
+# The Home Menu plays at most ~3 s of banner audio; a longer clip makes the
+# banner too large and can hang the menu.
+BANNER_AUDIO_SECONDS = 2.9
+BANNER_FADE_SECONDS = 0.4
 
 # name -> (source directories, extra defines, mbedTLS flavour or None,
 #          extra single sources relative to this script)
@@ -130,6 +145,55 @@ def build_mbedtls(cc: Path, ar: Path, tree: Path, out: Path,
     return lib
 
 
+def banner_audio(source: Path, dest: Path) -> Path:
+    """Copies the start of the banner jingle, faded out, short enough for the
+    Home Menu."""
+    with wave.open(str(source), "rb") as src:
+        if src.getsampwidth() != 2:
+            raise SystemExit(f"{source} must be 16-bit PCM")
+        channels, rate = src.getnchannels(), src.getframerate()
+        frames = min(src.getnframes(), int(rate * BANNER_AUDIO_SECONDS))
+        data = bytearray(src.readframes(frames))
+    fade = min(frames, int(rate * BANNER_FADE_SECONDS))
+    samples = memoryview(data).cast("h")
+    for frame in range(frames - fade, frames):
+        gain = (frames - frame) / fade
+        for channel in range(channels):
+            index = frame * channels + channel
+            samples[index] = int(samples[index] * gain)
+    samples.release()
+    with wave.open(str(dest), "wb") as out:
+        out.setnchannels(channels)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(bytes(data))
+    return dest
+
+
+def make_smdh(bannertool: Path, out: Path) -> Path:
+    smdh = out / "icon.smdh"
+    subprocess.run([str(bannertool), "makesmdh",
+                    "-s", APP_TITLE, "-l", APP_DESCRIPTION,
+                    "-p", APP_PUBLISHER, "-i", str(ASSETS / "icon.png"),
+                    "-o", str(smdh)], check=True, stdout=subprocess.DEVNULL)
+    return smdh
+
+
+def make_cia(sdk: Path, bannertool: Path, elf: Path, smdh: Path,
+             out: Path, dest: Path) -> Path:
+    makerom = require_tool(sdk / "tools" / "bin", "makerom")
+    audio = banner_audio(ASSETS / "banner.wav", out / "banner.wav")
+    banner = out / "banner.bnr"
+    subprocess.run([str(bannertool), "makebanner",
+                    "-i", str(ASSETS / "banner.png"), "-a", str(audio),
+                    "-o", str(banner)], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([str(makerom), "-f", "cia", "-o", str(dest),
+                    "-target", "t", "-exefslogo",
+                    "-elf", str(elf), "-rsf", str(ASSETS / "template.rsf"),
+                    "-icon", str(smdh), "-banner", str(banner)], check=True)
+    return dest
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -139,6 +203,8 @@ def main():
     ap.add_argument("--fetch-deps", action="store_true",
                     help="download and verify pinned mbedTLS/stb_vorbis dependencies")
     ap.add_argument("--debug", action="store_true", help="-O0 with assertions")
+    ap.add_argument("--cia", action="store_true",
+                    help="also build an installable .cia (spotify3ds only)")
     args = ap.parse_args()
 
     sdk = find_devkitpro(args.devkitpro)
@@ -149,6 +215,8 @@ def main():
         raise SystemExit(f"libctru is missing under {sdk}")
 
     app = args.app
+    if args.cia and app != "spotify3ds":
+        raise SystemExit("--cia is only supported for spotify3ds")
     srcdirs, defines, mbed, extra_sources = APPS[app]
     sources = []
     for directory in srcdirs:
@@ -201,11 +269,19 @@ def main():
     dest = ROOT / "dist" / "3ds" / app / f"{app}.3dsx"
     dest.parent.mkdir(parents=True, exist_ok=True)
     pack = [str(packer), str(elf), str(dest)]
-    smdh = ROOT / "assets" / "icon.smdh"
-    if app == "spotify3ds" and smdh.exists():
+    bannertool = smdh = None
+    if app == "spotify3ds":
+        bannertool = require_tool(sdk / "tools" / "bin", "bannertool")
+        smdh = make_smdh(bannertool, out)
         pack.append(f"--smdh={smdh}")
     subprocess.run(pack, check=True)
     print(f"\nBuilt {dest}  ({dest.stat().st_size:,} bytes)")
+    if args.cia:
+        cia = make_cia(sdk, bannertool, elf, smdh, out,
+                       dest.with_suffix(".cia"))
+        print(f"Built {cia}  ({cia.stat().st_size:,} bytes)")
+        print("Copy it to the SD card and install it with FBI or a similar "
+              "CIA installer.")
     if app == "spotify3ds":
         print(f"Copy {dest.parent} to SD:/3ds/ and launch {app}.3dsx from "
               "Homebrew Launcher, or send it with 3dslink.")

@@ -39,7 +39,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_KEYS_SESSION_PAIR] = "Y: emparejar otra cuenta",
 
 	/* Inicio de sesion. */
-	[STR_LOGIN_TITLE] = "Spotify 3DS - iniciando sesion directa",
+	[STR_LOGIN_TITLE] = "3DSpotify - iniciando sesion directa",
 	[STR_LOGIN_CONNECTING] = "Renovando credenciales y conectando...",
 	[STR_CREDENTIAL_RENEWING] = "Renovando la credencial de Spotify...",
 	[STR_CREDENTIAL_EXPIRED] = "La credencial guardada ha caducado.",
@@ -78,7 +78,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_CAT_SAVE_CREDENTIALS] = "No se pudieron guardar las credenciales",
 
 	/* Emparejamiento. */
-	[STR_PAIR_TITLE] = "Spotify 3DS - emparejamiento",
+	[STR_PAIR_TITLE] = "3DSpotify - emparejamiento",
 	[STR_PAIR_OPEN_URL] = "Abre esta direccion en otro dispositivo:",
 	[STR_PAIR_DIRECT_LINK] = "Enlace directo:",
 	[STR_PAIR_POLL_FMT] = "Comprobando cada %d s. B cancela.",

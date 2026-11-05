@@ -1,4 +1,4 @@
-# Spotify 3DS
+# 3DSpotify
 
 Cliente no oficial de Spotify para Nintendo 3DS. La aplicación se conecta
 directamente a Spotify por HTTPS.
@@ -49,6 +49,17 @@ PC con:
 ```powershell
 C:\devkitPro\tools\bin\3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <IP_DE_LA_CONSOLA>
 ```
+
+Para instalarla en el menú HOME, genera también el CIA (requiere `makerom` y
+`bannertool`, incluidos en las herramientas de devkitPro):
+
+```powershell
+python source\build.py --cia
+```
+
+Se genera `source\dist\3ds\spotify3ds\spotify3ds.cia`; cópialo a la SD e
+instálalo con FBI o un instalador de CIA similar (requiere custom firmware).
+El CIA guarda su configuración en `SD:/3ds/spotibacan/`.
 
 El target inicia la sesión directa: renueva la credencial guardada, permite
 emparejar si hace falta y comprueba la conexión al access point y a la sesión
@@ -111,5 +122,9 @@ de disponibilidad; `total_ms` mide el tiempo desde el inicio de la conexion TCP.
 
 ## Licencia y créditos
 - Licencia: Apache License 2.0 — ver el archivo `LICENSE` en la raíz del repositorio.
-- Proyecto original / autor: David Abejón.
+- Autor: David Abejón.
+- Basado en [SpotiBacan](https://github.com/ohquebacan/spotibacan), de
+  [ohquebacan](https://github.com/ohquebacan). El directorio
+  `source/platform3ds/`, los directorios `source/probe_*/` y `source/build.py`
+  proceden de ese proyecto y se han modificado para 3DSpotify. Ver `NOTICE`.
 - Librerías incluidas: stbi (stb_image) en `include/stb_image.h` y demás dependencias fijadas por el build nativo.
