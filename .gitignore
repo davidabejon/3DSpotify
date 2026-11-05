@@ -15,8 +15,8 @@ venv/
 *.3dsx
 *.smdh
 build/
-client/source/deps/mbedtls-3.6.7/
-client/source/dist/
+source/deps/mbedtls-3.6.7/
+source/dist/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

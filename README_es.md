@@ -10,8 +10,8 @@ directamente a Spotify por HTTPS.
 
 ## Resumen
 Este repositorio contiene:
-- El cliente nativo para 3DS, con el punto de entrada en `client/source/main.c` y los módulos de interfaz en [client/source/ui](client/source/ui), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
-- Probes independientes de protocolo y herramientas de build/tests en `client/source` y `client/tests`.
+- El cliente nativo para 3DS, con el punto de entrada en `source/main.c` y los módulos de interfaz en [source/ui](source/ui), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
+- Probes independientes de protocolo y herramientas de build/tests en `source` y `tests`.
 
 ## Requisitos
 - Una Nintendo 3DS con Homebrew Launcher y conexión Wi-Fi.
@@ -24,7 +24,7 @@ Instala devkitPro con devkitARM, libctru, citro2d, citro3d y 3dsxtool, además
 de Python 3.12 o posterior. Desde la raíz del repositorio:
 
 ```powershell
-python client\source\build.py --fetch-deps
+python source\build.py --fetch-deps
 ```
 
 El target predeterminado y único cliente completo es `spotify3ds`. La descarga
@@ -35,19 +35,19 @@ puede compilar sin `--fetch-deps`.
 Las pruebas de build e integración se ejecutan desde la raíz con:
 
 ```powershell
-python -m unittest discover -s client\tests
+python -m unittest discover -s tests
 ```
 
 La prueba C de codificación, cola y cancelación se ejecuta si hay un compilador
 C nativo disponible; en caso contrario, unittest la marca como omitida.
 
 El artefacto queda en
-`client\source\dist\3ds\spotify3ds\spotify3ds.3dsx`. Cópialo a
+`source\dist\3ds\spotify3ds\spotify3ds.3dsx`. Cópialo a
 `SD:/3ds/spotify3ds/` y ejecútalo desde Homebrew Launcher, o envíalo desde el
 PC con:
 
 ```powershell
-C:\devkitPro\tools\bin\3dslink.exe client\source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <IP_DE_LA_CONSOLA>
+C:\devkitPro\tools\bin\3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <IP_DE_LA_CONSOLA>
 ```
 
 El target inicia la sesión directa: renueva la credencial guardada, permite
@@ -78,7 +78,7 @@ con Python 3.12 o posterior. No necesita el toolchain de Melee, Clang ni CMake.
 Desde la carpeta del repositorio:
 
 ```powershell
-python client\source\build.py --app probe_tls --fetch-deps
+python source\build.py --app probe_tls --fetch-deps
 ```
 
 La primera compilación descarga mbedTLS 3.6.7 y verifica su checksum SHA-256.
@@ -88,9 +88,9 @@ Usa `--devkitpro "C:\devkitPro"` para indicar el SDK; por defecto comprueba
 `DEVKITPRO` y después la ubicación de instalación habitual.
 `--debug` genera una compilación sin optimizaciones.
 
-Copia `client/source/dist/3ds/probe_tls/` a `SD:/3ds/probe_tls/` y abre
+Copia `source/dist/3ds/probe_tls/` a `SD:/3ds/probe_tls/` y abre
 `probe_tls.3dsx` desde Homebrew Launcher. Los objetos y el ELF quedan en
-`client/source/build/probe_tls/`. Los demás targets siguen necesitando sus
+`source/build/probe_tls/`. Los demás targets siguen necesitando sus
 fuentes y las dependencias stb correspondientes.
 
 El probe TLS activa una traza de sockets en `spotify-tls.log`, junto al ejecutable
@@ -112,4 +112,4 @@ de disponibilidad; `total_ms` mide el tiempo desde el inicio de la conexion TCP.
 ## Licencia y créditos
 - Licencia: Apache License 2.0 — ver el archivo `LICENSE` en la raíz del repositorio.
 - Proyecto original / autor: David Abejón.
-- Librerías incluidas: stbi (stb_image) en `client/include/stb_image.h` y demás dependencias fijadas por el build nativo.
+- Librerías incluidas: stbi (stb_image) en `include/stb_image.h` y demás dependencias fijadas por el build nativo.

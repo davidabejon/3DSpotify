@@ -1,7 +1,7 @@
 """Build native 3DS apps with devkitPro (devkitARM, libctru and 3dsxtool).
 
 From the repository root:
-    python client/source/build.py --app spotify3ds --fetch-deps
+    python source/build.py --app spotify3ds --fetch-deps
 
 Python 3.12+ is required. --fetch-deps downloads pinned dependencies when
 missing; subsequent builds can run offline without that option. The native

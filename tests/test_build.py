@@ -64,7 +64,7 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((build.ROOT / "image_display.c").exists())
         self.assertFalse((build.ROOT / "parse.c").exists())
         self.assertFalse((build.ROOT / "fetch.c").exists())
-        self.assertFalse((build.ROOT.parents[1] / "server").exists())
+        self.assertFalse((build.ROOT.parent / "server").exists())
         self.assertNotIn("stb_image_impl.c", source_names)
         self.assertIn("ui", source_dirs)
         self.assertNotIn("probe_play", source_dirs)
@@ -155,7 +155,7 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("consoleGetDefault", line_update)
 
     def test_readmes_present_native_client_as_primary_workflow(self):
-        root = build.ROOT.parents[1]
+        root = build.ROOT.parent
         for name in ("README.md", "README_es.md"):
             contents = (root / name).read_text(encoding="utf-8")
             self.assertIn("spotify3ds", contents)
