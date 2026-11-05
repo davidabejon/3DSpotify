@@ -1,0 +1,22 @@
+3DSpotify
+
+3DSpotify is an unofficial, independent project. It is not affiliated with,
+endorsed by, sponsored by or in any way associated with Spotify AB or any of
+its subsidiaries. Spotify is a trademark of Spotify AB; it is used here only
+to describe the service this client connects to.
+
+This project includes code from SpotiBacan
+(https://github.com/ohquebacan/spotibacan) by ohquebacan
+(https://github.com/ohquebacan). The following parts of this repository
+originate from that project and have been modified for 3DSpotify:
+
+  - source/platform3ds/
+  - source/probe_ap/
+  - source/probe_audio/
+  - source/probe_meta/
+  - source/probe_pair/
+  - source/probe_play/
+  - source/probe_tls/
+  - source/build.py
+
+All credit for the original work in those files goes to ohquebacan.
