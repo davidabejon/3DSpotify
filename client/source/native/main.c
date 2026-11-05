@@ -212,6 +212,7 @@ static bool playback(spotify_session *session, const sp_track *selected)
 	bool eof = false;
 	bool final_wave_submitted = false;
 	unsigned last_progress = UINT32_MAX;
+	unsigned last_sample_rate = UINT32_MAX;
 	size_t input_len = 0;
 	size_t source_pos = SPOTIFY_OGG_HEADER;
 	size_t pcm_frames = 0;
@@ -464,19 +465,20 @@ static bool playback(spotify_session *session, const sp_track *selected)
 			}
 		}
 
-		if (!job.done) {
+		unsigned percent = job.stream.total
+		                   ? (unsigned)(available * 100 /
+		                                job.stream.total) : 0;
+		if (job.done && job.stream.dl_done)
+			percent = 100;
+		unsigned sample_rate = decoder_open ? info.sample_rate : 0;
+		if (percent != last_progress || sample_rate != last_sample_rate) {
 			char status[64];
-			size_t total = job.stream.total;
-			unsigned percent = total
-			                   ? (unsigned)(available * 100 / total) : 0;
-			if (percent != last_progress) {
-				snprintf(status, sizeof(status),
-				         "Descarga: %u%%   Audio: %lu Hz",
-				         percent, decoder_open
-				         ? (unsigned long)info.sample_rate : 0);
-				player_update_line(status);
-				last_progress = percent;
-			}
+			snprintf(status, sizeof(status),
+			         "Descarga: %u%%   Audio: %u Hz",
+			         percent, sample_rate);
+			player_update_line(status);
+			last_progress = percent;
+			last_sample_rate = sample_rate;
 		}
 		frame();
 		if (!aptMainLoop())
