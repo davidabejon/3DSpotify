@@ -110,6 +110,7 @@ static bool search_tracks(const spotify_session *session, const char *query)
 	snprintf(search.library_token, sizeof(search.library_token), "%s",
 	         session->library_token);
 
+	show_search_progress(search.query);
 	Thread thread = threadCreate(search_worker, &search, 16 * 1024,
 	                             0x18, -2, false);
 	if (!thread) {
@@ -121,8 +122,7 @@ static bool search_tracks(const spotify_session *session, const char *query)
 	}
 
 	while (aptMainLoop() && !search.done) {
-		hidScanInput();
-		show_search_progress(search.query);
+		frame();
 	}
 	threadJoin(thread, U64_MAX);
 	threadFree(thread);
@@ -247,8 +247,8 @@ static bool search_flow(const spotify_session *session,
 
 show_results_screen:
 		if (search.count == 0) {
+			show_results(query, 0);
 			for (;;) {
-				show_results(query, 0);
 				while (aptMainLoop()) {
 					hidScanInput();
 					u32 down = hidKeysDown();
@@ -269,8 +269,8 @@ show_results_screen:
 		}
 
 		int selected = 0;
+		show_results(query, selected);
 		for (;;) {
-			show_results(query, selected);
 			hidScanInput();
 			u32 down = hidKeysDown();
 			if (down & KEY_START)
@@ -279,14 +279,21 @@ show_results_screen:
 				return true;
 			if (down & KEY_Y)
 				break;
-			if (down & KEY_UP && selected > 0)
+			bool selection_changed = false;
+			if (down & KEY_UP && selected > 0) {
 				selected--;
-			if (down & KEY_DOWN && selected + 1 < search.count)
+				selection_changed = true;
+			}
+			if (down & KEY_DOWN && selected + 1 < search.count) {
 				selected++;
+				selection_changed = true;
+			}
+			if (selection_changed)
+				show_results(query, selected);
 			if (down & KEY_A) {
 				prepare_queue(selected);
+				show_selection();
 				for (;;) {
-					show_selection();
 					hidScanInput();
 					down = hidKeysDown();
 					if (down & KEY_START)
@@ -303,6 +310,7 @@ show_results_screen:
 					return false;
 				if (hidKeysDown() & KEY_Y)
 					break;
+				show_results(query, selected);
 				continue;
 			}
 			frame();
@@ -610,8 +618,8 @@ int main(int argc, char **argv)
 		printf("Renovando credenciales y conectando...\n");
 		frame();
 		if (start_session(force_pair, &error, &session)) {
+			show_session_ready(&session, query);
 			for (;;) {
-				show_session_ready(&session, query);
 				hidScanInput();
 				u32 down = hidKeysDown();
 				if (down & KEY_START)
@@ -619,6 +627,7 @@ int main(int argc, char **argv)
 				if (down & KEY_A) {
 					if (!search_flow(&session, query))
 						goto done;
+					show_session_ready(&session, query);
 				}
 				if (down & KEY_X) {
 					secure_clear(&session, sizeof(session));
