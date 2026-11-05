@@ -12,7 +12,7 @@ Spotify over HTTPS.
 
 ## Overview
 This repository contains:
-- The native 3DS client in [client/source/app](client/source/app), which pairs the account on-console, searches for tracks, and plays audio locally with album artwork.
+- The native 3DS client, with its entry point in `client/source/main.c` and UI modules in [client/source/ui](client/source/ui), which pairs the account on-console, searches for tracks, and plays audio locally with album artwork.
 - Independent protocol probes and build/test tooling in `client/source` and `client/tests`.
 
 ## Requirements

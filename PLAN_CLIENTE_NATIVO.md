@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Mantener el cliente nativo de `client/source/app` conectado directamente a Spotify para buscar y reproducir canciones en la Nintendo 3DS. La pantalla superior muestra la carátula. La aplicación no depende de un servidor proxy ni controla otro dispositivo.
+Mantener el cliente nativo de `client/source` conectado directamente a Spotify para buscar y reproducir canciones en la Nintendo 3DS. El punto de entrada está en `main.c` y los módulos de interfaz de usuario en `ui/`, preparada para evolucionar a citro2d. La pantalla superior muestra la carátula. La aplicación no depende de un servidor proxy ni controla otro dispositivo.
 
 El plan reutiliza las rutas directas ya probadas en `probe_pair`, `probe_ap`, `probe_meta` y `probe_play`. No propone reimplementar OAuth, el protocolo de acceso, la descarga de audio ni la decodificación si ya existe un módulo que cumple esa función.
 
@@ -22,7 +22,7 @@ Queda fuera de alcance: playlists y navegación por biblioteca, recomendaciones,
 
 ## Estado actual y piezas reutilizables
 
-- El punto de entrada y la interfaz del cliente están en `client/source/app/main.c`; portada y lógica pura de transporte están en módulos de esa carpeta.
+- El punto de entrada está en `client/source/main.c`; los módulos de interfaz, como la portada y la lógica de cola, están en `client/source/ui/`.
 - `client/source/platform3ds/pair3ds.c`, `cfg3ds.c`, `ap3ds.c`, `login5.c`, `spclient.c`, `track.c`, `tls3ds.c` y `http3ds.c` contienen los módulos directos que ya usa el flujo de los probes.
 - `sp_search_tracks` busca canciones y devuelve URIs; `sp_track_metadata_batch` obtiene nombres, artistas, duración y URLs de carátula.
 - `track_stream_begin` obtiene metadatos, la ubicación del audio y la clave; requiere una sesión AP activa para solicitar esa clave. `track_stream_download` descarga y descifra el contenido, admite cancelación y reanudación.
@@ -50,7 +50,8 @@ Queda fuera de alcance: playlists y navegación por biblioteca, recomendaciones,
 
 ### Fase 1: arranque, identidad y sesión directa
 
-**Estado:** implementada en `client/source/app`; verificada compilando el
+**Estado:** implementada en `client/source/ui` con el punto de entrada en
+`client/source/main.c`; verificada compilando el
 target `spotify3ds`. La sesión puede iniciarse con credenciales guardadas o
 mediante emparejamiento, y muestra errores recuperables para volver a intentar.
 
@@ -72,7 +73,8 @@ mediante emparejamiento, y muestra errores recuperables para volver a intentar.
 
 ### Fase 2: búsqueda y selección de canciones
 
-**Estado:** implementada en `client/source/app`; verificada compilando el
+**Estado:** implementada en `client/source/ui` con el punto de entrada en
+`client/source/main.c`; verificada compilando el
 target `spotify3ds` y ejecutando los tests de build. La búsqueda y los
 metadatos se cargan en un worker, y la selección prepara una cola de resultados.
 
@@ -94,7 +96,8 @@ metadatos se cargan en un worker, y la selección prepara una cola de resultados
 
 ### Fase 3: motor de reproducción local
 
-**Estado:** implementada en `client/source/app`; el target incluye Vorbis
+**Estado:** implementada en `client/source/ui` con el punto de entrada en
+`client/source/main.c`; el target incluye Vorbis
 pushdata y reproducción NDSP con descarga cancelable, watermark y liberación
 ordenada. La compilación local no sustituye la validación de reproducción
 completa en una 3DS real, que sigue pendiente.
@@ -120,7 +123,8 @@ de reproduccion y la cola se describen en la fase 4.
 
 ### Fase 4: controles y cola de reproducción
 
-**Estado:** implementada en `client/source/app`; controles locales de
+**Estado:** implementada en `client/source/ui` con el punto de entrada en
+`client/source/main.c`; controles locales de
 pausa, volumen y navegación por la cola, con comportamiento explícito en los
 extremos. Se ha compilado el target nativo y pasado el conjunto de pruebas de
 build; la validación de botones y audio en hardware real sigue pendiente.
@@ -162,7 +166,8 @@ conexión y de las respuestas de Spotify.
 
 ### Fase 5: carátula en pantalla superior
 
-**Estado:** implementada en `client/source/app`; descarga HTTPS limitada al
+**Estado:** implementada en `client/source/ui` con el punto de entrada en
+`client/source/main.c`; descarga HTTPS limitada al
 host `i.scdn.co`, decodificación stb_image en worker, fondo de reserva y
 renderizado desde el hilo principal. La validación en hardware real sigue
 pendiente.

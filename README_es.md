@@ -10,7 +10,7 @@ directamente a Spotify por HTTPS.
 
 ## Resumen
 Este repositorio contiene:
-- El cliente nativo para 3DS en [client/source/app](client/source/app), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
+- El cliente nativo para 3DS, con el punto de entrada en `client/source/main.c` y los módulos de interfaz en [client/source/ui](client/source/ui), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
 - Probes independientes de protocolo y herramientas de build/tests en `client/source` y `client/tests`.
 
 ## Requisitos

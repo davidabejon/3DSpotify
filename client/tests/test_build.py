@@ -49,7 +49,7 @@ class BuildTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "--fetch-deps"):
                 build.stb_vorbis_source(False)
 
-    def test_native_target_has_only_the_app_entry_point_and_no_proxy_client(self):
+    def test_native_target_has_root_entry_point_and_no_proxy_client(self):
         source_dirs, _, mbedtls, extra_sources = build.APPS["spotify3ds"]
         source_names = {
             path.name
@@ -57,33 +57,35 @@ class BuildTests(unittest.TestCase):
             for path in (build.ROOT / directory).glob("*.c")
         }
         source_names.update(Path(path).name for path in extra_sources)
-        self.assertEqual(source_dirs, ["app", "platform3ds"])
-        self.assertFalse((build.ROOT / "main.c").exists())
+        self.assertEqual(source_dirs, ["ui", "platform3ds"])
+        self.assertTrue((build.ROOT / "main.c").is_file())
+        self.assertFalse((build.ROOT / "ui" / "main.c").exists())
+        self.assertIn("main.c", extra_sources)
         self.assertFalse((build.ROOT / "image_display.c").exists())
         self.assertFalse((build.ROOT / "parse.c").exists())
         self.assertFalse((build.ROOT / "fetch.c").exists())
         self.assertFalse((build.ROOT.parents[1] / "server").exists())
         self.assertNotIn("stb_image_impl.c", source_names)
-        self.assertIn("app", source_dirs)
+        self.assertIn("ui", source_dirs)
         self.assertNotIn("probe_play", source_dirs)
         self.assertEqual(mbedtls, "release")
         self.assertIn("deps/stb_vorbis.c", extra_sources)
 
     def test_native_target_uses_only_direct_artwork_pipeline(self):
         source_dirs, _, _, _ = build.APPS["spotify3ds"]
-        app_sources = list((build.ROOT / "app").glob("*.c"))
+        ui_sources = list((build.ROOT / "ui").glob("*.c"))
         implementations = [
-            source for source in app_sources
+            source for source in ui_sources
             if "STB_IMAGE_IMPLEMENTATION" in source.read_text(encoding="utf-8")
         ]
-        self.assertIn("app", source_dirs)
+        self.assertIn("ui", source_dirs)
         self.assertEqual([source.name for source in implementations],
                          ["artwork.c"])
-        self.assertTrue((build.ROOT / "app" / "artwork.h").is_file())
+        self.assertTrue((build.ROOT / "ui" / "artwork.h").is_file())
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
-        app = (source_root / "app" / "main.c").read_text(
+        app = (source_root / "main.c").read_text(
             encoding="utf-8"
         )
         spotify = (source_root / "platform3ds" / "spclient.c").read_text(
@@ -104,11 +106,11 @@ class BuildTests(unittest.TestCase):
             app.index("job->count = sp_track_metadata_batch"),
         )
         self.assertTrue(
-            (build.ROOT / "app" / "player_logic.h").is_file()
+            (build.ROOT / "ui" / "player_logic.h").is_file()
         )
 
     def test_native_queue_boundaries_and_cleanup_order_are_explicit(self):
-        app = (build.ROOT / "app" / "main.c").read_text(
+        app = (build.ROOT / "main.c").read_text(
             encoding="utf-8"
         )
         playback = app[app.index("static playback_result playback("):
@@ -116,7 +118,7 @@ class BuildTests(unittest.TestCase):
                               "static playback_result playback("
                           ))]
         self.assertIn("playback_queue_step(*track_index, queue_count", playback)
-        logic = (build.ROOT / "app" / "player_logic.h").read_text(
+        logic = (build.ROOT / "ui" / "player_logic.h").read_text(
             encoding="utf-8"
         )
         self.assertIn("next >= 0 && next < count", logic)

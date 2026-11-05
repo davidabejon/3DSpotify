@@ -28,8 +28,8 @@ STB_VORBIS_SHA256 = "4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e
 # name -> (source directories, extra defines, mbedTLS flavour or None,
 #          extra single sources relative to this script)
 APPS = {
-    "spotify3ds": (["app", "platform3ds"], [], "release",
-                   ["deps/stb_vorbis.c"]),
+    "spotify3ds": (["ui", "platform3ds"], [], "release",
+                   ["main.c", "deps/stb_vorbis.c"]),
     "probe_tls": (["probe_tls", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
     "probe_pair": (["probe_pair", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
     "probe_ap": (["probe_ap", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
@@ -170,7 +170,8 @@ def main():
              "-O0" if args.debug else "-O2", "-g", "-mword-relocations",
              "-ffunction-sections", "-fdata-sections", *defines]
     includes = ["-I" + str(sdk / "libctru" / "include"),
-                "-I" + str(ROOT / "deps"), "-I" + str(ROOT / "platform3ds")]
+                "-I" + str(ROOT / "deps"), "-I" + str(ROOT / "ui"),
+                "-I" + str(ROOT / "platform3ds")]
     extra = []
     if mbed:
         tree = mbedtls_tree(args.fetch_deps)
