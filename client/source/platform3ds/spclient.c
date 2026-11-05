@@ -1,6 +1,7 @@
 #include "spclient.h"
 #include "http3ds.h"
 #include "json3ds.h"
+#include "search_path.h"
 #include "proto3ds.h"
 
 #include <stdio.h>
@@ -591,38 +592,8 @@ int sp_search_tracks(const char *host, const char *token, const char *query,
 		return -1;
 	}
 
-	/* Keep the search URI's separators literal; encode every query byte that
-	 * could otherwise change the request path. Spaces retain the service's
-	 * expected '+' representation, while literal '+' and UTF-8 bytes escape. */
-	static const char hex[] = "0123456789ABCDEF";
-	char encoded[384];
-	size_t n = 0;
-	for (const unsigned char *p = (const unsigned char *)query; *p; p++) {
-		unsigned char c = *p;
-		if (c == ' ') {
-			if (n + 1 >= sizeof(encoded))
-				goto query_too_long;
-			encoded[n++] = '+';
-		} else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-		           (c >= '0' && c <= '9') || c == '-' || c == '_' ||
-		           c == '.' || c == '~') {
-			if (n + 1 >= sizeof(encoded))
-				goto query_too_long;
-			encoded[n++] = (char)c;
-		} else {
-			if (n + 3 >= sizeof(encoded))
-				goto query_too_long;
-			encoded[n++] = '%';
-			encoded[n++] = hex[c >> 4];
-			encoded[n++] = hex[c & 0x0F];
-		}
-	}
-	encoded[n] = '\0';
-
 	char path[448];
-	int path_len = snprintf(path, sizeof(path),
-	                        "/context-resolve/v1/spotify:search:%s", encoded);
-	if (path_len < 0 || (size_t)path_len >= sizeof(path))
+	if (!sp_search_path(query, path, sizeof(path)))
 		goto query_too_long;
 
 	http_reply r;
@@ -631,7 +602,12 @@ int sp_search_tracks(const char *host, const char *token, const char *query,
 		return -1;
 	}
 	if (r.status != 200) {
-		snprintf(err, errlen, "search returned HTTP %d", r.status);
+		if (r.status == 429 && r.retry_after > 0)
+			snprintf(err, errlen,
+			         "search returned HTTP 429 (Retry-After: %d seconds)",
+			         r.retry_after);
+		else
+			snprintf(err, errlen, "search returned HTTP %d", r.status);
 		http_reply_free(&r);
 		return -1;
 	}

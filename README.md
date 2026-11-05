@@ -2,7 +2,9 @@ Nota: Esta documentación también está disponible en español: `README_es.md`
 
 # Spotify 3DS
 
-Unofficial Spotify client for the Nintendo 3DS (proxy + 3DS application).
+Unofficial Spotify client for the Nintendo 3DS. The native client connects
+directly to Spotify over HTTPS; the older proxy mode is retained as historical
+reference.
 
 <div style="display: flex; gap: 10px">
   <img src="https://i.imgur.com/BiwIS82.png" alt="Top playing" width="350">
@@ -11,13 +13,13 @@ Unofficial Spotify client for the Nintendo 3DS (proxy + 3DS application).
 
 ## Overview
 This repository contains:
-- A proxy server (FastAPI) that handles Spotify authentication and exposes endpoints for the console: [server/server.py](server/server.py). See also [server/Dockerfile](server/Dockerfile) and [server/spotify_config.json](server/spotify_config.json).
-- The 3DS client application (source and assets) in the `client` folder: [client/Makefile](client/Makefile), [client/source/main.c](client/source/main.c) and the display interface [client/include/image_display.h](client/include/image_display.h) (e.g. `initNetwork`).
+- The native 3DS client in [client/source/native](client/source/native), which pairs the account on-console, searches for tracks, and plays audio locally with album artwork.
+- The legacy FastAPI proxy and proxy-mode client, retained for reference: [server/server.py](server/server.py) and [client/Makefile](client/Makefile).
 
 ## Requirements
-- Docker or Python (depending on whether you choose step 1.a or 1.b)
-- To build the client from source: devkitARM/3DS homebrew toolchain (see `client/Makefile`)
-- A Spotify Developer application (Client ID / Client Secret)
+- A Nintendo 3DS with Homebrew Launcher and Wi-Fi access.
+- To build from source: devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus Python 3.12 or newer.
+- The native client does not require the proxy to be configured or running.
 
 ## Building the native client
 
@@ -33,6 +35,15 @@ built with `client\Makefile`. The pinned downloads verify mbedTLS 3.6.7 and
 `stb_vorbis`; the Vorbis header is generated from that same verified source.
 Once dependencies have been downloaded, builds can omit `--fetch-deps`.
 
+Run the build and integration tests from the repository root with:
+
+```powershell
+python -m unittest discover -s client\tests
+```
+
+The C tests for search encoding, queue boundaries, and cancellation run when a
+host C compiler is available; otherwise unittest reports them as skipped.
+
 The artifact is written to
 `client\source\dist\3ds\spotify3ds\spotify3ds.3dsx`. Copy it to
 `SD:/3ds/spotify3ds/` and launch it from the Homebrew Launcher, or send it
@@ -44,18 +55,23 @@ C:\devkitPro\tools\bin\3dslink.exe client\source\dist\3ds\spotify3ds\spotify3ds.
 
 The target starts a direct session: it refreshes the stored credential, offers
 pairing when needed, and checks the access-point and library-session
-connections. On the session screen, A opens search, X reconnects, Y pairs
-another account, and START exits. Use up/down to move through results, A to
-select, B to return, and Y to enter another query. Search and metadata
-requests run while progress is displayed. Press A on the selection screen to
-play the chosen track locally. The client opens the access point to obtain the
-audio key, closes it, and then downloads/decrypts the track while decoding it
-to NDSP. During playback, A pauses/resumes, left/right changes track, up/down
-adjusts local volume, and B returns to results; START stops and exits. The
-queue follows search-result order and does not wrap at either end. Complete
-playback and controls still need validation on real hardware. The probes
-remain available as separate targets. It does not compile `fetch.c` or
-`parse.c` from the legacy flow.
+connections. If no credential is stored, follow the pairing code shown on the
+console from another device and authorize the account with Spotify. The refresh
+token is saved to the SD card for later launches. On the session screen, A
+opens search, X reconnects, Y pairs another account, and START exits. Use
+up/down to move through results, A to select, B to return, and Y to enter
+another query. B cancels a pending search after the current network request
+finishes.
+
+Press A on the selection screen to play the chosen track locally. During
+playback, the top screen shows album artwork (or a neutral background when it
+is unavailable) and the bottom screen shows track details and progress. A
+pauses/resumes, left/right changes track, up/down adjusts local volume, B
+returns to results, and START stops and exits. The queue follows search-result
+order and does not wrap at either end. No remote-control proxy is involved.
+Complete playback, artwork, and controls still need validation on real
+hardware. The probes remain available as separate targets. The native target
+does not compile `fetch.c` or `parse.c` from the legacy flow.
 
 ## Building the native TLS probe
 
@@ -94,9 +110,13 @@ Tracing adds overhead and is opt-in through `tls_set_trace()`; other apps do not
 enable it by default. Copy the full log after a run, before launching the probe
 again: each run replaces it. Verbose events stay off the console screen.
 
-## Quick start
+## Legacy proxy client (historical)
 
-### 1) Deploy the proxy server
+The following instructions describe the older proxy-based client. They are
+not required to build or use `spotify3ds`; its server, configuration, and
+credentials are separate from the native client.
+
+### Deploy the proxy server
 You can deploy the server with Docker (recommended) or run it directly with Python.
 
 ### 1.a) Proxy server with Docker
@@ -151,7 +171,7 @@ You can deploy the server with Docker (recommended) or run it directly with Pyth
    - If the main module name differs adjust `module:app` accordingly.
    - On first run the server will show or open the authorization URL; complete the flow in the browser so the `refresh_token` is saved to `spotify_config.json`.
 
-### 2) 3DS Application
+### Legacy proxy-mode application
 - Easiest: download `Spotify3DS.cia` from [Releases](https://github.com/davidabejon/spotify-3ds/releases), copy to the SD card and install with FBI or another CIA installer
 - Alternatively download `spotify-3ds.zip` package from [Releases](https://github.com/davidabejon/spotify-3ds/releases): extract into `/3ds` on the SD card and run via the Homebrew Launcher.
 

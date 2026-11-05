@@ -11,6 +11,7 @@
 #include "cfg3ds.h"
 #include "login5.h"
 #include "pair3ds.h"
+#include "player_logic.h"
 #include "spclient.h"
 #include "track.h"
 #include "tls3ds.h"
@@ -50,6 +51,8 @@ typedef struct {
 	int count;
 	int result;
 	char error[192];
+	volatile bool cancel_requested;
+	volatile bool exit_requested;
 	volatile bool done;
 } search_job;
 
@@ -59,10 +62,11 @@ typedef struct {
 } startup_error;
 
 typedef enum {
-	PLAYER_RETURN_RESULTS,
-	PLAYER_EXIT_APP,
-	PLAYER_TRACK_CHANGED
-} playback_result;
+	SEARCH_REQUEST_OK,
+	SEARCH_REQUEST_ERROR,
+	SEARCH_REQUEST_CANCELLED,
+	SEARCH_REQUEST_EXIT
+} search_result;
 
 static search_job search;
 static sp_track playback_queue[SEARCH_LIMIT];
@@ -387,9 +391,10 @@ static playback_result playback(spotify_session *session,
 		}
 		if ((down & KEY_LEFT) || (down & KEY_RIGHT)) {
 			int direction = (down & KEY_LEFT) ? -1 : 1;
-			int next = *track_index + direction;
-			if (next < 0 || next >= queue_count) {
-				player_update_status(next < 0
+			int next = playback_queue_step(*track_index, queue_count,
+			                               direction);
+			if (next < 0) {
+				player_update_status(direction < 0
 				                     ? "Inicio de cola; no hay pista anterior"
 				                     : "Fin de cola; no hay pista siguiente");
 			} else {
@@ -649,10 +654,10 @@ cleanup:
 	secure_clear(&job, sizeof(job));
 
 	if (cancelled) {
-		if (exit_requested)
-			return PLAYER_EXIT_APP;
-		if (track_changed)
-			return PLAYER_TRACK_CHANGED;
+		playback_result result =
+			playback_cancel_result(exit_requested, track_changed);
+		if (result != PLAYER_RETURN_RESULTS)
+			return result;
 		return_to_results = true;
 	}
 	if (!success) {
@@ -726,7 +731,7 @@ static void search_worker(void *arg)
 	job->count = sp_search_tracks(job->host, job->library_token,
 	                              job->query, uris, SEARCH_LIMIT,
 	                              error, sizeof(error));
-	if (job->count >= 0 && job->count > 0) {
+	if (!job->cancel_requested && job->count >= 0 && job->count > 0) {
 		for (int i = 0; i < job->count; i++)
 			uri_ptrs[i] = uris[i];
 		job->count = sp_track_metadata_batch(job->host,
@@ -735,17 +740,23 @@ static void search_worker(void *arg)
 		                                     job->tracks, error,
 		                                     sizeof(error));
 	}
-	if (job->count < 0)
+	if (job->cancel_requested) {
+		job->result = -2;
+	} else if (job->count < 0) {
 		snprintf(job->error, sizeof(job->error), "%s",
 		         error[0] ? error : "No se pudieron cargar los resultados.");
-	job->result = job->count < 0 ? -1 : 0;
+		job->result = -1;
+	} else {
+		job->result = 0;
+	}
 	secure_clear(uris, sizeof(uris));
 	secure_clear(uri_ptrs, sizeof(uri_ptrs));
 	secure_clear(error, sizeof(error));
 	job->done = true;
 }
 
-static bool search_tracks(const spotify_session *session, const char *query)
+static search_result search_tracks(const spotify_session *session,
+                                   const char *query)
 {
 	memset(&search, 0, sizeof(search));
 	snprintf(search.query, sizeof(search.query), "%s", query);
@@ -761,17 +772,32 @@ static bool search_tracks(const spotify_session *session, const char *query)
 		         "No se pudo iniciar la tarea de busqueda.");
 		search.result = -1;
 		secure_clear(search.library_token, sizeof(search.library_token));
-		return false;
+		return SEARCH_REQUEST_ERROR;
 	}
 
 	while (aptMainLoop() && !search.done) {
+		hidScanInput();
+		u32 down = hidKeysDown();
+		if (down & KEY_START)
+			search.exit_requested = true;
+		if (!search.cancel_requested && (down & (KEY_B | KEY_START)))
+			search.cancel_requested = true;
+		if (search.cancel_requested)
+			player_update_line("Cancelando al terminar la solicitud de red...");
 		frame();
+	}
+	if (!aptMainLoop()) {
+		search.cancel_requested = true;
+		search.exit_requested = true;
 	}
 	threadJoin(thread, U64_MAX);
 	threadFree(thread);
 	secure_clear(search.library_token, sizeof(search.library_token));
 	secure_clear(search.host, sizeof(search.host));
-	return search.result == 0;
+	if (search.cancel_requested)
+		return search.exit_requested
+		       ? SEARCH_REQUEST_EXIT : SEARCH_REQUEST_CANCELLED;
+	return search.result == 0 ? SEARCH_REQUEST_OK : SEARCH_REQUEST_ERROR;
 }
 
 static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
@@ -791,6 +817,15 @@ static void show_search_error(const char *query, const char *error)
 	printf("No se pudo completar la busqueda\n\n");
 	printf("Consulta: %s\n\n", query);
 	printf("%s\n\n", error);
+	if (strstr(error, "HTTP 401")) {
+		printf("La sesion fue rechazada. Pulsa B y luego X para reconectar.\n\n");
+	} else if (strstr(error, "HTTP 403")) {
+		printf("Spotify no permite esta operacion para la cuenta o pista.\n\n");
+	} else if (strstr(error, "HTTP 429")) {
+		printf("Se alcanzo el limite de solicitudes; espera antes de reintentar.\n\n");
+	} else {
+		printf("Comprueba el Wi-Fi y vuelve a intentarlo.\n\n");
+	}
 	printf("A: reintentar   Y: cambiar consulta\n");
 	printf("B: volver   START: salir\n");
 }
@@ -858,7 +893,12 @@ static bool search_flow(spotify_session *session,
 			return true;
 		if (!query[0])
 			continue;
-		if (!search_tracks(session, query)) {
+		search_result result = search_tracks(session, query);
+		if (result == SEARCH_REQUEST_CANCELLED)
+			return true;
+		if (result == SEARCH_REQUEST_EXIT)
+			return false;
+		if (result == SEARCH_REQUEST_ERROR) {
 			for (;;) {
 				show_search_error(query, search.error);
 				while (aptMainLoop()) {
@@ -871,7 +911,12 @@ static bool search_flow(spotify_session *session,
 					if (down & KEY_Y)
 						break;
 					if (down & KEY_A) {
-						if (!search_tracks(session, query))
+						result = search_tracks(session, query);
+						if (result == SEARCH_REQUEST_CANCELLED)
+							return true;
+						if (result == SEARCH_REQUEST_EXIT)
+							return false;
+						if (result == SEARCH_REQUEST_ERROR)
 							break;
 						goto show_results_screen;
 					}

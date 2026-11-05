@@ -77,6 +77,69 @@ class BuildTests(unittest.TestCase):
                          ["artwork.c"])
         self.assertTrue((build.ROOT / "native" / "artwork.h").is_file())
 
+    def test_native_search_encoding_and_cancellation_are_wired(self):
+        source_root = build.ROOT
+        native = (source_root / "native" / "main.c").read_text(
+            encoding="utf-8"
+        )
+        spotify = (source_root / "platform3ds" / "spclient.c").read_text(
+            encoding="utf-8"
+        )
+        search_path = (source_root / "platform3ds" / "search_path.c").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("sp_search_path(query, path, sizeof(path))", spotify)
+        self.assertIn("c == ' '", search_path)
+        self.assertIn("encoded[n++] = '+'", search_path)
+        self.assertIn("encoded[n++] = '%'", search_path)
+        self.assertIn("encoded[n++] = hex[c >> 4]", search_path)
+        self.assertIn("search.cancel_requested", native)
+        self.assertIn("down & (KEY_B | KEY_START)", native)
+        self.assertLess(
+            native.index("if (!job->cancel_requested"),
+            native.index("job->count = sp_track_metadata_batch"),
+        )
+        self.assertTrue(
+            (build.ROOT / "native" / "player_logic.h").is_file()
+        )
+
+    def test_native_queue_boundaries_and_cleanup_order_are_explicit(self):
+        native = (build.ROOT / "native" / "main.c").read_text(
+            encoding="utf-8"
+        )
+        playback = native[native.index("static playback_result playback("):
+                          native.index("static void frame(void)", native.index(
+                              "static playback_result playback("
+                          ))]
+        self.assertIn("playback_queue_step(*track_index, queue_count", playback)
+        logic = (build.ROOT / "native" / "player_logic.h").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("next >= 0 && next < count", logic)
+        cleanup = playback[playback.index("cleanup:"):]
+        cleanup_steps = [
+            "download_stop_join(&job);",
+            "stb_vorbis_close(decoder);",
+            "ndspChnWaveBufClear(0);",
+            "track_stream_free(&job.stream);",
+        ]
+        offsets = [cleanup.index(step) for step in cleanup_steps]
+        self.assertEqual(offsets, sorted(offsets))
+
+    def test_readmes_present_native_client_as_primary_workflow(self):
+        root = build.ROOT.parents[1]
+        for name in ("README.md", "README_es.md"):
+            contents = (root / name).read_text(encoding="utf-8")
+            self.assertIn("Legacy proxy client (historical)"
+                          if name == "README.md"
+                          else "Cliente proxy heredado (histórico)",
+                          contents)
+            self.assertIn("spotify3ds", contents)
+            self.assertIn("does not require the proxy"
+                          if name == "README.md"
+                          else "No hace falta configurar ni ejecutar el proxy",
+                          contents)
+
     def test_local_stb_vorbis_must_match_pinned_checksum(self):
         source = self.root / "deps" / "stb_vorbis.c"
         source.parent.mkdir()

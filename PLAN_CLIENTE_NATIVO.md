@@ -186,6 +186,11 @@ pendiente.
 
 ### Fase 6: integración, robustez y documentación
 
+**Estado:** integración del target nativo, cancelación recuperable de
+búsquedas, pruebas focalizadas y documentación en ambos idiomas implementadas.
+La aceptación de reproducción completa, controles y carátula en hardware real
+sigue pendiente; no se considera validada por compilar el target.
+
 **Propósito:** retirar el comportamiento de mando remoto y validar el alcance completo en consola.
 
 **Trabajo:**
