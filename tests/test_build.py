@@ -57,7 +57,7 @@ class BuildTests(unittest.TestCase):
             for path in (build.ROOT / directory).glob("*.c")
         }
         source_names.update(Path(path).name for path in extra_sources)
-        self.assertEqual(source_dirs, ["ui", "platform3ds"])
+        self.assertEqual(source_dirs, ["ui", "lang", "platform3ds"])
         self.assertTrue((build.ROOT / "main.c").is_file())
         self.assertFalse((build.ROOT / "ui" / "main.c").exists())
         self.assertIn("main.c", extra_sources)
@@ -144,7 +144,12 @@ class BuildTests(unittest.TestCase):
             source.index("static void player_update_line("):
             source.index("static void download_worker(")
         ]
-        self.assertIn("%02u:%02u/%02d:%02d Desc:%u%% Vol:%u%%", playback)
+        self.assertIn("tr(STR_PLAYER_STATUS_FMT)", playback)
+        lang_dir = build.ROOT / "lang"
+        self.assertIn('"%02u:%02u/%02d:%02d Desc:%u%% Vol:%u%%"',
+                      (lang_dir / "lang_es.c").read_text(encoding="utf-8"))
+        self.assertIn('"%02u:%02u/%02d:%02d DL:%u%% Vol:%u%%"',
+                      (lang_dir / "lang_en.c").read_text(encoding="utf-8"))
         self.assertIn("if (!paused)", playback)
         self.assertIn("displayed_played_frames = played_frames", playback)
         self.assertIn("played_frames = displayed_played_frames", playback)
@@ -153,6 +158,16 @@ class BuildTests(unittest.TestCase):
         self.assertIn("player_update_line(status)", playback)
         self.assertIn('"\\x1b[%d;1H%-*.*s"', line_update)
         self.assertNotIn("consoleGetDefault", line_update)
+
+    def test_ui_text_comes_from_language_tables(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        self.assertIn('#include "lang.h"', app)
+        self.assertIn("language_init();", app)
+        self.assertIn("down & KEY_SELECT", app)
+        self.assertIn('cfg_set("language", lang_code(lang_get()))', app)
+        for spanish in ("Reproduccion local", "Resultados de Spotify",
+                        "Sesion Spotify lista", "emparejamiento"):
+            self.assertNotIn(spanish, app)
 
     def test_readmes_present_native_client_as_primary_workflow(self):
         root = build.ROOT.parent

@@ -9,6 +9,7 @@
 #include "ap3ds.h"
 #include "artwork.h"
 #include "cfg3ds.h"
+#include "lang.h"
 #include "login5.h"
 #include "pair3ds.h"
 #include "player_logic.h"
@@ -59,7 +60,8 @@ typedef struct {
 } search_job;
 
 typedef struct {
-	const char *category;
+	/* An id rather than text so the screen follows a language switch. */
+	str_id category;
 	char detail[256];
 } startup_error;
 
@@ -85,12 +87,74 @@ static void secure_clear(void *data, size_t len)
 		*p++ = 0;
 }
 
+/* Starts with the language saved in the config, else the console's system
+ * language when it is Spanish, else English. */
+static void language_init(void)
+{
+	char code[8];
+	lang_id lang;
+	if (cfg_get("language", code, sizeof(code)) &&
+	    lang_from_code(code, &lang)) {
+		lang_set(lang);
+		return;
+	}
+	u8 system = CFG_LANGUAGE_EN;
+	if (R_SUCCEEDED(cfguInit())) {
+		if (R_FAILED(CFGU_GetSystemLanguage(&system)))
+			system = CFG_LANGUAGE_EN;
+		cfguExit();
+	}
+	lang_set(system == CFG_LANGUAGE_ES ? LANG_ES : LANG_EN);
+}
+
+/* SELECT switches the language on any menu screen and remembers the choice.
+ * Returns true when the caller has to redraw its screen. */
+static bool language_toggled(u32 down)
+{
+	if (!(down & KEY_SELECT))
+		return false;
+	lang_set(lang_next(lang_get()));
+	cfg_set("language", lang_code(lang_get()));
+	return true;
+}
+
 static void show_player_stage(const char *message)
 {
 	consoleClear();
-	printf("Reproduccion local\n\n%s\n", message);
-	printf("\nB: cancelar   START: salir\n");
+	printf("%s\n\n%s\n", tr(STR_PLAYER_TITLE), message);
+	printf("\n%s\n", tr(STR_KEYS_CANCEL_EXIT));
 	frame();
+}
+
+static void show_player_screen(const sp_track *track, int track_index,
+                               int queue_count)
+{
+	consoleClear();
+	printf("%s\n\n", tr(STR_PLAYER_TITLE));
+	printf("%.42s\n", track->name);
+	printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
+	printf(tr(STR_PLAYER_QUEUE_FMT), track_index + 1, queue_count);
+	printf("\n\n%s\n", tr(STR_KEYS_PLAYER));
+	printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
+}
+
+static void show_playback_failed(const char *error)
+{
+	consoleClear();
+	printf("%s\n\n", tr(STR_PLAYER_FAILED_TITLE));
+	printf("%s\n\n", error[0] ? error : tr(STR_PLAYER_INTERRUPTED));
+	printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
+	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+}
+
+static void show_playback_finished(const sp_track *track)
+{
+	consoleClear();
+	printf("%s\n\n", tr(STR_PLAYER_FINISHED_TITLE));
+	printf("%.42s\n", track->name);
+	printf("%s: %.42s\n\n", tr(STR_LABEL_ARTIST), track->artist);
+	printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
+	printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void player_update_line(const char *message)
@@ -115,7 +179,7 @@ static void download_stop_join(download_job *job)
 		return;
 	job->stop = true;
 	while (!job->done && aptMainLoop()) {
-		player_update_line("Cancelando la descarga...");
+		player_update_line(tr(STR_PLAYER_DOWNLOAD_CANCELLING));
 		frame();
 	}
 	threadJoin(job->thread, U64_MAX);
@@ -130,7 +194,7 @@ static bool ensure_oauth_token(spotify_session *session, char *error,
 	    session->oauth_expires_at > time(NULL) + 60)
 		return true;
 	if (!session->refresh_token[0]) {
-		snprintf(error, error_size, "No hay una credencial para renovar OAuth.");
+		snprintf(error, error_size, "%s", tr(STR_ERR_NO_REFRESH_CREDENTIAL));
 		return false;
 	}
 
@@ -141,15 +205,15 @@ static bool ensure_oauth_token(spotify_session *session, char *error,
 		return false;
 	}
 	if (!tokens.access_token[0]) {
-		snprintf(error, error_size, "Spotify no devolvio un access token.");
+		snprintf(error, error_size, "%s", tr(STR_ERR_NO_ACCESS_TOKEN));
 		secure_clear(&tokens, sizeof(tokens));
 		return false;
 	}
 	if (tokens.refresh_token[0] &&
 	    strcmp(tokens.refresh_token, session->refresh_token) != 0) {
 		if (!cfg_save_refresh_token(tokens.refresh_token, tokens.scope)) {
-			snprintf(error, error_size,
-			         "No se pudo guardar la credencial OAuth renovada.");
+			snprintf(error, error_size, "%s",
+			         tr(STR_ERR_SAVE_RENEWED_OAUTH));
 			secure_clear(&tokens, sizeof(tokens));
 			return false;
 		}
@@ -205,7 +269,7 @@ static ap_session *open_playback_ap(spotify_session *session, char *error,
 	secure_clear(device_id, sizeof(device_id));
 	secure_clear(&info, sizeof(info));
 	if (!ap && !error[0])
-		snprintf(error, error_size, "No se pudo abrir la sesion del access point.");
+		snprintf(error, error_size, "%s", tr(STR_ERR_AP_SESSION));
 	return ap;
 }
 
@@ -275,7 +339,7 @@ static playback_result playback(spotify_session *session,
 	stb_vorbis_info info = {0};
 
 	artwork_request(&cover_art, selected->art_large);
-	show_player_stage("Cargando caratula...");
+	show_player_stage(tr(STR_PLAYER_ART_LOADING));
 	while (artwork_pending(&cover_art) && aptMainLoop()) {
 		hidScanInput();
 		u32 down = hidKeysDown();
@@ -287,8 +351,8 @@ static playback_result playback(spotify_session *session,
 			return_to_results = true;
 		}
 		player_update_line(cancelled
-		                   ? "Esperando a que termine la solicitud..."
-		                   : "Descargando y preparando la caratula...");
+		                   ? tr(STR_PLAYER_ART_WAITING)
+		                   : tr(STR_PLAYER_ART_DOWNLOADING));
 		frame();
 	}
 	if (!aptMainLoop() && !cancelled) {
@@ -298,10 +362,9 @@ static playback_result playback(spotify_session *session,
 	if (cancelled)
 		goto cleanup;
 
-	show_player_stage("Preparando la salida de audio...");
+	show_player_stage(tr(STR_PLAYER_AUDIO_PREPARING));
 	if (R_FAILED(ndspInit())) {
-		snprintf(error, sizeof(error),
-		         "No se pudo iniciar NDSP (DSP no disponible).");
+		snprintf(error, sizeof(error), "%s", tr(STR_ERR_NDSP));
 		goto cleanup;
 	}
 	ndsp_ready = true;
@@ -310,7 +373,7 @@ static playback_result playback(spotify_session *session,
 	input = malloc(PLAYER_INPUT_CAPACITY);
 	audio = linearAlloc(PLAYER_FRAMES_PER_BUFFER * 4 * PLAYER_WAVE_BUFFERS);
 	if (!input || !audio) {
-		snprintf(error, sizeof(error), "No hay memoria para los buffers de audio.");
+		snprintf(error, sizeof(error), "%s", tr(STR_ERR_AUDIO_MEMORY));
 		goto cleanup;
 	}
 	for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++) {
@@ -320,34 +383,27 @@ static playback_result playback(spotify_session *session,
 		waves[i].status = NDSP_WBUF_DONE;
 	}
 
-	show_player_stage("Autenticando el access point...");
+	show_player_stage(tr(STR_AP_AUTHENTICATING));
 	ap_session *ap = open_playback_ap(session, error, sizeof(error));
 	if (!ap)
 		goto cleanup;
 
-	show_player_stage("Obteniendo la clave de audio...");
+	show_player_stage(tr(STR_PLAYER_AUDIO_KEY));
 	int rc = track_stream_begin_cached(session->host, session->library_token,
 	                                   ap, selected, NULL, &job.stream,
 	                                   error, sizeof(error));
 	ap_close(ap);
 	if (rc != 0) {
 		if (rc == AP_KEY_REFUSED)
-			snprintf(error, sizeof(error),
-			         "La cuenta no tiene acceso a la clave de esta pista.");
+			snprintf(error, sizeof(error), "%s", tr(STR_ERR_KEY_REFUSED));
 		goto cleanup;
 	}
-	consoleClear();
-	printf("Reproduccion local\n\n");
-	printf("%.42s\n", selected->name);
-	printf("Artista: %.42s\n", selected->artist);
-	printf("Pista %d/%d de la cola\n\n", *track_index + 1, queue_count);
-	printf("A: pausa   Izq/der: pista   Arr/ab: volumen\n");
-	printf("B: resultados   START: salir\n");
+	show_player_screen(selected, *track_index, queue_count);
 	char initial_status[64];
 	snprintf(initial_status, sizeof(initial_status),
-	         "00:00/%02d:%02d Desc:0%% Vol:%u%%",
+	         tr(STR_PLAYER_STATUS_FMT), 0u, 0u,
 	         selected->duration_ms / 60000,
-	         (selected->duration_ms / 1000) % 60,
+	         (selected->duration_ms / 1000) % 60, 0u,
 	         (unsigned)(playback_volume * 100.0f + 0.5f));
 	player_update_line(initial_status);
 	frame();
@@ -355,8 +411,7 @@ static playback_result playback(spotify_session *session,
 	job.thread = threadCreate(download_worker, &job, 32 * 1024,
 	                          0x18, -2, false);
 	if (!job.thread) {
-		snprintf(error, sizeof(error),
-		         "No se pudo iniciar la descarga en segundo plano.");
+		snprintf(error, sizeof(error), "%s", tr(STR_ERR_DOWNLOAD_THREAD));
 		goto cleanup;
 	}
 
@@ -382,6 +437,9 @@ static playback_result playback(spotify_session *session,
 			paused = !paused;
 			ndspChnSetPaused(0, paused);
 		}
+		/* The status line below is rewritten on this same iteration. */
+		if (language_toggled(down))
+			show_player_screen(selected, *track_index, queue_count);
 		if ((down & KEY_LEFT) || (down & KEY_RIGHT)) {
 			int direction = (down & KEY_LEFT) ? -1 : 1;
 			int next = playback_queue_step(*track_index, queue_count,
@@ -432,8 +490,7 @@ static playback_result playback(spotify_session *session,
 		                   ? (unsigned)(played_frames / sample_rate) : 0;
 		unsigned volume = (unsigned)(playback_volume * 100.0f + 0.5f);
 		char status[64];
-		snprintf(status, sizeof(status),
-		         "%02u:%02u/%02d:%02d Desc:%u%% Vol:%u%%",
+		snprintf(status, sizeof(status), tr(STR_PLAYER_STATUS_FMT),
 		         elapsed / 60, elapsed % 60,
 		         selected->duration_ms / 60000,
 		         (selected->duration_ms / 1000) % 60,
@@ -457,8 +514,8 @@ static playback_result playback(spotify_session *session,
 			                                   &consumed, &vorbis_error, NULL);
 			if (decoder) {
 				if (consumed < 0 || (size_t)consumed > input_len) {
-					snprintf(error, sizeof(error),
-					         "El decodificador devolvio un desplazamiento invalido.");
+					snprintf(error, sizeof(error), "%s",
+					         tr(STR_ERR_DECODER_OFFSET));
 					break;
 				}
 				memmove(input, input + consumed, input_len - (size_t)consumed);
@@ -467,7 +524,7 @@ static playback_result playback(spotify_session *session,
 				if ((info.channels != 1 && info.channels != 2) ||
 				    info.sample_rate == 0) {
 					snprintf(error, sizeof(error),
-					         "Formato Vorbis no compatible (%d canales).",
+					         tr(STR_ERR_VORBIS_CHANNELS_FMT),
 					         info.channels);
 					break;
 				}
@@ -475,7 +532,7 @@ static playback_result playback(spotify_session *session,
 				decoder_open = true;
 			} else if (vorbis_error != VORBIS_need_more_data) {
 				snprintf(error, sizeof(error),
-				         "No se pudo abrir el audio Vorbis (error %d).",
+				         tr(STR_ERR_VORBIS_OPEN_FMT),
 				         vorbis_error);
 				break;
 			}
@@ -531,8 +588,8 @@ static playback_result playback(spotify_session *session,
 			               decoder, input, (int)input_len, &channels,
 			               &decoded, &samples);
 			if (used < 0 || (size_t)used > input_len) {
-				snprintf(error, sizeof(error),
-				         "El decodificador devolvio un bloque invalido.");
+				snprintf(error, sizeof(error), "%s",
+				         tr(STR_ERR_DECODER_BLOCK));
 				break;
 			}
 			if (used > 0) {
@@ -541,8 +598,8 @@ static playback_result playback(spotify_session *session,
 			}
 			if (samples > 0) {
 				if (channels != info.channels) {
-					snprintf(error, sizeof(error),
-					         "El numero de canales Vorbis cambio durante la pista.");
+					snprintf(error, sizeof(error), "%s",
+					         tr(STR_ERR_CHANNELS_CHANGED));
 					break;
 				}
 				decoded_samples = samples;
@@ -560,13 +617,12 @@ static playback_result playback(spotify_session *session,
 		                    (!decoder_open || decoder_needs_more);
 		if (no_more_data && !eof) {
 			if (job.stream.dl_failed) {
-				snprintf(error, sizeof(error), "Fallo de descarga: %.190s",
-				         job.stream.dl_err);
+				snprintf(error, sizeof(error),
+				         tr(STR_ERR_DOWNLOAD_FAILED_FMT), job.stream.dl_err);
 				break;
 			}
 			if (!decoder_open) {
-				snprintf(error, sizeof(error),
-				         "La descarga no contiene una pista Vorbis valida.");
+				snprintf(error, sizeof(error), "%s", tr(STR_ERR_NO_VORBIS));
 				break;
 			}
 			input_len = 0;
@@ -574,8 +630,8 @@ static playback_result playback(spotify_session *session,
 		}
 
 		if (input_len == PLAYER_INPUT_CAPACITY) {
-			snprintf(error, sizeof(error),
-			         "Un bloque Vorbis supera el limite de memoria.");
+			snprintf(error, sizeof(error), "%s",
+			         tr(STR_ERR_VORBIS_TOO_LARGE));
 			break;
 		}
 		if (eof && pcm_frames == 0 && !final_wave_submitted)
@@ -605,8 +661,8 @@ static playback_result playback(spotify_session *session,
 			if (!playing) {
 				success = total_audio_frames > 0;
 				if (!success)
-					snprintf(error, sizeof(error),
-					         "La pista no contiene audio reproducible.");
+					snprintf(error, sizeof(error), "%s",
+					         tr(STR_ERR_NO_AUDIO));
 				break;
 			}
 		}
@@ -645,10 +701,7 @@ cleanup:
 	if (!success) {
 		if (return_to_results)
 			return PLAYER_RETURN_RESULTS;
-		consoleClear();
-		printf("No se pudo reproducir la pista\n\n");
-		printf("%s\n\n", error[0] ? error : "La reproduccion se interrumpio.");
-		printf("B: resultados   START: salir\n");
+		show_playback_failed(error);
 		while (aptMainLoop()) {
 			hidScanInput();
 			u32 down = hidKeysDown();
@@ -656,16 +709,14 @@ cleanup:
 				return PLAYER_EXIT_APP;
 			if (down & KEY_B)
 				return PLAYER_RETURN_RESULTS;
+			if (language_toggled(down))
+				show_playback_failed(error);
 			frame();
 		}
 		return PLAYER_EXIT_APP;
 	}
 
-	consoleClear();
-	printf("Pista terminada\n\n");
-	printf("%.42s\n", selected->name);
-	printf("Artista: %.42s\n\n", selected->artist);
-	printf("B: resultados   START: salir\n");
+	show_playback_finished(selected);
 	while (aptMainLoop()) {
 		hidScanInput();
 		u32 down = hidKeysDown();
@@ -673,6 +724,8 @@ cleanup:
 			return PLAYER_EXIT_APP;
 		if (down & KEY_B)
 			return PLAYER_RETURN_RESULTS;
+		if (language_toggled(down))
+			show_playback_finished(selected);
 		frame();
 	}
 	return PLAYER_EXIT_APP;
@@ -690,16 +743,16 @@ static void frame(void)
 static void show_progress(const char *message)
 {
 	consoleClear();
-	printf("Spotify 3DS - iniciando sesion directa\n\n%s\n", message);
+	printf("%s\n\n%s\n", tr(STR_LOGIN_TITLE), message);
 	frame();
 }
 
 static void show_search_progress(const char *query)
 {
 	consoleClear();
-	printf("Buscando canciones\n\n");
-	printf("Consulta: %s\n\n", query);
-	printf("Conectando con Spotify y cargando resultados...\n");
+	printf("%s\n\n", tr(STR_SEARCH_PROGRESS_TITLE));
+	printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
+	printf("%s\n", tr(STR_SEARCH_CONNECTING));
 	frame();
 }
 
@@ -726,7 +779,7 @@ static void search_worker(void *arg)
 		job->result = -2;
 	} else if (job->count < 0) {
 		snprintf(job->error, sizeof(job->error), "%s",
-		         error[0] ? error : "No se pudieron cargar los resultados.");
+		         error[0] ? error : tr(STR_ERR_SEARCH_LOAD));
 		job->result = -1;
 	} else {
 		job->result = 0;
@@ -750,8 +803,8 @@ static search_result search_tracks(const spotify_session *session,
 	Thread thread = threadCreate(search_worker, &search, 16 * 1024,
 	                             0x18, -2, false);
 	if (!thread) {
-		snprintf(search.error, sizeof(search.error),
-		         "No se pudo iniciar la tarea de busqueda.");
+		snprintf(search.error, sizeof(search.error), "%s",
+		         tr(STR_ERR_SEARCH_THREAD));
 		search.result = -1;
 		secure_clear(search.library_token, sizeof(search.library_token));
 		return SEARCH_REQUEST_ERROR;
@@ -765,7 +818,7 @@ static search_result search_tracks(const spotify_session *session,
 		if (!search.cancel_requested && (down & (KEY_B | KEY_START)))
 			search.cancel_requested = true;
 		if (search.cancel_requested)
-			player_update_line("Cancelando al terminar la solicitud de red...");
+			player_update_line(tr(STR_SEARCH_CANCELLING));
 		frame();
 	}
 	if (!aptMainLoop()) {
@@ -788,7 +841,7 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 	swkbdInit(&keyboard, SWKBD_TYPE_WESTERN, 1, SEARCH_QUERY_SIZE - 1);
 	swkbdSetValidation(&keyboard, SWKBD_NOTEMPTY_NOTBLANK,
 	                   SWKBD_FILTER_PROFANITY, -1);
-	swkbdSetHintText(&keyboard, "Nombre de cancion o artista");
+	swkbdSetHintText(&keyboard, tr(STR_SEARCH_HINT));
 	return swkbdInputText(&keyboard, query, SEARCH_QUERY_SIZE) ==
 	       SWKBD_BUTTON_CONFIRM;
 }
@@ -796,20 +849,20 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 static void show_search_error(const char *query, const char *error)
 {
 	consoleClear();
-	printf("No se pudo completar la busqueda\n\n");
-	printf("Consulta: %s\n\n", query);
+	printf("%s\n\n", tr(STR_SEARCH_FAILED_TITLE));
+	printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
 	printf("%s\n\n", error);
-	if (strstr(error, "HTTP 401")) {
-		printf("La sesion fue rechazada. Pulsa B y luego X para reconectar.\n\n");
-	} else if (strstr(error, "HTTP 403")) {
-		printf("Spotify no permite esta operacion para la cuenta o pista.\n\n");
-	} else if (strstr(error, "HTTP 429")) {
-		printf("Se alcanzo el limite de solicitudes; espera antes de reintentar.\n\n");
-	} else {
-		printf("Comprueba el Wi-Fi y vuelve a intentarlo.\n\n");
-	}
-	printf("A: reintentar   Y: cambiar consulta\n");
-	printf("B: volver   START: salir\n");
+	str_id advice = STR_SEARCH_CHECK_WIFI;
+	if (strstr(error, "HTTP 401"))
+		advice = STR_SEARCH_HTTP_401;
+	else if (strstr(error, "HTTP 403"))
+		advice = STR_SEARCH_HTTP_403;
+	else if (strstr(error, "HTTP 429"))
+		advice = STR_SEARCH_HTTP_429;
+	printf("%s\n\n", tr(advice));
+	printf("%s\n", tr(STR_KEYS_SEARCH_RETRY));
+	printf("%s\n", tr(STR_KEYS_BACK_EXIT));
+	printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void show_results(const char *query, int selected)
@@ -818,12 +871,13 @@ static void show_results(const char *query, int selected)
 	int page_count = (search.count + RESULTS_PER_PAGE - 1) /
 	                 RESULTS_PER_PAGE;
 	consoleClear();
-	printf("Resultados de Spotify\n");
-	printf("Consulta: %.44s\n\n", query);
+	printf("%s\n", tr(STR_RESULTS_TITLE));
+	printf("%s: %.44s\n\n", tr(STR_LABEL_QUERY), query);
 	if (search.count == 0) {
-		printf("No se encontraron canciones.\n\n");
-		printf("Y: nueva busqueda   B: volver\n");
-		printf("START: salir\n");
+		printf("%s\n\n", tr(STR_RESULTS_EMPTY));
+		printf("%s\n", tr(STR_KEYS_NO_RESULTS));
+		printf("%s\n", tr(STR_KEYS_EXIT));
+		printf("%s\n", tr(STR_KEYS_LANGUAGE));
 		return;
 	}
 
@@ -833,14 +887,16 @@ static void show_results(const char *query, int selected)
 		int seconds = track->duration_ms > 0
 		              ? track->duration_ms / 1000 : 0;
 		printf("%c %02d. %.39s\n", i == selected ? '>' : ' ', i + 1,
-		       track->name[0] ? track->name : "(sin titulo)");
+		       track->name[0] ? track->name : tr(STR_UNTITLED));
 		printf("   %.29s  %d:%02d\n", track->artist[0] ? track->artist
-		       : "(artista desconocido)", seconds / 60, seconds % 60);
+		       : tr(STR_UNKNOWN_ARTIST), seconds / 60, seconds % 60);
 	}
-	printf("\nPagina %d/%d  (%d canciones)\n",
+	printf("\n");
+	printf(tr(STR_RESULTS_PAGE_FMT),
 	       first / RESULTS_PER_PAGE + 1, page_count, search.count);
-	printf("Arriba/abajo: mover  A: seleccionar\n");
-	printf("Y: nueva busqueda  B: volver  START: salir\n");
+	printf("\n%s\n", tr(STR_KEYS_RESULTS_MOVE));
+	printf("%s\n", tr(STR_KEYS_RESULTS_NAV));
+	printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void prepare_queue(void)
@@ -854,17 +910,19 @@ static void show_selection(int selected)
 {
 	const sp_track *track = &playback_queue[selected];
 	consoleClear();
-	printf("Cancion seleccionada\n\n");
+	printf("%s\n\n", tr(STR_SELECTION_TITLE));
 	printf("%.42s\n", track->name);
-	printf("Artista: %.42s\n", track->artist);
-	printf("Album: %.42s\n", track->album);
-	printf("Duracion: %d:%02d\n\n",
+	printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
+	printf("%s: %.42s\n", tr(STR_LABEL_ALBUM), track->album);
+	printf("%s: %d:%02d\n\n", tr(STR_LABEL_DURATION),
 	       track->duration_ms / 60000,
 	       (track->duration_ms / 1000) % 60);
-	printf("Cola: %d/%d\n", selected + 1, playback_queue_count);
-	printf("A: reproducir   B: resultados\n");
-	printf("Y: nueva busqueda\n");
-	printf("X: sesion   START: salir\n");
+	printf("%s: %d/%d\n", tr(STR_LABEL_QUEUE), selected + 1,
+	       playback_queue_count);
+	printf("%s\n", tr(STR_KEYS_SELECTION_PLAY));
+	printf("%s\n", tr(STR_KEYS_SELECTION_SEARCH));
+	printf("%s\n", tr(STR_KEYS_SELECTION_SESSION));
+	printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static bool search_flow(spotify_session *session,
@@ -892,6 +950,8 @@ static bool search_flow(spotify_session *session,
 						return true;
 					if (down & KEY_Y)
 						break;
+					if (language_toggled(down))
+						show_search_error(query, search.error);
 					if (down & KEY_A) {
 						result = search_tracks(session, query);
 						if (result == SEARCH_REQUEST_CANCELLED)
@@ -925,6 +985,8 @@ show_results_screen:
 						return true;
 					if (down & KEY_Y)
 						break;
+					if (language_toggled(down))
+						show_results(query, 0);
 					frame();
 				}
 				if (!aptMainLoop())
@@ -955,6 +1017,8 @@ show_results_screen:
 				selected++;
 				selection_changed = true;
 			}
+			if (language_toggled(down))
+				selection_changed = true;
 			if (selection_changed)
 				show_results(query, selected);
 			if (down & KEY_A) {
@@ -972,6 +1036,8 @@ show_results_screen:
 						break;
 					if (down & KEY_Y)
 						break;
+					if (language_toggled(down))
+						show_selection(queue_index);
 					if (down & KEY_A) {
 						for (;;) {
 							playback_result result =
@@ -1017,23 +1083,24 @@ static void show_pair_screen(const pair_request *req, int interval,
                              const char *status)
 {
 	consoleClear();
-	printf("Spotify 3DS - emparejamiento\n\n");
-	printf("Abre esta direccion en otro dispositivo:\n%s\n\n",
-	       req->verification_uri);
-	printf("Codigo: %s\n", req->user_code);
+	printf("%s\n\n", tr(STR_PAIR_TITLE));
+	printf("%s\n%s\n\n", tr(STR_PAIR_OPEN_URL), req->verification_uri);
+	printf("%s: %s\n", tr(STR_LABEL_CODE), req->user_code);
 	if (req->verification_uri_complete[0])
-		printf("\nEnlace directo:\n%s\n", req->verification_uri_complete);
+		printf("\n%s\n%s\n", tr(STR_PAIR_DIRECT_LINK),
+		       req->verification_uri_complete);
 	printf("\n%s\n", status);
-	printf("Comprobando cada %d s. B cancela.\n", interval);
+	printf(tr(STR_PAIR_POLL_FMT), interval);
+	printf("\n%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static bool pair_account(spotify_tokens *tokens, startup_error *error)
 {
 	pair_request req;
 	char detail[192] = {0};
-	show_progress("Solicitando un codigo de emparejamiento...");
+	show_progress(tr(STR_PAIR_REQUESTING));
 	if (pair_begin(&req, detail, sizeof(detail)) != 0) {
-		error->category = "Emparejamiento";
+		error->category = STR_CAT_PAIRING;
 		snprintf(error->detail, sizeof(error->detail), "%s", detail);
 		secure_clear(&req, sizeof(req));
 		return false;
@@ -1041,18 +1108,22 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 
 	int interval = req.interval_s > 0 ? req.interval_s : 5;
 	time_t deadline = time(NULL) + req.expires_in_s;
-	char status[192] = "Esperando autorizacion...";
+	char status[192];
+	snprintf(status, sizeof(status), "%s", tr(STR_PAIR_WAITING));
 	while (aptMainLoop()) {
 		show_pair_screen(&req, interval, status);
 		for (int i = 0; i < interval * 60; i++) {
 			hidScanInput();
-			if (hidKeysDown() & KEY_B) {
-				error->category = "Emparejamiento cancelado";
-				snprintf(error->detail, sizeof(error->detail),
-				         "No se modificaron las credenciales guardadas.");
+			u32 down = hidKeysDown();
+			if (down & KEY_B) {
+				error->category = STR_CAT_PAIR_CANCELLED;
+				snprintf(error->detail, sizeof(error->detail), "%s",
+				         tr(STR_PAIR_CREDENTIALS_UNCHANGED));
 				secure_clear(&req, sizeof(req));
 				return false;
 			}
+			if (language_toggled(down))
+				show_pair_screen(&req, interval, status);
 			frame();
 			if (!aptMainLoop()) {
 				secure_clear(&req, sizeof(req));
@@ -1060,9 +1131,9 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 			}
 		}
 		if (time(NULL) >= deadline) {
-			error->category = "Codigo de emparejamiento caducado";
-			snprintf(error->detail, sizeof(error->detail),
-			         "Vuelve a intentarlo para obtener un codigo nuevo.");
+			error->category = STR_CAT_PAIR_EXPIRED;
+			snprintf(error->detail, sizeof(error->detail), "%s",
+			         tr(STR_PAIR_RETRY_NEW_CODE));
 			secure_clear(&req, sizeof(req));
 			return false;
 		}
@@ -1070,23 +1141,23 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 		detail[0] = '\0';
 		pair_status result = pair_poll(&req, tokens, detail, sizeof(detail));
 		if (result == PAIR_PENDING) {
-			snprintf(status, sizeof(status), "Aun esperando autorizacion.%s%s",
-			         detail[0] ? " " : "", detail);
+			snprintf(status, sizeof(status), "%s%s%s",
+			         tr(STR_PAIR_STILL_WAITING), detail[0] ? " " : "",
+			         detail);
 			continue;
 		}
 		if (result == PAIR_SLOW_DOWN) {
 			interval += 5;
-			snprintf(status, sizeof(status),
-			         "Spotify pidio esperar mas; nuevo intervalo: %d s.",
+			snprintf(status, sizeof(status), tr(STR_PAIR_SLOW_DOWN_FMT),
 			         interval);
 			continue;
 		}
 		if (result == PAIR_OK) {
 			if (!tokens->refresh_token[0] ||
 			    !cfg_save_refresh_token(tokens->refresh_token, tokens->scope)) {
-				error->category = "No se pudieron guardar las credenciales";
-				snprintf(error->detail, sizeof(error->detail),
-				         "Comprueba el espacio disponible en la tarjeta SD.");
+				error->category = STR_CAT_SAVE_CREDENTIALS;
+				snprintf(error->detail, sizeof(error->detail), "%s",
+				         tr(STR_CHECK_SD_SPACE));
 				secure_clear(tokens, sizeof(*tokens));
 				secure_clear(&req, sizeof(req));
 				return false;
@@ -1096,20 +1167,20 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 		}
 
 		error->category = result == PAIR_DENIED
-		                  ? "Emparejamiento rechazado"
+		                  ? STR_CAT_PAIR_DENIED
 		                  : result == PAIR_EXPIRED
-		                    ? "Codigo de emparejamiento caducado"
-		                    : "Fallo de emparejamiento";
+		                    ? STR_CAT_PAIR_EXPIRED
+		                    : STR_CAT_PAIR_FAILED;
 		snprintf(error->detail, sizeof(error->detail), "%s",
-		         detail[0] ? detail : "No se recibio una respuesta valida.");
+		         detail[0] ? detail : tr(STR_NO_VALID_RESPONSE));
 		secure_clear(tokens, sizeof(*tokens));
 		secure_clear(&req, sizeof(req));
 		return false;
 	}
 	secure_clear(&req, sizeof(req));
-	error->category = "Emparejamiento interrumpido";
-	snprintf(error->detail, sizeof(error->detail),
-	         "La aplicacion se esta cerrando.");
+	error->category = STR_CAT_PAIR_INTERRUPTED;
+	snprintf(error->detail, sizeof(error->detail), "%s",
+	         tr(STR_APP_CLOSING));
 	return false;
 }
 
@@ -1121,13 +1192,13 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	ap_device_id(device_id, sizeof(device_id));
 
 	ap_candidate candidates[AP_MAX_CANDIDATES];
-	show_progress("Buscando los access points de Spotify...");
+	show_progress(tr(STR_AP_SEARCHING));
 	int count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
 	                            detail, sizeof(detail));
 	if (count < 1) {
-		error->category = "No se pudo resolver el access point";
+		error->category = STR_CAT_AP_RESOLVE;
 		snprintf(error->detail, sizeof(error->detail),
-		         "Comprueba Wi-Fi, DNS y TLS. %s", detail);
+		         tr(STR_CHECK_NETWORK_FMT), detail);
 		secure_clear(tokens, sizeof(*tokens));
 		return false;
 	}
@@ -1135,7 +1206,7 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	ap_info info;
 	memset(&info, 0, sizeof(info));
 	int tried = 0;
-	show_progress("Autenticando con el access point...");
+	show_progress(tr(STR_AP_AUTHENTICATING));
 	ap_session *ap = ap_login_any(candidates, count, tokens->access_token,
 	                              device_id, &info, &tried,
 	                              detail, sizeof(detail));
@@ -1152,20 +1223,21 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	secure_clear(tokens, sizeof(*tokens));
 	if (!ap) {
 		error->category = info.login_error
-		                  ? "La cuenta fue rechazada por el access point"
-		                  : "Fallo de conexion al access point";
+		                  ? STR_CAT_AP_REJECTED
+		                  : STR_CAT_AP_CONNECT;
 		if (info.login_error)
-			snprintf(error->detail, sizeof(error->detail), "%s (codigo %d).",
+			snprintf(error->detail, sizeof(error->detail),
+			         tr(STR_ERROR_CODE_FMT),
 			         ap_login_error_text(info.login_error), info.login_error);
 		else
 			snprintf(error->detail, sizeof(error->detail), "%s",
-			         detail[0] ? detail : "No respondio ningun access point.");
+			         detail[0] ? detail : tr(STR_NO_AP_RESPONDED));
 		secure_clear(&info, sizeof(info));
 		return false;
 	}
 
 	login5_token library;
-	show_progress("Abriendo la sesion de biblioteca...");
+	show_progress(tr(STR_LIBRARY_OPENING));
 	int rc = login5_from_credentials(info.username, info.reusable,
 	                                 info.reusable_len, device_id,
 	                                 &library, detail, sizeof(detail));
@@ -1174,21 +1246,21 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	secure_clear(device_id, sizeof(device_id));
 	if (rc != 0) {
 		error->category = strstr(detail, "login5 refused:")
-		                  ? "La cuenta rechazo el inicio de sesion"
-		                  : "Fallo TLS o de inicio de sesion Spotify";
+		                  ? STR_CAT_LOGIN_REFUSED
+		                  : STR_CAT_LOGIN_FAILED;
 		snprintf(error->detail, sizeof(error->detail), "%s", detail);
 		secure_clear(&library, sizeof(library));
 		return false;
 	}
 
 	detail[0] = '\0';
-	show_progress("Resolviendo el servidor Spotify...");
+	show_progress(tr(STR_SERVER_RESOLVING));
 	rc = sp_resolve(session->host, sizeof(session->host),
 	                 detail, sizeof(detail));
 	if (rc != 0 || !session->host[0]) {
-		error->category = "No se pudo resolver el servidor Spotify";
+		error->category = STR_CAT_SERVER_RESOLVE;
 		snprintf(error->detail, sizeof(error->detail), "%s",
-		         detail[0] ? detail : "Respuesta de servidor no valida.");
+		         detail[0] ? detail : tr(STR_INVALID_SERVER_RESPONSE));
 		secure_clear(&library, sizeof(library));
 		return false;
 	}
@@ -1213,32 +1285,32 @@ static bool start_session(bool force_pair, startup_error *error,
 	}
 
 	char detail[192] = {0};
-	show_progress("Renovando la credencial de Spotify...");
+	show_progress(tr(STR_CREDENTIAL_RENEWING));
 	if (token_refresh(stored, &tokens, detail, sizeof(detail)) != 0) {
 		secure_clear(stored, sizeof(stored));
 		secure_clear(&tokens, sizeof(tokens));
 		if (strstr(detail, "invalid_grant")) {
 			consoleClear();
-			printf("La credencial guardada ha caducado.\n");
-			printf("Se necesita emparejar de nuevo.\n");
+			printf("%s\n", tr(STR_CREDENTIAL_EXPIRED));
+			printf("%s\n", tr(STR_PAIR_AGAIN_NEEDED));
 			for (int i = 0; i < 90 && aptMainLoop(); i++)
 				frame();
 			if (!pair_account(&tokens, error))
 				return false;
 			return resolve_and_login(&tokens, error, session);
 		}
-		error->category = "Fallo OAuth o TLS al renovar la credencial";
+		error->category = STR_CAT_OAUTH_RENEW;
 		snprintf(error->detail, sizeof(error->detail), "%s",
-		         detail[0] ? detail : "No se recibio una respuesta valida.");
+		         detail[0] ? detail : tr(STR_NO_VALID_RESPONSE));
 		return false;
 	}
 
 	if (tokens.refresh_token[0] &&
 	    strcmp(tokens.refresh_token, stored) != 0 &&
 	    !cfg_save_refresh_token(tokens.refresh_token, tokens.scope)) {
-		error->category = "No se pudo guardar la credencial renovada";
-		snprintf(error->detail, sizeof(error->detail),
-		         "Comprueba el espacio disponible en la tarjeta SD.");
+		error->category = STR_CAT_SAVE_RENEWED;
+		snprintf(error->detail, sizeof(error->detail), "%s",
+		         tr(STR_CHECK_SD_SPACE));
 		secure_clear(stored, sizeof(stored));
 		secure_clear(&tokens, sizeof(tokens));
 		return false;
@@ -1253,22 +1325,26 @@ static bool start_session(bool force_pair, startup_error *error,
 static void show_error(const startup_error *error)
 {
 	consoleClear();
-	printf("No se pudo iniciar la sesion\n\n");
-	printf("%s\n\n", error->category ? error->category : "Error");
+	printf("%s\n\n", tr(STR_SESSION_FAILED_TITLE));
+	printf("%s\n\n", tr(error->category));
 	printf("%s\n\n", error->detail);
-	printf("A: reintentar   Y: emparejar   START: salir\n");
+	printf("%s\n", tr(STR_KEYS_STARTUP_RETRY));
+	printf("%s\n", tr(STR_KEYS_EXIT));
+	printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void show_session_ready(const spotify_session *session, const char *query)
 {
 	consoleClear();
-	printf("Sesion Spotify lista\n\n");
-	printf("Servidor: %s\n\n", session->host);
-	printf("A: buscar canciones\n");
-	printf("Consulta anterior: %.40s\n\n", query[0] ? query : "(ninguna)");
-	printf("X: volver a conectar\n");
-	printf("Y: emparejar otra cuenta\n");
-	printf("START: salir\n");
+	printf("%s\n\n", tr(STR_SESSION_READY_TITLE));
+	printf("%s: %s\n\n", tr(STR_LABEL_SERVER), session->host);
+	printf("%s\n", tr(STR_KEYS_SESSION_SEARCH));
+	printf("%s: %.40s\n\n", tr(STR_LABEL_PREVIOUS_QUERY),
+	       query[0] ? query : tr(STR_NONE));
+	printf("%s\n", tr(STR_KEYS_SESSION_RECONNECT));
+	printf("%s\n", tr(STR_KEYS_SESSION_PAIR));
+	printf("%s\n", tr(STR_KEYS_EXIT));
+	printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 int main(int argc, char **argv)
@@ -1277,6 +1353,7 @@ int main(int argc, char **argv)
 	gfxInitDefault();
 	consoleInit(GFX_BOTTOM, NULL);
 	cfg_set_path((argv && argv[0]) ? argv[0] : NULL);
+	language_init();
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
 	bool soc_ready = false;
@@ -1287,16 +1364,16 @@ int main(int argc, char **argv)
 	char query[SEARCH_QUERY_SIZE] = {0};
 
 	if (!soc_buffer || R_FAILED(socInit(soc_buffer, SOC_BUFFER))) {
-		error.category = "No hay servicio de red";
-		snprintf(error.detail, sizeof(error.detail),
-		         "Comprueba que el Wi-Fi de la consola esta conectado.");
+		error.category = STR_CAT_NO_NETWORK;
+		snprintf(error.detail, sizeof(error.detail), "%s",
+		         tr(STR_CHECK_WIFI_CONNECTED));
 		goto failed;
 	}
 	soc_ready = true;
 	if (R_FAILED(psInit())) {
-		error.category = "No se pudo iniciar el servicio de seguridad";
-		snprintf(error.detail, sizeof(error.detail),
-		         "No se pudo habilitar la fuente de aleatoriedad de la consola.");
+		error.category = STR_CAT_PS_INIT;
+		snprintf(error.detail, sizeof(error.detail), "%s",
+		         tr(STR_PS_ENTROPY));
 		goto failed;
 	}
 	ps_ready = true;
@@ -1306,7 +1383,7 @@ int main(int argc, char **argv)
 		if (rc != 0) {
 			char reason[128];
 			tls_strerror(rc, reason, sizeof(reason));
-			error.category = "No se pudo inicializar TLS";
+			error.category = STR_CAT_TLS_INIT;
 			snprintf(error.detail, sizeof(error.detail), "%s", reason);
 			goto failed;
 		}
@@ -1316,8 +1393,8 @@ int main(int argc, char **argv)
 	bool force_pair = false;
 	for (;;) {
 		consoleClear();
-		printf("Spotify 3DS - iniciando sesion directa\n\n");
-		printf("Renovando credenciales y conectando...\n");
+		printf("%s\n\n", tr(STR_LOGIN_TITLE));
+		printf("%s\n", tr(STR_LOGIN_CONNECTING));
 		frame();
 		if (start_session(force_pair, &error, &session)) {
 			show_session_ready(&session, query);
@@ -1341,6 +1418,8 @@ int main(int argc, char **argv)
 					force_pair = true;
 					break;
 				}
+				if (language_toggled(down))
+					show_session_ready(&session, query);
 				frame();
 				if (!aptMainLoop())
 					goto done;
@@ -1361,6 +1440,8 @@ int main(int argc, char **argv)
 					force_pair = true;
 					break;
 				}
+				if (language_toggled(down))
+					show_error(&error);
 				frame();
 				if (!aptMainLoop())
 					goto done;
@@ -1372,8 +1453,11 @@ failed:
 	show_error(&error);
 	while (aptMainLoop()) {
 		hidScanInput();
-		if (hidKeysDown() & KEY_START)
+		u32 down = hidKeysDown();
+		if (down & KEY_START)
 			break;
+		if (language_toggled(down))
+			show_error(&error);
 		frame();
 	}
 
