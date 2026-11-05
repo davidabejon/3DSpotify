@@ -65,28 +65,41 @@ void http_reply_free(http_reply *r)
 	r->len = 0;
 }
 
-/* Reads the whole response into one buffer. These responses are small; the
- * audio path later streams instead of doing this.
+/* Reads the whole response, bounded by `limit`. These responses are small;
+ * the audio path later streams instead of doing this.
  *
  * Reads land in RECV_CHUNK blocks rather than byte by byte: on this console the
  * cost is the number of syscalls, not the number of bytes. */
 static char *slurp(tls_conn *c, size_t *len, size_t limit, char *err, size_t errlen)
 {
-	size_t cap = 8192, have = 0;
+	size_t cap = limit < 8191 ? limit + 1 : 8192;
+	size_t have = 0;
 	char *buf = malloc(cap);
 	if (!buf) {
 		snprintf(err, errlen, "out of memory");
 		return NULL;
 	}
 	for (;;) {
-		if (have + RECV_CHUNK + 1 > cap) {
-			if (cap >= limit) {
+		if (have == limit) {
+			char extra;
+			int n = tls_read(c, &extra, 1);
+			if (n == 0)
+				break;
+			if (n < 0) {
+				char reason[128];
+				tls_strerror(n, reason, sizeof(reason));
+				snprintf(err, errlen, "read: %s", reason);
+			} else {
 				snprintf(err, errlen, "response over %u bytes",
 				         (unsigned)limit);
-				free(buf);
-				return NULL;
 			}
+			free(buf);
+			return NULL;
+		}
+		if (have + 1 == cap) {
 			size_t want = cap * 2;
+			if (want > limit + 1)
+				want = limit + 1;
 			char *bigger = realloc(buf, want);
 			if (!bigger) {
 				snprintf(err, errlen, "out of memory at %u bytes", (unsigned)want);
@@ -96,7 +109,10 @@ static char *slurp(tls_conn *c, size_t *len, size_t limit, char *err, size_t err
 			buf = bigger;
 			cap = want;
 		}
-		int n = tls_read(c, buf + have, RECV_CHUNK);
+		size_t request = cap - have - 1;
+		if (request > RECV_CHUNK)
+			request = RECV_CHUNK;
+		int n = tls_read(c, buf + have, request);
 		if (n == 0)
 			break;                 /* the server closed, which is the signal */
 		if (n < 0) {

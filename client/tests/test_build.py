@@ -65,6 +65,18 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(mbedtls, "release")
         self.assertIn("deps/stb_vorbis.c", extra_sources)
 
+    def test_native_target_uses_only_direct_artwork_pipeline(self):
+        source_dirs, _, _, _ = build.APPS["spotify3ds"]
+        native_sources = list((build.ROOT / "native").glob("*.c"))
+        implementations = [
+            source for source in native_sources
+            if "STB_IMAGE_IMPLEMENTATION" in source.read_text(encoding="utf-8")
+        ]
+        self.assertIn("native", source_dirs)
+        self.assertEqual([source.name for source in implementations],
+                         ["artwork.c"])
+        self.assertTrue((build.ROOT / "native" / "artwork.h").is_file())
+
     def test_local_stb_vorbis_must_match_pinned_checksum(self):
         source = self.root / "deps" / "stb_vorbis.c"
         source.parent.mkdir()

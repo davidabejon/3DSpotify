@@ -164,6 +164,11 @@ conexión y de las respuestas de Spotify.
 
 ### Fase 5: carátula en pantalla superior
 
+**Estado:** implementada en `client/source/native`; descarga HTTPS limitada al
+host `i.scdn.co`, decodificación stb_image en worker, fondo de reserva y
+renderizado desde el hilo principal. La validación en hardware real sigue
+pendiente.
+
 **Propósito:** recuperar la carátula sin depender del proxy y sin desactivar la validación TLS.
 
 **Trabajo:**

@@ -7,6 +7,7 @@
 #include <3ds/thread.h>
 
 #include "ap3ds.h"
+#include "artwork.h"
 #include "cfg3ds.h"
 #include "login5.h"
 #include "pair3ds.h"
@@ -67,6 +68,7 @@ static search_job search;
 static sp_track playback_queue[SEARCH_LIMIT];
 static int playback_queue_count;
 static float playback_volume = 0.7f;
+static artwork_state cover_art;
 
 static void frame(void);
 
@@ -279,6 +281,30 @@ static playback_result playback(spotify_session *session,
 	int decoded_samples = 0;
 	int decoded_offset = 0;
 	stb_vorbis_info info = {0};
+
+	artwork_request(&cover_art, selected->art_large);
+	show_player_stage("Cargando caratula...");
+	while (artwork_pending(&cover_art) && aptMainLoop()) {
+		hidScanInput();
+		u32 down = hidKeysDown();
+		if (down & KEY_START) {
+			cancelled = true;
+			exit_requested = true;
+		} else if (down & KEY_B) {
+			cancelled = true;
+			return_to_results = true;
+		}
+		player_update_line(cancelled
+		                   ? "Esperando a que termine la solicitud..."
+		                   : "Descargando y preparando la caratula...");
+		frame();
+	}
+	if (!aptMainLoop() && !cancelled) {
+		cancelled = true;
+		exit_requested = true;
+	}
+	if (cancelled)
+		goto cleanup;
 
 	show_player_stage("Preparando la salida de audio...");
 	if (R_FAILED(ndspInit())) {
@@ -667,6 +693,8 @@ cleanup:
 
 static void frame(void)
 {
+	artwork_poll(&cover_art);
+	artwork_render(&cover_art);
 	gfxFlushBuffers();
 	gfxSwapBuffers();
 	gspWaitForVBlank();
@@ -1220,7 +1248,7 @@ int main(int argc, char **argv)
 {
 	(void)argc;
 	gfxInitDefault();
-	consoleInit(GFX_TOP, NULL);
+	consoleInit(GFX_BOTTOM, NULL);
 	cfg_set_path((argv && argv[0]) ? argv[0] : NULL);
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
@@ -1323,6 +1351,7 @@ failed:
 	}
 
 done:
+	artwork_close(&cover_art);
 	secure_clear(&session, sizeof(session));
 	secure_clear(&search, sizeof(search));
 	secure_clear(playback_queue, sizeof(playback_queue));
