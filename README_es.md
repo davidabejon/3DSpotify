@@ -43,9 +43,13 @@ C:\devkitPro\tools\bin\3dslink.exe client\source\dist\3ds\spotify3ds\spotify3ds.
 
 El target inicia la sesión directa: renueva la credencial guardada, permite
 emparejar si hace falta y comprueba la conexión al access point y a la sesión
-de biblioteca. En la pantalla de confirmación, A vuelve a comprobar, Y permite
-emparejar otra cuenta y START sale. Los probes siguen disponibles como targets
-independientes. No compila `fetch.c` ni `parse.c` del flujo antiguo.
+de biblioteca. En la pantalla de sesión, A abre la búsqueda, X vuelve a
+conectar, Y permite emparejar otra cuenta y START sale. La lista se desplaza
+con arriba/abajo; A selecciona, B vuelve y Y permite otra consulta. Las
+peticiones de búsqueda y metadatos se ejecutan mientras la pantalla muestra
+el progreso. La selección prepara la cola, pero todavía no reproduce audio.
+Los probes siguen disponibles como targets independientes. No compila
+`fetch.c` ni `parse.c` del flujo antiguo.
 
 ## Compilar el probe TLS nativo
 

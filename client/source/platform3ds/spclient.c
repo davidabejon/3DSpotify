@@ -586,20 +586,44 @@ int sp_track_metadata_batch_s(http_session *sess, const char *token,
 int sp_search_tracks(const char *host, const char *token, const char *query,
                      char uris[][64], int max, char *err, size_t errlen)
 {
-	/* The context service takes the query inside the uri itself, with spaces
-	 * as '+'. Everything else still has to be percent-encoded, since this all
-	 * travels in a request line. */
-	char plus[192];
-	size_t n = 0;
-	for (const char *p = query; *p && n < sizeof(plus) - 1; p++)
-		plus[n++] = (*p == ' ') ? '+' : *p;
-	plus[n] = '\0';
+	if (!host || !token || !query || !uris || max <= 0) {
+		snprintf(err, errlen, "invalid search arguments");
+		return -1;
+	}
 
-	/* No percent-encoding here: '+' and ':' are structural in this uri, and a
-	 * query with anything stranger than letters, digits and spaces is not
-	 * something this console's keyboard is going to produce. */
-	char path[320];
-	snprintf(path, sizeof(path), "/context-resolve/v1/spotify:search:%s", plus);
+	/* Keep the search URI's separators literal; encode every query byte that
+	 * could otherwise change the request path. Spaces retain the service's
+	 * expected '+' representation, while literal '+' and UTF-8 bytes escape. */
+	static const char hex[] = "0123456789ABCDEF";
+	char encoded[384];
+	size_t n = 0;
+	for (const unsigned char *p = (const unsigned char *)query; *p; p++) {
+		unsigned char c = *p;
+		if (c == ' ') {
+			if (n + 1 >= sizeof(encoded))
+				goto query_too_long;
+			encoded[n++] = '+';
+		} else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		           (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+		           c == '.' || c == '~') {
+			if (n + 1 >= sizeof(encoded))
+				goto query_too_long;
+			encoded[n++] = (char)c;
+		} else {
+			if (n + 3 >= sizeof(encoded))
+				goto query_too_long;
+			encoded[n++] = '%';
+			encoded[n++] = hex[c >> 4];
+			encoded[n++] = hex[c & 0x0F];
+		}
+	}
+	encoded[n] = '\0';
+
+	char path[448];
+	int path_len = snprintf(path, sizeof(path),
+	                        "/context-resolve/v1/spotify:search:%s", encoded);
+	if (path_len < 0 || (size_t)path_len >= sizeof(path))
+		goto query_too_long;
 
 	http_reply r;
 	if (http_get(host, path, token, &r) != 0) {
@@ -628,6 +652,10 @@ int sp_search_tracks(const char *host, const char *token, const char *query,
 	if (count == 0)
 		snprintf(err, errlen, "no tracks matched");
 	return count;
+
+query_too_long:
+	snprintf(err, errlen, "search query is too long");
+	return -1;
 }
 
 int sp_radio(const char *host, const char *token, const char *seed_uri,

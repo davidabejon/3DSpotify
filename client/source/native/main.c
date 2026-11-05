@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <3ds/thread.h>
+
 #include "ap3ds.h"
 #include "cfg3ds.h"
 #include "login5.h"
@@ -12,11 +14,34 @@
 #include "tls3ds.h"
 
 #define SOC_BUFFER 0x100000
+#define SEARCH_LIMIT 24
+#define SEARCH_QUERY_SIZE 96
+#define RESULTS_PER_PAGE 7
+
+typedef struct {
+	char host[128];
+	char library_token[1024];
+} spotify_session;
+
+typedef struct {
+	char query[SEARCH_QUERY_SIZE];
+	char host[128];
+	char library_token[1024];
+	sp_track tracks[SEARCH_LIMIT];
+	int count;
+	int result;
+	char error[192];
+	volatile bool done;
+} search_job;
 
 typedef struct {
 	const char *category;
 	char detail[256];
 } startup_error;
+
+static search_job search;
+static sp_track playback_queue[SEARCH_LIMIT];
+static int playback_queue_count;
 
 static void secure_clear(void *data, size_t len)
 {
@@ -37,6 +62,258 @@ static void show_progress(const char *message)
 	consoleClear();
 	printf("Spotify 3DS - iniciando sesion directa\n\n%s\n", message);
 	frame();
+}
+
+static void show_search_progress(const char *query)
+{
+	consoleClear();
+	printf("Buscando canciones\n\n");
+	printf("Consulta: %s\n\n", query);
+	printf("Conectando con Spotify y cargando resultados...\n");
+	frame();
+}
+
+static void search_worker(void *arg)
+{
+	search_job *job = arg;
+	char uris[SEARCH_LIMIT][64];
+	const char *uri_ptrs[SEARCH_LIMIT];
+	char error[sizeof(job->error)] = {0};
+
+	job->count = sp_search_tracks(job->host, job->library_token,
+	                              job->query, uris, SEARCH_LIMIT,
+	                              error, sizeof(error));
+	if (job->count >= 0 && job->count > 0) {
+		for (int i = 0; i < job->count; i++)
+			uri_ptrs[i] = uris[i];
+		job->count = sp_track_metadata_batch(job->host,
+		                                     job->library_token,
+		                                     uri_ptrs, job->count,
+		                                     job->tracks, error,
+		                                     sizeof(error));
+	}
+	if (job->count < 0)
+		snprintf(job->error, sizeof(job->error), "%s",
+		         error[0] ? error : "No se pudieron cargar los resultados.");
+	job->result = job->count < 0 ? -1 : 0;
+	secure_clear(uris, sizeof(uris));
+	secure_clear(uri_ptrs, sizeof(uri_ptrs));
+	secure_clear(error, sizeof(error));
+	job->done = true;
+}
+
+static bool search_tracks(const spotify_session *session, const char *query)
+{
+	memset(&search, 0, sizeof(search));
+	snprintf(search.query, sizeof(search.query), "%s", query);
+	snprintf(search.host, sizeof(search.host), "%s", session->host);
+	snprintf(search.library_token, sizeof(search.library_token), "%s",
+	         session->library_token);
+
+	Thread thread = threadCreate(search_worker, &search, 16 * 1024,
+	                             0x18, -2, false);
+	if (!thread) {
+		snprintf(search.error, sizeof(search.error),
+		         "No se pudo iniciar la tarea de busqueda.");
+		search.result = -1;
+		secure_clear(search.library_token, sizeof(search.library_token));
+		return false;
+	}
+
+	while (aptMainLoop() && !search.done) {
+		hidScanInput();
+		show_search_progress(search.query);
+	}
+	threadJoin(thread, U64_MAX);
+	threadFree(thread);
+	secure_clear(search.library_token, sizeof(search.library_token));
+	secure_clear(search.host, sizeof(search.host));
+	return search.result == 0;
+}
+
+static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
+{
+	SwkbdState keyboard;
+	swkbdInit(&keyboard, SWKBD_TYPE_WESTERN, 1, SEARCH_QUERY_SIZE - 1);
+	swkbdSetValidation(&keyboard, SWKBD_NOTEMPTY_NOTBLANK,
+	                   SWKBD_FILTER_PROFANITY, -1);
+	swkbdSetHintText(&keyboard, "Nombre de cancion o artista");
+	return swkbdInputText(&keyboard, query, SEARCH_QUERY_SIZE) ==
+	       SWKBD_BUTTON_CONFIRM;
+}
+
+static void show_search_error(const char *query, const char *error)
+{
+	consoleClear();
+	printf("No se pudo completar la busqueda\n\n");
+	printf("Consulta: %s\n\n", query);
+	printf("%s\n\n", error);
+	printf("A: reintentar   Y: cambiar consulta\n");
+	printf("B: volver   START: salir\n");
+}
+
+static void show_results(const char *query, int selected)
+{
+	int first = (selected / RESULTS_PER_PAGE) * RESULTS_PER_PAGE;
+	int page_count = (search.count + RESULTS_PER_PAGE - 1) /
+	                 RESULTS_PER_PAGE;
+	consoleClear();
+	printf("Resultados de Spotify\n");
+	printf("Consulta: %.44s\n\n", query);
+	if (search.count == 0) {
+		printf("No se encontraron canciones.\n\n");
+		printf("Y: nueva busqueda   B: volver\n");
+		printf("START: salir\n");
+		return;
+	}
+
+	for (int i = first; i < search.count &&
+	     i < first + RESULTS_PER_PAGE; i++) {
+		const sp_track *track = &search.tracks[i];
+		int seconds = track->duration_ms > 0
+		              ? track->duration_ms / 1000 : 0;
+		printf("%c %02d. %.39s\n", i == selected ? '>' : ' ', i + 1,
+		       track->name[0] ? track->name : "(sin titulo)");
+		printf("   %.29s  %d:%02d\n", track->artist[0] ? track->artist
+		       : "(artista desconocido)", seconds / 60, seconds % 60);
+	}
+	printf("\nPagina %d/%d  (%d canciones)\n",
+	       first / RESULTS_PER_PAGE + 1, page_count, search.count);
+	printf("Arriba/abajo: mover  A: seleccionar\n");
+	printf("Y: nueva busqueda  B: volver  START: salir\n");
+}
+
+static void prepare_queue(int selected)
+{
+	playback_queue_count = 0;
+	playback_queue[playback_queue_count++] = search.tracks[selected];
+	for (int i = 0; i < search.count; i++) {
+		if (i != selected)
+			playback_queue[playback_queue_count++] = search.tracks[i];
+	}
+}
+
+static void show_selection(void)
+{
+	const sp_track *track = &playback_queue[0];
+	consoleClear();
+	printf("Cancion seleccionada\n\n");
+	printf("%.42s\n", track->name);
+	printf("Artista: %.42s\n", track->artist);
+	printf("Album: %.42s\n", track->album);
+	printf("Duracion: %d:%02d\n\n",
+	       track->duration_ms / 60000,
+	       (track->duration_ms / 1000) % 60);
+	printf("Cola preparada: %d canciones\n", playback_queue_count);
+	printf("La reproduccion local llega en la fase siguiente.\n\n");
+	printf("B: resultados   Y: nueva busqueda\n");
+	printf("X: sesion   START: salir\n");
+}
+
+static bool search_flow(const spotify_session *session,
+                        char query[SEARCH_QUERY_SIZE])
+{
+	for (;;) {
+		if (!ask_search_query(query))
+			return true;
+		if (!query[0])
+			continue;
+		if (!search_tracks(session, query)) {
+			for (;;) {
+				show_search_error(query, search.error);
+				while (aptMainLoop()) {
+					hidScanInput();
+					u32 down = hidKeysDown();
+					if (down & KEY_START)
+						return false;
+					if (down & KEY_B)
+						return true;
+					if (down & KEY_Y)
+						break;
+					if (down & KEY_A) {
+						if (!search_tracks(session, query))
+							break;
+						goto show_results_screen;
+					}
+					frame();
+				}
+				if (!aptMainLoop())
+					return false;
+				if (hidKeysDown() & KEY_Y)
+					break;
+			}
+			continue;
+		}
+
+show_results_screen:
+		if (search.count == 0) {
+			for (;;) {
+				show_results(query, 0);
+				while (aptMainLoop()) {
+					hidScanInput();
+					u32 down = hidKeysDown();
+					if (down & KEY_START)
+						return false;
+					if (down & KEY_B)
+						return true;
+					if (down & KEY_Y)
+						break;
+					frame();
+				}
+				if (!aptMainLoop())
+					return false;
+				if (hidKeysDown() & KEY_Y)
+					break;
+			}
+			continue;
+		}
+
+		int selected = 0;
+		for (;;) {
+			show_results(query, selected);
+			hidScanInput();
+			u32 down = hidKeysDown();
+			if (down & KEY_START)
+				return false;
+			if (down & KEY_B)
+				return true;
+			if (down & KEY_Y)
+				break;
+			if (down & KEY_UP && selected > 0)
+				selected--;
+			if (down & KEY_DOWN && selected + 1 < search.count)
+				selected++;
+			if (down & KEY_A) {
+				prepare_queue(selected);
+				for (;;) {
+					show_selection();
+					hidScanInput();
+					down = hidKeysDown();
+					if (down & KEY_START)
+						return false;
+					if (down & KEY_X)
+						return true;
+					if (down & KEY_B)
+						break;
+					if (down & KEY_Y)
+						break;
+					frame();
+				}
+				if (!aptMainLoop())
+					return false;
+				if (hidKeysDown() & KEY_Y)
+					break;
+				continue;
+			}
+			frame();
+			if (!aptMainLoop())
+				return false;
+		}
+		if (!aptMainLoop())
+			return false;
+		if (hidKeysDown() & KEY_Y)
+			continue;
+	}
 }
 
 static void show_pair_screen(const pair_request *req, int interval,
@@ -140,7 +417,7 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 }
 
 static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
-                              char *sp_host, size_t sp_hostlen)
+                              spotify_session *session)
 {
 	char detail[192] = {0};
 	char device_id[64];
@@ -199,19 +476,23 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 
 	detail[0] = '\0';
 	show_progress("Resolviendo el servidor Spotify...");
-	rc = sp_resolve(sp_host, sp_hostlen, detail, sizeof(detail));
-	secure_clear(&library, sizeof(library));
-	if (rc != 0 || !sp_host[0]) {
+	rc = sp_resolve(session->host, sizeof(session->host),
+	                 detail, sizeof(detail));
+	if (rc != 0 || !session->host[0]) {
 		error->category = "No se pudo resolver el servidor Spotify";
 		snprintf(error->detail, sizeof(error->detail), "%s",
 		         detail[0] ? detail : "Respuesta de servidor no valida.");
+		secure_clear(&library, sizeof(library));
 		return false;
 	}
+	snprintf(session->library_token, sizeof(session->library_token), "%s",
+	         library.access_token);
+	secure_clear(&library, sizeof(library));
 	return true;
 }
 
 static bool start_session(bool force_pair, startup_error *error,
-                          char *sp_host, size_t sp_hostlen)
+                          spotify_session *session)
 {
 	char stored[512] = {0};
 	spotify_tokens tokens;
@@ -221,7 +502,7 @@ static bool start_session(bool force_pair, startup_error *error,
 		secure_clear(stored, sizeof(stored));
 		if (!pair_account(&tokens, error))
 			return false;
-		return resolve_and_login(&tokens, error, sp_host, sp_hostlen);
+		return resolve_and_login(&tokens, error, session);
 	}
 
 	char detail[192] = {0};
@@ -237,7 +518,7 @@ static bool start_session(bool force_pair, startup_error *error,
 				frame();
 			if (!pair_account(&tokens, error))
 				return false;
-			return resolve_and_login(&tokens, error, sp_host, sp_hostlen);
+			return resolve_and_login(&tokens, error, session);
 		}
 		error->category = "Fallo OAuth o TLS al renovar la credencial";
 		snprintf(error->detail, sizeof(error->detail), "%s",
@@ -256,7 +537,7 @@ static bool start_session(bool force_pair, startup_error *error,
 		return false;
 	}
 	secure_clear(stored, sizeof(stored));
-	return resolve_and_login(&tokens, error, sp_host, sp_hostlen);
+	return resolve_and_login(&tokens, error, session);
 }
 
 static void show_error(const startup_error *error)
@@ -266,6 +547,18 @@ static void show_error(const startup_error *error)
 	printf("%s\n\n", error->category ? error->category : "Error");
 	printf("%s\n\n", error->detail);
 	printf("A: reintentar   Y: emparejar   START: salir\n");
+}
+
+static void show_session_ready(const spotify_session *session, const char *query)
+{
+	consoleClear();
+	printf("Sesion Spotify lista\n\n");
+	printf("Servidor: %s\n\n", session->host);
+	printf("A: buscar canciones\n");
+	printf("Consulta anterior: %.40s\n\n", query[0] ? query : "(ninguna)");
+	printf("X: volver a conectar\n");
+	printf("Y: emparejar otra cuenta\n");
+	printf("START: salir\n");
 }
 
 int main(int argc, char **argv)
@@ -280,7 +573,8 @@ int main(int argc, char **argv)
 	bool ps_ready = false;
 	bool tls_ready = false;
 	startup_error error = {0};
-	char sp_host[128] = {0};
+	spotify_session session = {0};
+	char query[SEARCH_QUERY_SIZE] = {0};
 
 	if (!soc_buffer || R_FAILED(socInit(soc_buffer, SOC_BUFFER))) {
 		error.category = "No hay servicio de red";
@@ -315,23 +609,24 @@ int main(int argc, char **argv)
 		printf("Spotify 3DS - iniciando sesion directa\n\n");
 		printf("Renovando credenciales y conectando...\n");
 		frame();
-		if (start_session(force_pair, &error, sp_host, sizeof(sp_host))) {
-			consoleClear();
-			printf("Sesion Spotify lista\n\n");
-			printf("Servidor: %s\n\n", sp_host);
-			printf("La sesion directa esta preparada.\n");
-			printf("A: volver a comprobar   Y: emparejar\n");
-			printf("START: salir\n");
+		if (start_session(force_pair, &error, &session)) {
 			for (;;) {
+				show_session_ready(&session, query);
 				hidScanInput();
 				u32 down = hidKeysDown();
 				if (down & KEY_START)
 					goto done;
 				if (down & KEY_A) {
+					if (!search_flow(&session, query))
+						goto done;
+				}
+				if (down & KEY_X) {
+					secure_clear(&session, sizeof(session));
 					force_pair = false;
 					break;
 				}
 				if (down & KEY_Y) {
+					secure_clear(&session, sizeof(session));
 					force_pair = true;
 					break;
 				}
@@ -340,6 +635,7 @@ int main(int argc, char **argv)
 					goto done;
 			}
 		} else {
+			secure_clear(&session, sizeof(session));
 			show_error(&error);
 			for (;;) {
 				hidScanInput();
@@ -371,6 +667,9 @@ failed:
 	}
 
 done:
+	secure_clear(&session, sizeof(session));
+	secure_clear(&search, sizeof(search));
+	secure_clear(playback_queue, sizeof(playback_queue));
 	if (tls_ready)
 		tls_global_exit();
 	if (ps_ready)

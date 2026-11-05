@@ -74,6 +74,11 @@ mediante emparejamiento, y muestra errores recuperables para volver a intentar.
 
 ### Fase 2: búsqueda y selección de canciones
 
+**Estado:** implementada en `client/source/native`; verificada compilando el
+target `spotify3ds` y ejecutando los tests de build. La búsqueda y los
+metadatos se cargan en un worker, y la selección prepara una cola sin iniciar
+todavía la reproducción.
+
 **Propósito:** sustituir la canción fija del probe por una búsqueda del usuario.
 
 **Trabajo:**
