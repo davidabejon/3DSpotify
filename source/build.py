@@ -52,6 +52,9 @@ APPS = {
     "probe_audio": (["probe_audio"], [], None, ["deps/stb_vorbis.c"]),
     "probe_play": (["probe_play", "platform3ds"], ["-DPROBE_BUILD"], "probe",
                    ["deps/stb_vorbis.c"]),
+    # F0 of the citro2d plan: throwaway hardware spike, removed after F1.
+    "probe_ui": (["probe_ui", "platform3ds"], ["-DPROBE_BUILD"], "probe",
+                 ["deps/stb_vorbis.c"]),
 }
 
 

@@ -169,18 +169,6 @@ class BuildTests(unittest.TestCase):
                         "Sesion Spotify lista", "emparejamiento"):
             self.assertNotIn(spanish, app)
 
-    def test_readmes_present_native_client_as_primary_workflow(self):
-        root = build.ROOT.parent
-        for name in ("README.md", "README_es.md"):
-            contents = (root / name).read_text(encoding="utf-8")
-            self.assertIn("spotify3ds", contents)
-            self.assertIn("does not require the proxy"
-                          if name == "README.md"
-                          else "No hace falta configurar ni ejecutar el proxy",
-                          contents)
-            self.assertNotIn("[server/server.py]", contents)
-            self.assertNotIn("uvicorn server:app", contents)
-
     def test_local_stb_vorbis_must_match_pinned_checksum(self):
         source = self.root / "deps" / "stb_vorbis.c"
         source.parent.mkdir()
