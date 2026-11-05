@@ -132,6 +132,28 @@ class BuildTests(unittest.TestCase):
         offsets = [cleanup.index(step) for step in cleanup_steps]
         self.assertEqual(offsets, sorted(offsets))
 
+    def test_player_metrics_share_one_line_and_pause_holds_timestamp(self):
+        source = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        playback = source[
+            source.index("static playback_result playback("):
+            source.index("static void frame(void)", source.index(
+                "static playback_result playback("
+            ))
+        ]
+        line_update = source[
+            source.index("static void player_update_line("):
+            source.index("static void download_worker(")
+        ]
+        self.assertIn("%02u:%02u/%02d:%02d Desc:%u%% Vol:%u%%", playback)
+        self.assertIn("if (!paused)", playback)
+        self.assertIn("displayed_played_frames = played_frames", playback)
+        self.assertIn("played_frames = displayed_played_frames", playback)
+        self.assertNotIn("player_update_status", playback)
+        self.assertNotIn("last_progress", playback)
+        self.assertIn("player_update_line(status)", playback)
+        self.assertIn('"\\x1b[%d;1H%-*.*s"', line_update)
+        self.assertNotIn("consoleGetDefault", line_update)
+
     def test_readmes_present_native_client_as_primary_workflow(self):
         root = build.ROOT.parents[1]
         for name in ("README.md", "README_es.md"):

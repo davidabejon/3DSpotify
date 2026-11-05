@@ -24,6 +24,8 @@
 #define PLAYER_WAVE_BUFFERS 4
 #define PLAYER_FRAMES_PER_BUFFER 2048
 #define PLAYER_INPUT_CAPACITY (128 * 1024)
+#define PLAYER_STATUS_ROW 8
+#define PLAYER_STATUS_WIDTH 39
 
 typedef struct {
 	char host[128];
@@ -93,22 +95,10 @@ static void show_player_stage(const char *message)
 
 static void player_update_line(const char *message)
 {
-	PrintConsole *console = consoleGetDefault();
-	if (!console)
-		return;
-	console->cursorX = 0;
-	console->cursorY = 8;
-	printf("%-50.50s", message);
-}
-
-static void player_update_status(const char *message)
-{
-	PrintConsole *console = consoleGetDefault();
-	if (!console)
-		return;
-	console->cursorX = 0;
-	console->cursorY = 9;
-	printf("%-50.50s", message);
+	/* The default console struct is only a template; move the active cursor
+	 * with ANSI (1-based) and stay one column short to avoid wrapping. */
+	printf("\x1b[%d;1H%-*.*s", PLAYER_STATUS_ROW + 1,
+	       PLAYER_STATUS_WIDTH, PLAYER_STATUS_WIDTH, message);
 }
 
 static void download_worker(void *arg)
@@ -269,17 +259,15 @@ static playback_result playback(spotify_session *session,
 	bool exit_requested = false;
 	bool return_to_results = false;
 	bool track_changed = false;
+	bool paused = false;
 	bool eof = false;
 	bool final_wave_submitted = false;
-	unsigned last_progress = UINT32_MAX;
-	unsigned last_sample_rate = UINT32_MAX;
-	unsigned last_elapsed = UINT32_MAX;
-	unsigned last_volume = UINT32_MAX;
 	size_t input_len = 0;
 	size_t source_pos = SPOTIFY_OGG_HEADER;
 	size_t pcm_frames = 0;
 	size_t total_audio_frames = 0;
 	size_t completed_audio_frames = 0;
+	size_t displayed_played_frames = 0;
 	int16_t pcm[PLAYER_FRAMES_PER_BUFFER * 2];
 	float **decoded = NULL;
 	int decoded_samples = 0;
@@ -353,9 +341,15 @@ static playback_result playback(spotify_session *session,
 	printf("%.42s\n", selected->name);
 	printf("Artista: %.42s\n", selected->artist);
 	printf("Pista %d/%d de la cola\n\n", *track_index + 1, queue_count);
-	printf("Preparando descarga y decodificacion...\n");
-	printf("A: pausa   Izq/der: pista   Arr/ab: volumen");
-	printf("\nB: resultados   START: salir\n");
+	printf("A: pausa   Izq/der: pista   Arr/ab: volumen\n");
+	printf("B: resultados   START: salir\n");
+	char initial_status[64];
+	snprintf(initial_status, sizeof(initial_status),
+	         "00:00/%02d:%02d Desc:0%% Vol:%u%%",
+	         selected->duration_ms / 60000,
+	         (selected->duration_ms / 1000) % 60,
+	         (unsigned)(playback_volume * 100.0f + 0.5f));
+	player_update_line(initial_status);
 	frame();
 
 	job.thread = threadCreate(download_worker, &job, 32 * 1024,
@@ -385,19 +379,14 @@ static playback_result playback(spotify_session *session,
 			break;
 		}
 		if (down & KEY_A) {
-			bool paused = !ndspChnIsPaused(0);
+			paused = !paused;
 			ndspChnSetPaused(0, paused);
-			player_update_status(paused ? "Pausada" : "Reproduciendo");
 		}
 		if ((down & KEY_LEFT) || (down & KEY_RIGHT)) {
 			int direction = (down & KEY_LEFT) ? -1 : 1;
 			int next = playback_queue_step(*track_index, queue_count,
 			                               direction);
-			if (next < 0) {
-				player_update_status(direction < 0
-				                     ? "Inicio de cola; no hay pista anterior"
-				                     : "Fin de cola; no hay pista siguiente");
-			} else {
+			if (next >= 0) {
 				*track_index = next;
 				track_changed = true;
 				cancelled = true;
@@ -407,11 +396,6 @@ static playback_result playback(spotify_session *session,
 		if ((down & KEY_UP) || (down & KEY_DOWN)) {
 			float change = (down & KEY_UP) ? 0.1f : -0.1f;
 			set_playback_volume(playback_volume + change);
-			char volume_status[48];
-			snprintf(volume_status, sizeof(volume_status),
-			         "Volumen local: %u%%",
-			         (unsigned)(playback_volume * 100.0f + 0.5f));
-			player_update_status(volume_status);
 		}
 
 		for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++) {
@@ -423,6 +407,39 @@ static playback_result playback(spotify_session *session,
 
 		__sync_synchronize();
 		size_t available = job.stream.downloaded;
+		size_t played_frames = completed_audio_frames;
+		if (!paused) {
+			u16 current_sequence = ndspChnGetWaveBufSeq(0);
+			for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++)
+				if (wave_submitted[i] &&
+				    waves[i].sequence_id == current_sequence) {
+					u32 position = ndspChnGetSamplePos(0);
+					if (position < waves[i].nsamples)
+						played_frames += position;
+					break;
+				}
+			displayed_played_frames = played_frames;
+		} else {
+			played_frames = displayed_played_frames;
+		}
+		unsigned percent = job.stream.total
+		                   ? (unsigned)(available * 100 /
+		                                job.stream.total) : 0;
+		if (job.done && job.stream.dl_done)
+			percent = 100;
+		unsigned sample_rate = decoder_open ? info.sample_rate : 0;
+		unsigned elapsed = sample_rate
+		                   ? (unsigned)(played_frames / sample_rate) : 0;
+		unsigned volume = (unsigned)(playback_volume * 100.0f + 0.5f);
+		char status[64];
+		snprintf(status, sizeof(status),
+		         "%02u:%02u/%02d:%02d Desc:%u%% Vol:%u%%",
+		         elapsed / 60, elapsed % 60,
+		         selected->duration_ms / 60000,
+		         (selected->duration_ms / 1000) % 60,
+		         percent, volume);
+		player_update_line(status);
+
 		if (job.stream.data && available > source_pos &&
 		    input_len < PLAYER_INPUT_CAPACITY) {
 			size_t copy = available - source_pos;
@@ -594,41 +611,6 @@ static playback_result playback(spotify_session *session,
 			}
 		}
 
-		size_t played_frames = completed_audio_frames;
-		u16 current_sequence = ndspChnGetWaveBufSeq(0);
-		for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++)
-			if (wave_submitted[i] &&
-			    waves[i].sequence_id == current_sequence) {
-				u32 position = ndspChnGetSamplePos(0);
-				if (position < waves[i].nsamples)
-					played_frames += position;
-				break;
-			}
-
-		unsigned percent = job.stream.total
-		                   ? (unsigned)(available * 100 /
-		                                job.stream.total) : 0;
-		if (job.done && job.stream.dl_done)
-			percent = 100;
-		unsigned sample_rate = decoder_open ? info.sample_rate : 0;
-		unsigned elapsed = sample_rate
-		                   ? (unsigned)(played_frames / sample_rate) : 0;
-		unsigned volume = (unsigned)(playback_volume * 100.0f + 0.5f);
-		if (percent != last_progress || sample_rate != last_sample_rate ||
-		    elapsed != last_elapsed || volume != last_volume) {
-			char status[64];
-			snprintf(status, sizeof(status),
-			         "%02u:%02u / %02d:%02d  Descarga:%u%% %uHz V:%u%%",
-			         elapsed / 60, elapsed % 60,
-			         selected->duration_ms / 60000,
-			         (selected->duration_ms / 1000) % 60,
-			         percent, sample_rate, volume);
-			player_update_line(status);
-			last_progress = percent;
-			last_sample_rate = sample_rate;
-			last_elapsed = elapsed;
-			last_volume = volume;
-		}
 		frame();
 		if (!aptMainLoop())
 			break;
