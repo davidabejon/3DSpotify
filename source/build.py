@@ -29,9 +29,9 @@ MBEDTLS_SHA256 = "a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11
 STB_VORBIS_COMMIT = "d14d46f6b44456eb88beac58cba833a4135d4c89"
 STB_VORBIS_SHA256 = "4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636"
 
-# Icon, banner and makerom settings for the installable app, kept in scripts/
+# Icon, banner and makerom settings for the installable app, kept in assets/
 # at the repository root.
-ASSETS = ROOT.parent / "scripts"
+ASSETS = ROOT.parent / "assets"
 APP_TITLE = "3DSpotify"
 APP_DESCRIPTION = "Native Spotify client for Nintendo 3DS"
 APP_PUBLISHER = "David Abejon"
