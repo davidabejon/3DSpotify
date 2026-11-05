@@ -22,7 +22,9 @@
 #define SEARCH_LIMIT 24
 #define SEARCH_QUERY_SIZE 96
 #define RESULTS_PER_PAGE 7
-#define PLAYER_WAVE_BUFFERS 4
+/* 8 x 2048 frames is ~370 ms of audio at 44.1 kHz: enough cushion for the
+ * decoder to ride out a burst of TLS work in the download thread. */
+#define PLAYER_WAVE_BUFFERS 8
 #define PLAYER_FRAMES_PER_BUFFER 2048
 #define PLAYER_INPUT_CAPACITY (128 * 1024)
 #define PLAYER_STATUS_ROW 8
@@ -163,6 +165,21 @@ static void player_update_line(const char *message)
 	 * with ANSI (1-based) and stay one column short to avoid wrapping. */
 	printf("\x1b[%d;1H%-*.*s", PLAYER_STATUS_ROW + 1,
 	       PLAYER_STATUS_WIDTH, PLAYER_STATUS_WIDTH, message);
+}
+
+/* A priority just below the calling thread (higher number = lower priority).
+ *
+ * The download thread spends its time in TLS and AES-CTR on the same core as
+ * the Vorbis decoder. Above the decoder it starved it, the DSP ran out of
+ * queued audio over and over, and the track crackled until the download
+ * finished. Below it, the download only gets the time the decoder leaves when
+ * every wave buffer is full and it waits for the next frame. */
+static s32 background_priority(void)
+{
+	s32 priority = 0x30;
+	if (R_FAILED(svcGetThreadPriority(&priority, CUR_THREAD_HANDLE)))
+		priority = 0x30;
+	return priority < 0x3F ? priority + 1 : 0x3F;
 }
 
 static void download_worker(void *arg)
@@ -406,10 +423,15 @@ static playback_result playback(spotify_session *session,
 	         (selected->duration_ms / 1000) % 60, 0u,
 	         (unsigned)(playback_volume * 100.0f + 0.5f));
 	player_update_line(initial_status);
+	/* What the status row shows now; the loop below only reprints it when
+	 * the text changes, since console output is slow and runs on the same
+	 * thread as the decoder. */
+	char shown_status[64];
+	snprintf(shown_status, sizeof(shown_status), "%s", initial_status);
 	frame();
 
 	job.thread = threadCreate(download_worker, &job, 32 * 1024,
-	                          0x18, -2, false);
+	                          background_priority(), -2, false);
 	if (!job.thread) {
 		snprintf(error, sizeof(error), "%s", tr(STR_ERR_DOWNLOAD_THREAD));
 		goto cleanup;
@@ -438,8 +460,10 @@ static playback_result playback(spotify_session *session,
 			ndspChnSetPaused(0, paused);
 		}
 		/* The status line below is rewritten on this same iteration. */
-		if (language_toggled(down))
+		if (language_toggled(down)) {
 			show_player_screen(selected, *track_index, queue_count);
+			shown_status[0] = '\0';
+		}
 		if ((down & KEY_LEFT) || (down & KEY_RIGHT)) {
 			int direction = (down & KEY_LEFT) ? -1 : 1;
 			int next = playback_queue_step(*track_index, queue_count,
@@ -495,7 +519,10 @@ static playback_result playback(spotify_session *session,
 		         selected->duration_ms / 60000,
 		         (selected->duration_ms / 1000) % 60,
 		         percent, volume);
-		player_update_line(status);
+		if (strcmp(status, shown_status) != 0) {
+			player_update_line(status);
+			snprintf(shown_status, sizeof(shown_status), "%s", status);
+		}
 
 		if (job.stream.data && available > source_pos &&
 		    input_len < PLAYER_INPUT_CAPACITY) {
@@ -842,8 +869,11 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 	swkbdSetValidation(&keyboard, SWKBD_NOTEMPTY_NOTBLANK,
 	                   SWKBD_FILTER_PROFANITY, -1);
 	swkbdSetHintText(&keyboard, tr(STR_SEARCH_HINT));
-	return swkbdInputText(&keyboard, query, SEARCH_QUERY_SIZE) ==
-	       SWKBD_BUTTON_CONFIRM;
+	bool confirmed = swkbdInputText(&keyboard, query, SEARCH_QUERY_SIZE) ==
+	                 SWKBD_BUTTON_CONFIRM;
+	/* The keyboard applet takes over both screens. */
+	artwork_invalidate(&cover_art);
+	return confirmed;
 }
 
 static void show_search_error(const char *query, const char *error)

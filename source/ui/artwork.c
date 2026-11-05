@@ -93,6 +93,7 @@ void artwork_poll(artwork_state *artwork)
 	artwork->worker_height = 0;
 	artwork->url[0] = '\0';
 	artwork->done = false;
+	artwork->frames_drawn = 0;
 }
 
 static void put_pixel(u8 *fb, u16 fb_width, u16 fb_height,
@@ -169,12 +170,20 @@ void drawImageToScreen(u8 *pixels, int width, int height)
 	}
 }
 
-void artwork_render(const artwork_state *artwork)
+void artwork_render(artwork_state *artwork)
 {
+	if (artwork->frames_drawn >= 2)
+		return;
 	if (artwork->pixels)
 		drawImageToScreen(artwork->pixels, artwork->width, artwork->height);
 	else
 		drawBackgroundToScreen();
+	artwork->frames_drawn++;
+}
+
+void artwork_invalidate(artwork_state *artwork)
+{
+	artwork->frames_drawn = 0;
 }
 
 void artwork_close(artwork_state *artwork)
