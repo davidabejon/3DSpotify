@@ -14,9 +14,9 @@ Este repositorio contiene:
 - Probes independientes de protocolo y herramientas de build/tests en `source` y `tests`.
 
 ## Requisitos
+- Cuenta de Spotify **Premium**.
 - Una Nintendo 3DS con Homebrew Launcher y conexión Wi-Fi.
 - Para compilar desde código: devkitPro con devkitARM, libctru, citro2d, citro3d y 3dsxtool, además de Python 3.12 o posterior.
-- No hace falta configurar ni ejecutar el proxy para usar el cliente nativo.
 
 ## Compilar el cliente nativo
 
@@ -47,8 +47,9 @@ El artefacto queda en
 PC con:
 
 ```powershell
-C:\devkitPro\tools\bin\3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <IP_DE_LA_CONSOLA>
+3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <IP_DE_LA_CONSOLA>
 ```
+`3dslink` forma parte de las herramientas de devkitPro.
 
 Para instalarla en el menú HOME, genera también el CIA (requiere `makerom` y
 `bannertool`, incluidos en las herramientas de devkitPro):
@@ -76,49 +77,36 @@ reproducción, la pantalla superior muestra la carátula (o un fondo neutro si
 no está disponible); la inferior muestra la pista y el progreso. A
 pausa/reanuda, izquierda/derecha cambia de pista, arriba/abajo ajusta el
 volumen local, B vuelve a resultados y START detiene y sale. La cola sigue el
-orden de los resultados y no envuelve en sus extremos. No hay control remoto
-ni dependencia del servidor proxy. La reproducción completa, carátulas y
-controles aún deben validarse en una 3DS real. Los probes siguen disponibles
-como targets independientes. El antiguo cliente proxy y sus fuentes de
-servidor se han eliminado.
+orden de los resultados y no envuelve en sus extremos. La reproducción
+completa, carátulas y controles aún deben validarse en una 3DS real. Los
+probes siguen disponibles como targets independientes.
 
-## Compilar el probe TLS nativo
+## Probes
 
-Instala devkitPro con devkitARM, libctru, citro2d, citro3d y 3dsxtool, junto
-con Python 3.12 o posterior. No necesita el toolchain de Melee, Clang ni CMake.
-Desde la carpeta del repositorio:
+Los probes son pequeñas aplicaciones independientes que prueban, cada una por
+separado, un paso del cliente. Se usaron para construirlo pieza a pieza y
+siguen siendo útiles para diagnosticar problemas en una 3DS real. Ejecútalos
+uno después de otro en el orden de la tabla: cada paso se apoya en los
+anteriores (por ejemplo, los últimos probes usan el token que guarda
+`probe_pair`), así que el primero que falle indica dónde está el problema.
+
+| Target | Qué comprueba |
+|---|---|
+| `probe_tls` | Handshakes TLS 1.2 y una petición HTTPS contra los servidores de Spotify, con tiempos. Escribe `spotify-tls.log` junto al `.3dsx`. |
+| `probe_pair` | El emparejamiento de la consola mediante spotify.com/pair y el guardado del token en la SD. |
+| `probe_ap` | El inicio de sesión en el access point de Spotify y el mantenimiento de la sesión. |
+| `probe_meta` | La cadena completa de inicio de sesión y la lectura de la biblioteca y los metadatos de una canción. |
+| `probe_audio` | La decodificación de Ogg Vorbis y su reproducción por NDSP (lee `test.ogg`; sin red). |
+| `probe_play` | Una canción de principio a fin: clave de audio, descarga, descifrado y reproducción. |
+
+Compila uno con `--app`, por ejemplo:
 
 ```powershell
 python source\build.py --app probe_tls --fetch-deps
 ```
 
-La primera compilación descarga mbedTLS 3.6.7 y verifica su checksum SHA-256.
-Después puedes omitir `--fetch-deps` y compilar sin conexión. La biblioteca
-se compila con la misma configuración que la aplicación seleccionada.
-Usa `--devkitpro "C:\devkitPro"` para indicar el SDK; por defecto comprueba
-`DEVKITPRO` y después la ubicación de instalación habitual.
-`--debug` genera una compilación sin optimizaciones.
-
-Copia `source/dist/3ds/probe_tls/` a `SD:/3ds/probe_tls/` y abre
-`probe_tls.3dsx` desde Homebrew Launcher. Los objetos y el ELF quedan en
-`source/build/probe_tls/`. Los demás targets siguen necesitando sus
-fuentes y las dependencias stb correspondientes.
-
-El probe TLS activa una traza de sockets en `spotify-tls.log`, junto al ejecutable
-(alternativa: `sdmc:/spotify-tls.log`). Las entradas `[socket]` registran la IPv4
-elegida, resultados de llamadas, `errno` capturado al fallar, `SO_ERROR` SOC sin
-traducir, eventos de poll, bytes solicitados y tiempos de las operaciones.
-Tambien indican el inicio y final del handshake y si se ofrecio una sesion.
-No incluyen contenido de mensajes, claves ni credenciales. `errno=0` indica que
-la operacion no fallo; `recv rc=0` indica EOF. En libctru, `POLLOUT=0x10` y
-`POLLHUP=0x04`. La traza introduce sobrecarga y se activa con `tls_set_trace()`;
-las demas aplicaciones no la activan por defecto. Copia el log completo tras
-la prueba, antes de volver a ejecutar el probe: cada ejecucion lo reemplaza.
-Los eventos detallados no se imprimen en la pantalla de la consola.
-La espera TCP usa intervalos de hasta 100 ms dentro del plazo compartido con DNS.
-Tras cada intervalo se comprueba el peer, incluso sin eventos de poll.
-`op=tcp_confirmed poll_rc=0` indica que se confirmo el peer sin notificacion
-de disponibilidad; `total_ms` mide el tiempo desde el inicio de la conexion TCP.
+El resultado queda en `source/dist/3ds/<target>/`; copia esa carpeta a
+`SD:/3ds/<target>/` y ábrelo desde Homebrew Launcher.
 
 ## Licencia y créditos
 - Licencia: Apache License 2.0 — ver el archivo `LICENSE` en la raíz del repositorio.

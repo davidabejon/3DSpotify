@@ -16,9 +16,9 @@ This repository contains:
 - Independent protocol probes and build/test tooling in `source` and `tests`.
 
 ## Requirements
+- Spotify **Premium** account.
 - A Nintendo 3DS with Homebrew Launcher and Wi-Fi access.
 - To build from source: devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus Python 3.12 or newer.
-- The native client does not require the proxy to be configured or running.
 
 ## Building the native client
 
@@ -49,8 +49,9 @@ The artifact is written to
 from the PC with:
 
 ```powershell
-C:\devkitPro\tools\bin\3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <CONSOLE_IP>
+3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <CONSOLE_IP>
 ```
+`3dslink` is part of devkitPro's tools.
 
 To install it on the Home Menu instead, build the CIA as well (needs
 `makerom` and `bannertool`, both part of devkitPro's tools):
@@ -78,47 +79,36 @@ playback, the top screen shows album artwork (or a neutral background when it
 is unavailable) and the bottom screen shows track details and progress. A
 pauses/resumes, left/right changes track, up/down adjusts local volume, B
 returns to results, and START stops and exits. The queue follows search-result
-order and does not wrap at either end. No remote-control proxy is involved.
-Complete playback, artwork, and controls still need validation on real
-hardware. The probes remain available as separate targets. The old proxy
-client and its server source have been removed.
+order and does not wrap at either end. Complete playback, artwork, and
+controls still need validation on real hardware. The probes remain available
+as separate targets.
 
-## Building the native TLS probe
+## Probes
 
-Install devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus
-Python 3.12 or newer. No Melee toolchain, Clang, or CMake is needed.
-From the repository root:
+The probes are small standalone apps, each testing one step of the client on
+its own. They were used to build it up piece by piece and are still handy for
+diagnosing problems on real hardware. Run them one after another in the order
+below: each step builds on the previous ones (for example, the later probes use
+the token that `probe_pair` stores), so the first one that fails points to the
+problem.
+
+| Target | What it checks |
+|---|---|
+| `probe_tls` | TLS 1.2 handshakes and an HTTPS request against Spotify's hosts, with timings. Writes `spotify-tls.log` beside the `.3dsx`. |
+| `probe_pair` | Pairing the console through spotify.com/pair and storing the token on the SD card. |
+| `probe_ap` | Logging in to Spotify's access point and keeping the session alive. |
+| `probe_meta` | The full sign-in chain, then reading the library and a track's metadata. |
+| `probe_audio` | Decoding Ogg Vorbis and playing it through NDSP (reads `test.ogg`; no network). |
+| `probe_play` | One track end to end: audio key, download, decryption and playback. |
+
+Build one with `--app`, for example:
 
 ```powershell
 python source\build.py --app probe_tls --fetch-deps
 ```
 
-The first build downloads mbedTLS 3.6.7 and verifies its SHA-256 checksum.
-Later builds can omit `--fetch-deps` and run offline. The library is compiled
-with the same configuration as the selected app.
-Use `--devkitpro "C:\devkitPro"` to select the SDK explicitly; otherwise the
-script checks `DEVKITPRO`, then the standard installation location.
-`--debug` selects an unoptimized build.
-
-Copy `source/dist/3ds/probe_tls/` to `SD:/3ds/probe_tls/` and launch
-`probe_tls.3dsx` from the Homebrew Launcher. Intermediate objects and the ELF
-are in `source/build/probe_tls/`. Other app targets still require their
-corresponding source files and any stb dependencies to be present.
-
-The TLS probe enables socket metadata tracing in `spotify-tls.log` beside the
-executable (fallback: `sdmc:/spotify-tls.log`). Entries prefixed `[socket]`
-record the selected IPv4 address, syscall results, immediate failure `errno`,
-raw SOC `SO_ERROR`, poll event masks, requested byte counts and operation times.
-They also mark handshakes and whether a cached session was offered. No payloads,
-keys or credentials are logged. `errno=0` means the operation did not fail;
-`recv rc=0` means EOF. On libctru, `POLLOUT=0x10` and `POLLHUP=0x04`.
-TCP connection polls use intervals of at most 100 ms within the shared DNS/TCP
-deadline. After each interval, even without a poll event, the peer is checked.
-`op=tcp_confirmed poll_rc=0` means the peer was confirmed without a readiness
-notification; `total_ms` measures time since TCP setup began.
-Tracing adds overhead and is opt-in through `tls_set_trace()`; other apps do not
-enable it by default. Copy the full log after a run, before launching the probe
-again: each run replaces it. Verbose events stay off the console screen.
+The output goes to `source/dist/3ds/<target>/`; copy that folder to
+`SD:/3ds/<target>/` and launch it from the Homebrew Launcher.
 
 ## License and credits
 - License: Apache License 2.0 — see the `LICENSE` file at the repository root.
