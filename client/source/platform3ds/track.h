@@ -100,6 +100,13 @@ int  track_stream_begin(const char *sp_host, const char *token, ap_session *ap,
                         const char *track_uri, void (*progress)(const char *),
                         track_stream *out, char *err, size_t errlen);
 
+/* Same preparation using metadata already loaded by search/queue. This avoids
+ * another extended-metadata request before resolving storage and the key. */
+int  track_stream_begin_cached(const char *sp_host, const char *token,
+                               ap_session *ap, const sp_track *metadata,
+                               void (*progress)(const char *),
+                               track_stream *out, char *err, size_t errlen);
+
 /* Fills the reserved buffer, retrying across the CDN URLs and resuming each
  * attempt where the last one stopped. Returns early and quietly when `stop`
  * goes up -- that is the UI skipping, not a failure. */

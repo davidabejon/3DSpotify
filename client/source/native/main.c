@@ -29,6 +29,8 @@ typedef struct {
 	char oauth_token[1280];
 	char refresh_token[512];
 	time_t oauth_expires_at;
+	ap_candidate ap_candidates[AP_MAX_CANDIDATES];
+	int ap_candidate_count;
 } spotify_session;
 
 typedef struct {
@@ -172,13 +174,16 @@ static ap_session *open_playback_ap(spotify_session *session, char *error,
 		return NULL;
 
 	ap_candidate candidates[AP_MAX_CANDIDATES];
-	int count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
-	                            error, error_size);
-	if (count < 1) {
-		if (!error[0])
-			snprintf(error, error_size, "No se encontro un access point.");
+	int count = session->ap_candidate_count;
+	if (count > 0)
+		memcpy(candidates, session->ap_candidates,
+		       (size_t)count * sizeof(candidates[0]));
+	else
+		count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
+		                        error, error_size);
+	if (count < 1)
 		return NULL;
-	}
+
 	char device_id[64];
 	ap_device_id(device_id, sizeof(device_id));
 	ap_info info;
@@ -187,6 +192,20 @@ static ap_session *open_playback_ap(spotify_session *session, char *error,
 	ap_session *ap = ap_login_any(candidates, count, session->oauth_token,
 	                              device_id, &info, &tried,
 	                              error, error_size);
+	if (!ap && info.login_error == 0 && session->ap_candidate_count > 0) {
+		count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
+		                        error, error_size);
+		if (count > 0) {
+			memset(&info, 0, sizeof(info));
+			ap = ap_login_any(candidates, count, session->oauth_token,
+			                  device_id, &info, &tried, error, error_size);
+			if (ap) {
+				memcpy(session->ap_candidates, candidates,
+				       (size_t)count * sizeof(candidates[0]));
+				session->ap_candidate_count = count;
+			}
+		}
+	}
 	secure_clear(device_id, sizeof(device_id));
 	secure_clear(&info, sizeof(info));
 	if (!ap && !error[0])
@@ -289,12 +308,10 @@ static playback_result playback(spotify_session *session,
 		goto cleanup;
 
 	show_player_stage("Obteniendo la clave de audio...");
-	int rc = track_stream_begin(session->host, session->library_token, ap,
-	                            selected->uri, NULL, &job.stream,
-	                            error, sizeof(error));
+	int rc = track_stream_begin_cached(session->host, session->library_token,
+	                                   ap, selected, NULL, &job.stream,
+	                                   error, sizeof(error));
 	ap_close(ap);
-	secure_clear(session->oauth_token, sizeof(session->oauth_token));
-	session->oauth_expires_at = 0;
 	if (rc != 0) {
 		if (rc == AP_KEY_REFUSED)
 			snprintf(error, sizeof(error),
@@ -1073,6 +1090,9 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 		snprintf(session->refresh_token, sizeof(session->refresh_token), "%s",
 		         tokens->refresh_token);
 		session->oauth_expires_at = tokens->expires_at;
+		memcpy(session->ap_candidates, candidates,
+		       (size_t)count * sizeof(candidates[0]));
+		session->ap_candidate_count = count;
 	}
 	secure_clear(tokens, sizeof(*tokens));
 	if (!ap) {
@@ -1168,6 +1188,9 @@ static bool start_session(bool force_pair, startup_error *error,
 		secure_clear(&tokens, sizeof(tokens));
 		return false;
 	}
+	if (!tokens.refresh_token[0])
+		snprintf(tokens.refresh_token, sizeof(tokens.refresh_token), "%s",
+		         stored);
 	secure_clear(stored, sizeof(stored));
 	return resolve_and_login(&tokens, error, session);
 }

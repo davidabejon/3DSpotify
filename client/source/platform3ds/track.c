@@ -139,19 +139,29 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 	return 0;
 }
 
-int track_stream_begin(const char *sp_host, const char *token, ap_session *ap,
-                       const char *track_uri, void (*progress)(const char *),
-                       track_stream *out, char *err, size_t errlen)
+static int track_stream_begin_internal(const char *sp_host, const char *token,
+                                       ap_session *ap, const char *track_uri,
+                                       const sp_track *metadata,
+                                       void (*progress)(const char *),
+                                       track_stream *out, char *err,
+                                       size_t errlen)
 {
 	memset(out, 0, sizeof(*out));
 	out->dl_restart_at = -1;
 
-	/* The same three steps as track_fetch, in the same order: the key must
-	 * be asked for before the bytes are worth fetching. */
-	if (progress) progress("metadata");
-	if (sp_track_metadata(sp_host, token, track_uri, &out->meta,
-	                      err, errlen) != 0)
-		return -1;
+	if (metadata) {
+		if (strcmp(metadata->uri, track_uri) != 0) {
+			snprintf(err, errlen, "cached metadata does not match track URI");
+			return -1;
+		}
+		out->meta = *metadata;
+	} else {
+		/* The key must be asked for before the bytes are worth downloading. */
+		if (progress) progress("metadata");
+		if (sp_track_metadata(sp_host, token, track_uri, &out->meta,
+		                      err, errlen) != 0)
+			return -1;
+	}
 	if (!out->meta.has_gid) {
 		snprintf(err, errlen, "metadata carried no track id");
 		return -1;
@@ -172,6 +182,27 @@ int track_stream_begin(const char *sp_host, const char *token, ap_session *ap,
 	int refused = 0;
 	return ap_audio_key(ap, file->id, out->meta.gid, out->key, &refused,
 	                    err, errlen);
+}
+
+int track_stream_begin(const char *sp_host, const char *token, ap_session *ap,
+                       const char *track_uri, void (*progress)(const char *),
+                       track_stream *out, char *err, size_t errlen)
+{
+	return track_stream_begin_internal(sp_host, token, ap, track_uri, NULL,
+	                                   progress, out, err, errlen);
+}
+
+int track_stream_begin_cached(const char *sp_host, const char *token,
+                              ap_session *ap, const sp_track *metadata,
+                              void (*progress)(const char *),
+                              track_stream *out, char *err, size_t errlen)
+{
+	if (!metadata) {
+		snprintf(err, errlen, "cached metadata is required");
+		return -1;
+	}
+	return track_stream_begin_internal(sp_host, token, ap, metadata->uri,
+	                                   metadata, progress, out, err, errlen);
 }
 
 static bool stream_cb(void *ctx, const char *data, size_t n)

@@ -132,6 +132,13 @@ pista anterior/siguiente de los resultados; arriba/abajo ajusta el volumen
 local; `B` detiene y vuelve a resultados; `START` detiene y sale. En los
 extremos de la cola no se envuelve: se muestra un aviso.
 
+**Optimización previa a fase 5:** el inicio de cada pista reutiliza los
+metadatos ya cargados en la búsqueda, los access points resueltos al iniciar
+sesión y el access token OAuth mientras siga vigente. Si falla la lista
+guardada de access points, se vuelve a resolver antes de informar el error.
+Esto evita solicitudes repetidas; el tiempo de red restante depende de la
+conexión y de las respuestas de Spotify.
+
 **Propósito:** conectar los botones a la reproducción local, no a comandos del servidor.
 
 **Mapa inicial propuesto:**
