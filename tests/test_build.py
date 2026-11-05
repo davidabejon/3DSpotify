@@ -83,6 +83,37 @@ class BuildTests(unittest.TestCase):
                          ["artwork.c"])
         self.assertTrue((build.ROOT / "ui" / "artwork.h").is_file())
 
+    def test_citro2d_owns_both_screens(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
+        for name in ("ui.c", "ui.h", "textscreen.c", "textscreen.h",
+                     "image_util.h", "worker_priority.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        # No libctru console and no direct framebuffer writes: a console and
+        # a citro3d target cannot share a screen.
+        for source in (app, artwork):
+            self.assertNotIn("consoleInit", source)
+            self.assertNotIn("consoleClear", source)
+            self.assertNotIn("gfxGetFramebuffer", source)
+            self.assertNotIn("gfxSwapBuffers", source)
+            self.assertIsNone(re.search(r"(?<![A-Za-z_])printf\(", source))
+        self.assertNotIn("frames_drawn", artwork)
+        self.assertIn("ui_init()", app)
+        self.assertLess(app.index("artwork_close(&cover_art);"),
+                        app.index("ui_exit();", app.index("done:")))
+        # Render on demand: a GPU frame only when something changed.
+        frame = app[app.index("static void frame(void)"):
+                    app.index("static void show_progress(")]
+        self.assertIn("textscreen_dirty()", frame)
+        self.assertIn("artwork_dirty(&cover_art)", frame)
+        self.assertIn("gspWaitForVBlank();", frame)
+        # Workers that can overlap playback stay below the decoder.
+        self.assertIn("background_priority()", artwork)
+        self.assertNotIn("0x18", artwork)
+        self.assertNotIn("static s32 background_priority", app)
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(

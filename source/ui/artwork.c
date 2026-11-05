@@ -1,6 +1,8 @@
 #include "artwork.h"
 
 #include "http3ds.h"
+#include "image_util.h"
+#include "worker_priority.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +13,15 @@
 #define STBI_MAX_DIMENSIONS ARTWORK_MAX_DIMENSION
 #define STB_IMAGE_IMPLEMENTATION
 #include "../../include/stb_image.h"
+
+#define TOP_WIDTH 400.0f
+#define TOP_HEIGHT 240.0f
+/* The cover's box on the top screen, and the white frame around it. */
+#define ART_MAX_WIDTH 372.0f
+#define ART_MAX_HEIGHT 212.0f
+#define ART_BORDER 4.0f
+
+#define TEXEL_BYTES ((size_t)ARTWORK_TEX_SIZE * ARTWORK_TEX_SIZE * 4)
 
 static bool artwork_url_allowed(const char *url)
 {
@@ -27,6 +38,7 @@ static bool artwork_url_allowed(const char *url)
 	return true;
 }
 
+/* Pure CPU work only: no citro3d and no linearAlloc off the main thread. */
 static void artwork_worker(void *arg)
 {
 	artwork_state *artwork = arg;
@@ -42,15 +54,22 @@ static void artwork_worker(void *arg)
 			&width, &height, &channels, STBI_rgb_alpha);
 		if (pixels && width > 0 && height > 0 &&
 		    width <= ARTWORK_MAX_DIMENSION &&
-		    height <= ARTWORK_MAX_DIMENSION &&
-		    (size_t)width * (size_t)height <=
-			    (size_t)ARTWORK_MAX_DIMENSION * ARTWORK_MAX_DIMENSION) {
-			artwork->worker_pixels = pixels;
-			artwork->worker_width = width;
-			artwork->worker_height = height;
-		} else if (pixels) {
-			stbi_image_free(pixels);
+		    height <= ARTWORK_MAX_DIMENSION) {
+			u8 *texels = calloc(1, TEXEL_BYTES);
+			if (texels) {
+				int fit_width = 0;
+				int fit_height = 0;
+				image_fit(width, height, ARTWORK_TEX_SIZE,
+				          &fit_width, &fit_height);
+				image_to_texture(pixels, width, height, texels,
+				                 ARTWORK_TEX_SIZE, fit_width, fit_height);
+				artwork->worker_texels = texels;
+				artwork->worker_width = fit_width;
+				artwork->worker_height = fit_height;
+			}
 		}
+		if (pixels)
+			stbi_image_free(pixels);
 	}
 	http_reply_free(&reply);
 	__sync_synchronize();
@@ -60,12 +79,13 @@ static void artwork_worker(void *arg)
 void artwork_request(artwork_state *artwork, const char *url)
 {
 	artwork_close(artwork);
+	artwork->dirty = true;
 	if (!artwork_url_allowed(url) || strlen(url) >= sizeof(artwork->url))
 		return;
 
 	snprintf(artwork->url, sizeof(artwork->url), "%s", url);
 	artwork->thread = threadCreate(artwork_worker, artwork, 32 * 1024,
-	                               0x18, -2, false);
+	                               background_priority(), -2, false);
 	if (!artwork->thread)
 		artwork->url[0] = '\0';
 }
@@ -73,6 +93,26 @@ void artwork_request(artwork_state *artwork, const char *url)
 bool artwork_pending(const artwork_state *artwork)
 {
 	return artwork->thread && !artwork->done;
+}
+
+static void upload(artwork_state *artwork)
+{
+	if (!artwork->worker_texels)
+		return;
+	if (!C3D_TexInit(&artwork->tex, ARTWORK_TEX_SIZE, ARTWORK_TEX_SIZE,
+	                 GPU_RGBA8))
+		return; /* out of linear memory: keep the plain background */
+	memcpy(artwork->tex.data, artwork->worker_texels, TEXEL_BYTES);
+	C3D_TexFlush(&artwork->tex);
+	C3D_TexSetFilter(&artwork->tex, GPU_LINEAR, GPU_LINEAR);
+	const float size = ARTWORK_TEX_SIZE;
+	artwork->subtex.width = (u16)artwork->worker_width;
+	artwork->subtex.height = (u16)artwork->worker_height;
+	artwork->subtex.left = 0.0f;
+	artwork->subtex.top = 1.0f;
+	artwork->subtex.right = artwork->worker_width / size;
+	artwork->subtex.bottom = 1.0f - artwork->worker_height / size;
+	artwork->has_texture = true;
 }
 
 void artwork_poll(artwork_state *artwork)
@@ -84,106 +124,55 @@ void artwork_poll(artwork_state *artwork)
 	threadJoin(artwork->thread, U64_MAX);
 	threadFree(artwork->thread);
 	artwork->thread = NULL;
-	free(artwork->pixels);
-	artwork->pixels = artwork->worker_pixels;
-	artwork->width = artwork->worker_width;
-	artwork->height = artwork->worker_height;
-	artwork->worker_pixels = NULL;
+	if (artwork->has_texture) {
+		C3D_TexDelete(&artwork->tex);
+		artwork->has_texture = false;
+	}
+	upload(artwork);
+	free(artwork->worker_texels);
+	artwork->worker_texels = NULL;
 	artwork->worker_width = 0;
 	artwork->worker_height = 0;
 	artwork->url[0] = '\0';
 	artwork->done = false;
-	artwork->frames_drawn = 0;
+	artwork->dirty = true;
 }
 
-static void put_pixel(u8 *fb, u16 fb_width, u16 fb_height,
-                      int x, int y, u8 r, u8 g, u8 b)
+bool artwork_dirty(const artwork_state *artwork)
 {
-	int fb_x = 239 - y;
-	int fb_y = x;
-	if (fb_x < 0 || fb_x >= fb_width || fb_y < 0 || fb_y >= fb_height)
-		return;
-	size_t offset = ((size_t)fb_x + (size_t)fb_y * fb_width) * 3;
-	fb[offset] = b;
-	fb[offset + 1] = g;
-	fb[offset + 2] = r;
+	return artwork->dirty;
 }
 
-void drawBackgroundToScreen(void)
+void artwork_draw(artwork_state *artwork)
 {
-	u16 fb_width = 0;
-	u16 fb_height = 0;
-	u8 *fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &fb_width, &fb_height);
-	if (!fb)
+	const u32 top = C2D_Color32(40, 80, 30, 0xFF);
+	const u32 bottom = C2D_Color32(55, 200, 70, 0xFF);
+	C2D_DrawRectangle(0, 0, 0, TOP_WIDTH, TOP_HEIGHT,
+	                  top, top, bottom, bottom);
+	artwork->dirty = false;
+	if (!artwork->has_texture)
 		return;
 
-	for (int y = 0; y < 240; y++) {
-		float t = (float)y / 239.0f;
-		u8 b = (u8)(30.0f + t * 40.0f);
-		u8 g = (u8)(80.0f + t * 120.0f);
-		u8 r = (u8)(40.0f + t * 15.0f);
-		for (int x = 0; x < 400; x++)
-			put_pixel(fb, fb_width, fb_height, x, y, r, g, b);
-	}
-}
-
-void drawImageToScreen(u8 *pixels, int width, int height)
-{
-	if (!pixels || width <= 0 || height <= 0)
-		return;
-
-	drawBackgroundToScreen();
-	u16 fb_width = 0;
-	u16 fb_height = 0;
-	u8 *fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &fb_width, &fb_height);
-	if (!fb)
-		return;
-
-	const int max_width = 372;
-	const int max_height = 212;
-	float scale_x = (float)max_width / width;
-	float scale_y = (float)max_height / height;
+	float width = artwork->subtex.width;
+	float height = artwork->subtex.height;
+	float scale_x = ART_MAX_WIDTH / width;
+	float scale_y = ART_MAX_HEIGHT / height;
 	float scale = scale_x < scale_y ? scale_x : scale_y;
-	int scaled_width = (int)(width * scale);
-	int scaled_height = (int)(height * scale);
-	int start_x = (400 - scaled_width) / 2;
-	int start_y = (240 - scaled_height) / 2;
-
-	for (int y = start_y - 4; y < start_y + scaled_height + 4; y++)
-		for (int x = start_x - 4; x < start_x + scaled_width + 4; x++)
-			if (x >= 0 && x < 400 && y >= 0 && y < 240)
-				put_pixel(fb, fb_width, fb_height, x, y, 255, 255, 255);
-
-	for (int y = 0; y < scaled_height; y++) {
-		int source_y = (int)(y / scale);
-		if (source_y >= height)
-			source_y = height - 1;
-		for (int x = 0; x < scaled_width; x++) {
-			int source_x = (int)(x / scale);
-			if (source_x >= width)
-				source_x = width - 1;
-			const u8 *source =
-				pixels + ((size_t)source_y * width + source_x) * 4;
-			put_pixel(fb, fb_width, fb_height, start_x + x, start_y + y,
-			          source[0], source[1], source[2]);
-		}
-	}
-}
-
-void artwork_render(artwork_state *artwork)
-{
-	if (artwork->frames_drawn >= 2)
-		return;
-	if (artwork->pixels)
-		drawImageToScreen(artwork->pixels, artwork->width, artwork->height);
-	else
-		drawBackgroundToScreen();
-	artwork->frames_drawn++;
+	float shown_width = width * scale;
+	float shown_height = height * scale;
+	float x = (TOP_WIDTH - shown_width) / 2.0f;
+	float y = (TOP_HEIGHT - shown_height) / 2.0f;
+	C2D_DrawRectSolid(x - ART_BORDER, y - ART_BORDER, 0,
+	                  shown_width + 2 * ART_BORDER,
+	                  shown_height + 2 * ART_BORDER,
+	                  C2D_Color32(255, 255, 255, 255));
+	C2D_Image image = { &artwork->tex, &artwork->subtex };
+	C2D_DrawImageAt(image, x, y, 0, NULL, scale, scale);
 }
 
 void artwork_invalidate(artwork_state *artwork)
 {
-	artwork->frames_drawn = 0;
+	artwork->dirty = true;
 }
 
 void artwork_close(artwork_state *artwork)
@@ -192,7 +181,8 @@ void artwork_close(artwork_state *artwork)
 		threadJoin(artwork->thread, U64_MAX);
 		threadFree(artwork->thread);
 	}
-	free(artwork->worker_pixels);
-	free(artwork->pixels);
+	free(artwork->worker_texels);
+	if (artwork->has_texture)
+		C3D_TexDelete(&artwork->tex);
 	memset(artwork, 0, sizeof(*artwork));
 }

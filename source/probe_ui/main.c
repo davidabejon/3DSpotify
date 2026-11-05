@@ -34,11 +34,13 @@
 #include "ap3ds.h"
 #include "cfg3ds.h"
 #include "http3ds.h"
+#include "image_util.h"
 #include "login5.h"
 #include "pair3ds.h"
 #include "spclient.h"
 #include "track.h"
 #include "tls3ds.h"
+#include "worker_priority.h"
 
 #define STB_VORBIS_NO_PUSHDATA_API
 #include "stb_vorbis.h"
@@ -286,50 +288,6 @@ typedef struct {
 
 static cover_job cover;
 
-/* Index of (x, y) inside a texture whose 8x8 tiles are in Morton order.
- * The candidate for image_util.h in F1. */
-static inline u32 morton_offset(u32 x, u32 y, u32 width)
-{
-	u32 tile = ((y >> 3) * (width >> 3) + (x >> 3)) << 6;
-	u32 in_tile = (x & 1) | ((y & 1) << 1) | ((x & 2) << 1) |
-	              ((y & 2) << 2) | ((x & 4) << 2) | ((y & 4) << 3);
-	return tile + in_tile;
-}
-
-/* Box-filters RGBA (w x h) to TEX_SIZE^2 and writes GPU_RGBA8 (bytes ABGR)
- * in tiled order. Pure CPU, safe off the main thread. */
-static void to_texture(const u8 *src, int w, int h, u8 *dst)
-{
-	for (int dy = 0; dy < TEX_SIZE; dy++) {
-		int y0 = dy * h / TEX_SIZE;
-		int y1 = (dy + 1) * h / TEX_SIZE;
-		if (y1 <= y0)
-			y1 = y0 + 1;
-		for (int dx = 0; dx < TEX_SIZE; dx++) {
-			int x0 = dx * w / TEX_SIZE;
-			int x1 = (dx + 1) * w / TEX_SIZE;
-			if (x1 <= x0)
-				x1 = x0 + 1;
-			u32 r = 0, g = 0, b = 0, a = 0, n = 0;
-			for (int y = y0; y < y1; y++) {
-				const u8 *row = src + ((size_t)y * w + x0) * 4;
-				for (int x = x0; x < x1; x++, row += 4) {
-					r += row[0];
-					g += row[1];
-					b += row[2];
-					a += row[3];
-					n++;
-				}
-			}
-			u8 *p = dst + morton_offset(dx, dy, TEX_SIZE) * 4;
-			p[0] = (u8)(a / n);
-			p[1] = (u8)(b / n);
-			p[2] = (u8)(g / n);
-			p[3] = (u8)(r / n);
-		}
-	}
-}
-
 static void cover_worker(void *arg)
 {
 	cover_job *job = arg;
@@ -349,7 +307,9 @@ static void cover_worker(void *arg)
 		} else {
 			u8 *tex = malloc((size_t)TEX_SIZE * TEX_SIZE * 4);
 			if (tex) {
-				to_texture(rgba, w, h, tex);
+				/* The image is square: fill the whole texture. */
+				image_to_texture(rgba, w, h, tex, TEX_SIZE,
+				                 TEX_SIZE, TEX_SIZE);
 				job->tex_pixels = tex;
 			} else {
 				snprintf(job->err, sizeof(job->err), "sin heap");
@@ -363,18 +323,6 @@ static void cover_worker(void *arg)
 	job->worker_ms = osTickCounterRead(&t);
 	__sync_synchronize();
 	job->done = true;
-}
-
-/* Same rule as background_priority() in main.c: one step below the calling
- * thread. At 0x18 (the value artwork.c uses) the worker outranks the main
- * thread, and its TLS handshake plus JPEG decode starve the Vorbis decoder
- * for seconds: the music stops until the cover arrives. */
-static s32 background_priority(void)
-{
-	s32 priority = 0x30;
-	if (R_FAILED(svcGetThreadPriority(&priority, CUR_THREAD_HANDLE)))
-		priority = 0x30;
-	return priority < 0x3F ? priority + 1 : 0x3F;
 }
 
 static void cover_request(const char *url)

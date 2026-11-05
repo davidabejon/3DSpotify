@@ -14,8 +14,11 @@
 #include "pair3ds.h"
 #include "player_logic.h"
 #include "spclient.h"
+#include "textscreen.h"
 #include "track.h"
 #include "tls3ds.h"
+#include "ui.h"
+#include "worker_priority.h"
 #include "stb_vorbis.h"
 
 #define SOC_BUFFER 0x100000
@@ -122,64 +125,50 @@ static bool language_toggled(u32 down)
 
 static void show_player_stage(const char *message)
 {
-	consoleClear();
-	printf("%s\n\n%s\n", tr(STR_PLAYER_TITLE), message);
-	printf("\n%s\n", tr(STR_KEYS_CANCEL_EXIT));
+	textscreen_clear();
+	textscreen_printf("%s\n\n%s\n", tr(STR_PLAYER_TITLE), message);
+	textscreen_printf("\n%s\n", tr(STR_KEYS_CANCEL_EXIT));
 	frame();
 }
 
 static void show_player_screen(const sp_track *track, int track_index,
                                int queue_count)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_PLAYER_TITLE));
-	printf("%.42s\n", track->name);
-	printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
-	printf(tr(STR_PLAYER_QUEUE_FMT), track_index + 1, queue_count);
-	printf("\n\n%s\n", tr(STR_KEYS_PLAYER));
-	printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_PLAYER_TITLE));
+	textscreen_printf("%.42s\n", track->name);
+	textscreen_printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
+	textscreen_printf(tr(STR_PLAYER_QUEUE_FMT), track_index + 1, queue_count);
+	textscreen_printf("\n\n%s\n", tr(STR_KEYS_PLAYER));
+	textscreen_printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
 }
 
 static void show_playback_failed(const char *error)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_PLAYER_FAILED_TITLE));
-	printf("%s\n\n", error[0] ? error : tr(STR_PLAYER_INTERRUPTED));
-	printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
-	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_PLAYER_FAILED_TITLE));
+	textscreen_printf("%s\n\n", error[0] ? error : tr(STR_PLAYER_INTERRUPTED));
+	textscreen_printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
+	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void show_playback_finished(const sp_track *track)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_PLAYER_FINISHED_TITLE));
-	printf("%.42s\n", track->name);
-	printf("%s: %.42s\n\n", tr(STR_LABEL_ARTIST), track->artist);
-	printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
-	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_PLAYER_FINISHED_TITLE));
+	textscreen_printf("%.42s\n", track->name);
+	textscreen_printf("%s: %.42s\n\n", tr(STR_LABEL_ARTIST), track->artist);
+	textscreen_printf("%s\n", tr(STR_KEYS_RESULTS_EXIT));
+	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void player_update_line(const char *message)
 {
-	/* The default console struct is only a template; move the active cursor
-	 * with ANSI (1-based) and stay one column short to avoid wrapping. */
-	printf("\x1b[%d;1H%-*.*s", PLAYER_STATUS_ROW + 1,
-	       PLAYER_STATUS_WIDTH, PLAYER_STATUS_WIDTH, message);
-}
-
-/* A priority just below the calling thread (higher number = lower priority).
- *
- * The download thread spends its time in TLS and AES-CTR on the same core as
- * the Vorbis decoder. Above the decoder it starved it, the DSP ran out of
- * queued audio over and over, and the track crackled until the download
- * finished. Below it, the download only gets the time the decoder leaves when
- * every wave buffer is full and it waits for the next frame. */
-static s32 background_priority(void)
-{
-	s32 priority = 0x30;
-	if (R_FAILED(svcGetThreadPriority(&priority, CUR_THREAD_HANDLE)))
-		priority = 0x30;
-	return priority < 0x3F ? priority + 1 : 0x3F;
+	/* Move the text screen's cursor with ANSI (1-based) and stay one column
+	 * short to avoid wrapping. Rewriting the same text is free: only a real
+	 * change makes textscreen ask for a GPU frame. */
+	textscreen_printf("\x1b[%d;1H%-*.*s", PLAYER_STATUS_ROW + 1,
+	                  PLAYER_STATUS_WIDTH, PLAYER_STATUS_WIDTH, message);
 }
 
 static void download_worker(void *arg)
@@ -424,8 +413,7 @@ static playback_result playback(spotify_session *session,
 	         (unsigned)(playback_volume * 100.0f + 0.5f));
 	player_update_line(initial_status);
 	/* What the status row shows now; the loop below only reprints it when
-	 * the text changes, since console output is slow and runs on the same
-	 * thread as the decoder. */
+	 * the text changes, which keeps formatting off the decoder's thread. */
 	char shown_status[64];
 	snprintf(shown_status, sizeof(shown_status), "%s", initial_status);
 	frame();
@@ -758,28 +746,43 @@ cleanup:
 	return PLAYER_EXIT_APP;
 }
 
+/* Renders a GPU frame only when something changed, else just waits for
+ * VBlank: rendering shares the main thread with the Vorbis decoder. While a
+ * track plays the status line changes once a second, so that is one GPU
+ * frame per second.
+ *
+ * Both screens are drawn together. Until the F0 spike confirms on hardware
+ * that a target left out of a frame keeps its last image, skipping one is
+ * not worth the risk; the top screen costs a rectangle and a quad. */
 static void frame(void)
 {
 	artwork_poll(&cover_art);
-	artwork_render(&cover_art);
-	gfxFlushBuffers();
-	gfxSwapBuffers();
-	gspWaitForVBlank();
+	bool restored = ui_take_restored();
+	if (!restored && !artwork_dirty(&cover_art) && !textscreen_dirty()) {
+		gspWaitForVBlank();
+		return;
+	}
+	ui_begin();
+	ui_scene(GFX_TOP);
+	artwork_draw(&cover_art);
+	ui_scene(GFX_BOTTOM);
+	textscreen_draw();
+	ui_end();
 }
 
 static void show_progress(const char *message)
 {
-	consoleClear();
-	printf("%s\n\n%s\n", tr(STR_LOGIN_TITLE), message);
+	textscreen_clear();
+	textscreen_printf("%s\n\n%s\n", tr(STR_LOGIN_TITLE), message);
 	frame();
 }
 
 static void show_search_progress(const char *query)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_SEARCH_PROGRESS_TITLE));
-	printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
-	printf("%s\n", tr(STR_SEARCH_CONNECTING));
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_SEARCH_PROGRESS_TITLE));
+	textscreen_printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
+	textscreen_printf("%s\n", tr(STR_SEARCH_CONNECTING));
 	frame();
 }
 
@@ -873,15 +876,16 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 	                 SWKBD_BUTTON_CONFIRM;
 	/* The keyboard applet takes over both screens. */
 	artwork_invalidate(&cover_art);
+	textscreen_invalidate();
 	return confirmed;
 }
 
 static void show_search_error(const char *query, const char *error)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_SEARCH_FAILED_TITLE));
-	printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
-	printf("%s\n\n", error);
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_SEARCH_FAILED_TITLE));
+	textscreen_printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
+	textscreen_printf("%s\n\n", error);
 	str_id advice = STR_SEARCH_CHECK_WIFI;
 	if (strstr(error, "HTTP 401"))
 		advice = STR_SEARCH_HTTP_401;
@@ -889,10 +893,10 @@ static void show_search_error(const char *query, const char *error)
 		advice = STR_SEARCH_HTTP_403;
 	else if (strstr(error, "HTTP 429"))
 		advice = STR_SEARCH_HTTP_429;
-	printf("%s\n\n", tr(advice));
-	printf("%s\n", tr(STR_KEYS_SEARCH_RETRY));
-	printf("%s\n", tr(STR_KEYS_BACK_EXIT));
-	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	textscreen_printf("%s\n\n", tr(advice));
+	textscreen_printf("%s\n", tr(STR_KEYS_SEARCH_RETRY));
+	textscreen_printf("%s\n", tr(STR_KEYS_BACK_EXIT));
+	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void show_results(const char *query, int selected)
@@ -900,14 +904,14 @@ static void show_results(const char *query, int selected)
 	int first = (selected / RESULTS_PER_PAGE) * RESULTS_PER_PAGE;
 	int page_count = (search.count + RESULTS_PER_PAGE - 1) /
 	                 RESULTS_PER_PAGE;
-	consoleClear();
-	printf("%s\n", tr(STR_RESULTS_TITLE));
-	printf("%s: %.44s\n\n", tr(STR_LABEL_QUERY), query);
+	textscreen_clear();
+	textscreen_printf("%s\n", tr(STR_RESULTS_TITLE));
+	textscreen_printf("%s: %.44s\n\n", tr(STR_LABEL_QUERY), query);
 	if (search.count == 0) {
-		printf("%s\n\n", tr(STR_RESULTS_EMPTY));
-		printf("%s\n", tr(STR_KEYS_NO_RESULTS));
-		printf("%s\n", tr(STR_KEYS_EXIT));
-		printf("%s\n", tr(STR_KEYS_LANGUAGE));
+		textscreen_printf("%s\n\n", tr(STR_RESULTS_EMPTY));
+		textscreen_printf("%s\n", tr(STR_KEYS_NO_RESULTS));
+		textscreen_printf("%s\n", tr(STR_KEYS_EXIT));
+		textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 		return;
 	}
 
@@ -916,17 +920,17 @@ static void show_results(const char *query, int selected)
 		const sp_track *track = &search.tracks[i];
 		int seconds = track->duration_ms > 0
 		              ? track->duration_ms / 1000 : 0;
-		printf("%c %02d. %.39s\n", i == selected ? '>' : ' ', i + 1,
-		       track->name[0] ? track->name : tr(STR_UNTITLED));
-		printf("   %.29s  %d:%02d\n", track->artist[0] ? track->artist
-		       : tr(STR_UNKNOWN_ARTIST), seconds / 60, seconds % 60);
+		textscreen_printf("%c %02d. %.39s\n", i == selected ? '>' : ' ', i + 1,
+		                  track->name[0] ? track->name : tr(STR_UNTITLED));
+		textscreen_printf("   %.29s  %d:%02d\n", track->artist[0] ? track->artist
+		                  : tr(STR_UNKNOWN_ARTIST), seconds / 60, seconds % 60);
 	}
-	printf("\n");
-	printf(tr(STR_RESULTS_PAGE_FMT),
-	       first / RESULTS_PER_PAGE + 1, page_count, search.count);
-	printf("\n%s\n", tr(STR_KEYS_RESULTS_MOVE));
-	printf("%s\n", tr(STR_KEYS_RESULTS_NAV));
-	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	textscreen_printf("\n");
+	textscreen_printf(tr(STR_RESULTS_PAGE_FMT),
+	                  first / RESULTS_PER_PAGE + 1, page_count, search.count);
+	textscreen_printf("\n%s\n", tr(STR_KEYS_RESULTS_MOVE));
+	textscreen_printf("%s\n", tr(STR_KEYS_RESULTS_NAV));
+	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void prepare_queue(void)
@@ -939,20 +943,20 @@ static void prepare_queue(void)
 static void show_selection(int selected)
 {
 	const sp_track *track = &playback_queue[selected];
-	consoleClear();
-	printf("%s\n\n", tr(STR_SELECTION_TITLE));
-	printf("%.42s\n", track->name);
-	printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
-	printf("%s: %.42s\n", tr(STR_LABEL_ALBUM), track->album);
-	printf("%s: %d:%02d\n\n", tr(STR_LABEL_DURATION),
-	       track->duration_ms / 60000,
-	       (track->duration_ms / 1000) % 60);
-	printf("%s: %d/%d\n", tr(STR_LABEL_QUEUE), selected + 1,
-	       playback_queue_count);
-	printf("%s\n", tr(STR_KEYS_SELECTION_PLAY));
-	printf("%s\n", tr(STR_KEYS_SELECTION_SEARCH));
-	printf("%s\n", tr(STR_KEYS_SELECTION_SESSION));
-	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_SELECTION_TITLE));
+	textscreen_printf("%.42s\n", track->name);
+	textscreen_printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
+	textscreen_printf("%s: %.42s\n", tr(STR_LABEL_ALBUM), track->album);
+	textscreen_printf("%s: %d:%02d\n\n", tr(STR_LABEL_DURATION),
+	                  track->duration_ms / 60000,
+	                  (track->duration_ms / 1000) % 60);
+	textscreen_printf("%s: %d/%d\n", tr(STR_LABEL_QUEUE), selected + 1,
+	                  playback_queue_count);
+	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_PLAY));
+	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_SEARCH));
+	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_SESSION));
+	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static bool search_flow(spotify_session *session,
@@ -1112,16 +1116,16 @@ return_to_results:
 static void show_pair_screen(const pair_request *req, int interval,
                              const char *status)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_PAIR_TITLE));
-	printf("%s\n%s\n\n", tr(STR_PAIR_OPEN_URL), req->verification_uri);
-	printf("%s: %s\n", tr(STR_LABEL_CODE), req->user_code);
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_PAIR_TITLE));
+	textscreen_printf("%s\n%s\n\n", tr(STR_PAIR_OPEN_URL), req->verification_uri);
+	textscreen_printf("%s: %s\n", tr(STR_LABEL_CODE), req->user_code);
 	if (req->verification_uri_complete[0])
-		printf("\n%s\n%s\n", tr(STR_PAIR_DIRECT_LINK),
-		       req->verification_uri_complete);
-	printf("\n%s\n", status);
-	printf(tr(STR_PAIR_POLL_FMT), interval);
-	printf("\n%s\n", tr(STR_KEYS_LANGUAGE));
+		textscreen_printf("\n%s\n%s\n", tr(STR_PAIR_DIRECT_LINK),
+		                  req->verification_uri_complete);
+	textscreen_printf("\n%s\n", status);
+	textscreen_printf(tr(STR_PAIR_POLL_FMT), interval);
+	textscreen_printf("\n%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static bool pair_account(spotify_tokens *tokens, startup_error *error)
@@ -1320,9 +1324,9 @@ static bool start_session(bool force_pair, startup_error *error,
 		secure_clear(stored, sizeof(stored));
 		secure_clear(&tokens, sizeof(tokens));
 		if (strstr(detail, "invalid_grant")) {
-			consoleClear();
-			printf("%s\n", tr(STR_CREDENTIAL_EXPIRED));
-			printf("%s\n", tr(STR_PAIR_AGAIN_NEEDED));
+			textscreen_clear();
+			textscreen_printf("%s\n", tr(STR_CREDENTIAL_EXPIRED));
+			textscreen_printf("%s\n", tr(STR_PAIR_AGAIN_NEEDED));
 			for (int i = 0; i < 90 && aptMainLoop(); i++)
 				frame();
 			if (!pair_account(&tokens, error))
@@ -1354,34 +1358,43 @@ static bool start_session(bool force_pair, startup_error *error,
 
 static void show_error(const startup_error *error)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_SESSION_FAILED_TITLE));
-	printf("%s\n\n", tr(error->category));
-	printf("%s\n\n", error->detail);
-	printf("%s\n", tr(STR_KEYS_STARTUP_RETRY));
-	printf("%s\n", tr(STR_KEYS_EXIT));
-	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_SESSION_FAILED_TITLE));
+	textscreen_printf("%s\n\n", tr(error->category));
+	textscreen_printf("%s\n\n", error->detail);
+	textscreen_printf("%s\n", tr(STR_KEYS_STARTUP_RETRY));
+	textscreen_printf("%s\n", tr(STR_KEYS_EXIT));
+	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 static void show_session_ready(const spotify_session *session, const char *query)
 {
-	consoleClear();
-	printf("%s\n\n", tr(STR_SESSION_READY_TITLE));
-	printf("%s: %s\n\n", tr(STR_LABEL_SERVER), session->host);
-	printf("%s\n", tr(STR_KEYS_SESSION_SEARCH));
-	printf("%s: %.40s\n\n", tr(STR_LABEL_PREVIOUS_QUERY),
-	       query[0] ? query : tr(STR_NONE));
-	printf("%s\n", tr(STR_KEYS_SESSION_RECONNECT));
-	printf("%s\n", tr(STR_KEYS_SESSION_PAIR));
-	printf("%s\n", tr(STR_KEYS_EXIT));
-	printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	textscreen_clear();
+	textscreen_printf("%s\n\n", tr(STR_SESSION_READY_TITLE));
+	textscreen_printf("%s: %s\n\n", tr(STR_LABEL_SERVER), session->host);
+	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_SEARCH));
+	textscreen_printf("%s: %.40s\n\n", tr(STR_LABEL_PREVIOUS_QUERY),
+	                  query[0] ? query : tr(STR_NONE));
+	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_RECONNECT));
+	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_PAIR));
+	textscreen_printf("%s\n", tr(STR_KEYS_EXIT));
+	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
 int main(int argc, char **argv)
 {
 	(void)argc;
 	gfxInitDefault();
-	consoleInit(GFX_BOTTOM, NULL);
+	/* Without the renderer there is no way to show anything at all. */
+	if (!ui_init()) {
+		gfxExit();
+		return 1;
+	}
+	if (!textscreen_init()) {
+		ui_exit();
+		gfxExit();
+		return 1;
+	}
 	cfg_set_path((argv && argv[0]) ? argv[0] : NULL);
 	language_init();
 
@@ -1422,9 +1435,9 @@ int main(int argc, char **argv)
 
 	bool force_pair = false;
 	for (;;) {
-		consoleClear();
-		printf("%s\n\n", tr(STR_LOGIN_TITLE));
-		printf("%s\n", tr(STR_LOGIN_CONNECTING));
+		textscreen_clear();
+		textscreen_printf("%s\n\n", tr(STR_LOGIN_TITLE));
+		textscreen_printf("%s\n", tr(STR_LOGIN_CONNECTING));
 		frame();
 		if (start_session(force_pair, &error, &session)) {
 			show_session_ready(&session, query);
@@ -1503,6 +1516,8 @@ done:
 	if (soc_ready)
 		socExit();
 	free(soc_buffer);
+	textscreen_exit();
+	ui_exit();
 	gfxExit();
 	return 0;
 }
