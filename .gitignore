@@ -31,3 +31,6 @@ Thumbs.db
 
 # Ignore VSCode settings
 .vscode/
+
+# Ignore repomix output
+repomix-output.xml
