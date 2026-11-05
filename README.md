@@ -19,6 +19,70 @@ This repository contains:
 - To build the client from source: devkitARM/3DS homebrew toolchain (see `client/Makefile`)
 - A Spotify Developer application (Client ID / Client Secret)
 
+## Building the native client
+
+Install devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus
+Python 3.12 or newer. From the repository root:
+
+```powershell
+python client\source\build.py --fetch-deps
+```
+
+The default target is `spotify3ds`, separate from the legacy proxy application
+built with `client\Makefile`. The pinned downloads verify mbedTLS 3.6.7 and
+`stb_vorbis`; the Vorbis header is generated from that same verified source.
+Once dependencies have been downloaded, builds can omit `--fetch-deps`.
+
+The artifact is written to
+`client\source\dist\3ds\spotify3ds\spotify3ds.3dsx`. Copy it to
+`SD:/3ds/spotify3ds/` and launch it from the Homebrew Launcher, or send it
+from the PC with:
+
+```powershell
+C:\devkitPro\tools\bin\3dslink.exe client\source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <CONSOLE_IP>
+```
+
+This target initially starts from the direct playback probe in `probe_play`;
+later phases will replace that test UI with the interactive client. It does
+not compile `fetch.c` or `parse.c` from the legacy flow.
+
+## Building the native TLS probe
+
+Install devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus
+Python 3.12 or newer. No Melee toolchain, Clang, or CMake is needed.
+From the repository root:
+
+```powershell
+python client\source\build.py --app probe_tls --fetch-deps
+```
+
+The first build downloads mbedTLS 3.6.7 and verifies its SHA-256 checksum.
+Later builds can omit `--fetch-deps` and run offline. The library is compiled
+with the same configuration as the selected app.
+Use `--devkitpro "C:\devkitPro"` to select the SDK explicitly; otherwise the
+script checks `DEVKITPRO`, then the standard installation location.
+`--debug` selects an unoptimized build.
+
+Copy `client/source/dist/3ds/probe_tls/` to `SD:/3ds/probe_tls/` and launch
+`probe_tls.3dsx` from the Homebrew Launcher. Intermediate objects and the ELF
+are in `client/source/build/probe_tls/`. Other app targets still require their
+corresponding source files and any stb dependencies to be present.
+
+The TLS probe enables socket metadata tracing in `spotify-tls.log` beside the
+executable (fallback: `sdmc:/spotify-tls.log`). Entries prefixed `[socket]`
+record the selected IPv4 address, syscall results, immediate failure `errno`,
+raw SOC `SO_ERROR`, poll event masks, requested byte counts and operation times.
+They also mark handshakes and whether a cached session was offered. No payloads,
+keys or credentials are logged. `errno=0` means the operation did not fail;
+`recv rc=0` means EOF. On libctru, `POLLOUT=0x10` and `POLLHUP=0x04`.
+TCP connection polls use intervals of at most 100 ms within the shared DNS/TCP
+deadline. After each interval, even without a poll event, the peer is checked.
+`op=tcp_confirmed poll_rc=0` means the peer was confirmed without a readiness
+notification; `total_ms` measures time since TCP setup began.
+Tracing adds overhead and is opt-in through `tls_set_trace()`; other apps do not
+enable it by default. Copy the full log after a run, before launching the probe
+again: each run replaces it. Verbose events stay off the console screen.
+
 ## Quick start
 
 ### 1) Deploy the proxy server
