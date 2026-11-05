@@ -47,9 +47,14 @@ pairing when needed, and checks the access-point and library-session
 connections. On the session screen, A opens search, X reconnects, Y pairs
 another account, and START exits. Use up/down to move through results, A to
 select, B to return, and Y to enter another query. Search and metadata
-requests run while progress is displayed. Selecting a track prepares the
-queue but does not play audio yet. The probes remain available as separate
-targets. It does not compile `fetch.c` or `parse.c` from the legacy flow.
+requests run while progress is displayed. Press A on the selection screen to
+play the chosen track locally. The client opens the access point to obtain the
+audio key, closes it, and then downloads/decrypts the track while decoding it
+to NDSP. B stops playback and returns to the selection; START stops and exits.
+The queue is built from the search results, but pause and track changes are
+part of the next phase. Complete playback still needs validation on real
+hardware. The probes remain available as separate targets. It does not compile
+`fetch.c` or `parse.c` from the legacy flow.
 
 ## Building the native TLS probe
 

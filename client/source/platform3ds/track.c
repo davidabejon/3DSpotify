@@ -303,4 +303,7 @@ void track_stream_free(track_stream *ts)
 	ts->data = NULL;
 	ts->len = ts->total = ts->write_pos = 0;
 	ts->downloaded = 0;
+	memset(ts->key, 0, sizeof(ts->key));
+	memset(ts->nonce, 0, sizeof(ts->nonce));
+	memset(ts->stream_block, 0, sizeof(ts->stream_block));
 }

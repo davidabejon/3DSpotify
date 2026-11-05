@@ -47,8 +47,13 @@ de biblioteca. En la pantalla de sesión, A abre la búsqueda, X vuelve a
 conectar, Y permite emparejar otra cuenta y START sale. La lista se desplaza
 con arriba/abajo; A selecciona, B vuelve y Y permite otra consulta. Las
 peticiones de búsqueda y metadatos se ejecutan mientras la pantalla muestra
-el progreso. La selección prepara la cola, pero todavía no reproduce audio.
-Los probes siguen disponibles como targets independientes. No compila
+el progreso. A en la pantalla de selección inicia la reproducción local de la
+pista elegida; el cliente abre el access point para obtener la clave, lo cierra
+y descarga/descifra la pista mientras la decodifica hacia NDSP. B detiene la
+reproducción y vuelve a la selección; START detiene y sale. La cola se prepara
+con los resultados de búsqueda, pero el cambio de pista y la pausa pertenecen
+a la siguiente fase. La reproducción completa aún debe validarse en hardware
+real. Los probes siguen disponibles como targets independientes. No compila
 `fetch.c` ni `parse.c` del flujo antiguo.
 
 ## Compilar el probe TLS nativo

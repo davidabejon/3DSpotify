@@ -76,8 +76,7 @@ mediante emparejamiento, y muestra errores recuperables para volver a intentar.
 
 **Estado:** implementada en `client/source/native`; verificada compilando el
 target `spotify3ds` y ejecutando los tests de build. La búsqueda y los
-metadatos se cargan en un worker, y la selección prepara una cola sin iniciar
-todavía la reproducción.
+metadatos se cargan en un worker, y la selección prepara una cola de resultados.
 
 **Propósito:** sustituir la canción fija del probe por una búsqueda del usuario.
 
@@ -96,6 +95,15 @@ todavía la reproducción.
 **Criterio de aceptación:** se pueden buscar consultas con espacios y caracteres codificados correctamente; seleccionar una pista; manejar cero resultados, errores y listas mayores que la pantalla sin bloquear la navegación.
 
 ### Fase 3: motor de reproducción local
+
+**Estado:** implementada en `client/source/native`; el target incluye Vorbis
+pushdata y reproducción NDSP con descarga cancelable, watermark y liberación
+ordenada. La compilación local no sustituye la validación de reproducción
+completa en una 3DS real, que sigue pendiente.
+
+**Controles provisionales:** `A` inicia la pista seleccionada; `B` detiene y
+vuelve a la selección; `START` detiene y sale. Pausa y cambio de pista quedan
+para la fase 4.
 
 **Propósito:** convertir la prueba de reproducción de una sola pista en un componente que pueda reproducir la selección del usuario hasta el final.
 

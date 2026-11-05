@@ -63,6 +63,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn("native", source_dirs)
         self.assertNotIn("probe_play", source_dirs)
         self.assertEqual(mbedtls, "release")
+        self.assertIn("deps/stb_vorbis.c", extra_sources)
 
     def test_local_stb_vorbis_must_match_pinned_checksum(self):
         source = self.root / "deps" / "stb_vorbis.c"

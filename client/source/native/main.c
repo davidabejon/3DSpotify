@@ -11,17 +11,33 @@
 #include "login5.h"
 #include "pair3ds.h"
 #include "spclient.h"
+#include "track.h"
 #include "tls3ds.h"
+#include "stb_vorbis.h"
 
 #define SOC_BUFFER 0x100000
 #define SEARCH_LIMIT 24
 #define SEARCH_QUERY_SIZE 96
 #define RESULTS_PER_PAGE 7
+#define PLAYER_WAVE_BUFFERS 4
+#define PLAYER_FRAMES_PER_BUFFER 2048
+#define PLAYER_INPUT_CAPACITY (128 * 1024)
 
 typedef struct {
 	char host[128];
 	char library_token[1024];
+	char oauth_token[1280];
+	char refresh_token[512];
+	time_t oauth_expires_at;
 } spotify_session;
+
+typedef struct {
+	track_stream stream;
+	volatile bool stop;
+	volatile bool done;
+	int result;
+	Thread thread;
+} download_job;
 
 typedef struct {
 	char query[SEARCH_QUERY_SIZE];
@@ -43,11 +59,483 @@ static search_job search;
 static sp_track playback_queue[SEARCH_LIMIT];
 static int playback_queue_count;
 
+static void frame(void);
+
 static void secure_clear(void *data, size_t len)
 {
 	volatile unsigned char *p = data;
 	while (len--)
 		*p++ = 0;
+}
+
+static void show_player_stage(const char *message)
+{
+	consoleClear();
+	printf("Reproduccion local\n\n%s\n", message);
+	printf("\nB: cancelar   START: salir\n");
+	frame();
+}
+
+static void player_update_line(const char *message)
+{
+	PrintConsole *console = consoleGetDefault();
+	if (!console)
+		return;
+	console->cursorX = 0;
+	console->cursorY = 7;
+	printf("%-50.50s", message);
+}
+
+static void download_worker(void *arg)
+{
+	download_job *job = arg;
+	job->result = track_stream_download(&job->stream, &job->stop);
+	__sync_synchronize();
+	job->done = true;
+}
+
+static void download_stop_join(download_job *job)
+{
+	if (!job->thread)
+		return;
+	job->stop = true;
+	while (!job->done && aptMainLoop()) {
+		player_update_line("Cancelando la descarga...");
+		frame();
+	}
+	threadJoin(job->thread, U64_MAX);
+	threadFree(job->thread);
+	job->thread = NULL;
+}
+
+static bool ensure_oauth_token(spotify_session *session, char *error,
+                               size_t error_size)
+{
+	if (session->oauth_token[0] &&
+	    session->oauth_expires_at > time(NULL) + 60)
+		return true;
+	if (!session->refresh_token[0]) {
+		snprintf(error, error_size, "No hay una credencial para renovar OAuth.");
+		return false;
+	}
+
+	spotify_tokens tokens;
+	memset(&tokens, 0, sizeof(tokens));
+	if (token_refresh(session->refresh_token, &tokens, error, error_size) != 0) {
+		secure_clear(&tokens, sizeof(tokens));
+		return false;
+	}
+	if (!tokens.access_token[0]) {
+		snprintf(error, error_size, "Spotify no devolvio un access token.");
+		secure_clear(&tokens, sizeof(tokens));
+		return false;
+	}
+	if (tokens.refresh_token[0] &&
+	    strcmp(tokens.refresh_token, session->refresh_token) != 0) {
+		if (!cfg_save_refresh_token(tokens.refresh_token, tokens.scope)) {
+			snprintf(error, error_size,
+			         "No se pudo guardar la credencial OAuth renovada.");
+			secure_clear(&tokens, sizeof(tokens));
+			return false;
+		}
+		snprintf(session->refresh_token, sizeof(session->refresh_token),
+		         "%s", tokens.refresh_token);
+	}
+	snprintf(session->oauth_token, sizeof(session->oauth_token), "%s",
+	         tokens.access_token);
+	session->oauth_expires_at = tokens.expires_at;
+	secure_clear(&tokens, sizeof(tokens));
+	return true;
+}
+
+static ap_session *open_playback_ap(spotify_session *session, char *error,
+                                    size_t error_size)
+{
+	if (!ensure_oauth_token(session, error, error_size))
+		return NULL;
+
+	ap_candidate candidates[AP_MAX_CANDIDATES];
+	int count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
+	                            error, error_size);
+	if (count < 1) {
+		if (!error[0])
+			snprintf(error, error_size, "No se encontro un access point.");
+		return NULL;
+	}
+	char device_id[64];
+	ap_device_id(device_id, sizeof(device_id));
+	ap_info info;
+	memset(&info, 0, sizeof(info));
+	int tried = 0;
+	ap_session *ap = ap_login_any(candidates, count, session->oauth_token,
+	                              device_id, &info, &tried,
+	                              error, error_size);
+	secure_clear(device_id, sizeof(device_id));
+	secure_clear(&info, sizeof(info));
+	if (!ap && !error[0])
+		snprintf(error, error_size, "No se pudo abrir la sesion del access point.");
+	return ap;
+}
+
+static int free_wave_index(ndspWaveBuf waves[PLAYER_WAVE_BUFFERS])
+{
+	for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++)
+		if (waves[i].status == NDSP_WBUF_DONE ||
+		    waves[i].status == NDSP_WBUF_FREE)
+			return i;
+	return -1;
+}
+
+static void submit_wave(ndspWaveBuf *wave, size_t frames)
+{
+	wave->nsamples = (u32)frames;
+	DSP_FlushDataCache(wave->data_vaddr,
+	                   PLAYER_FRAMES_PER_BUFFER * 4);
+	ndspChnWaveBufAdd(0, wave);
+}
+
+static bool playback(spotify_session *session, const sp_track *selected)
+{
+	char error[256] = {0};
+	download_job job;
+	memset(&job, 0, sizeof(job));
+	ndspWaveBuf waves[PLAYER_WAVE_BUFFERS];
+	memset(waves, 0, sizeof(waves));
+	uint8_t *input = NULL;
+	int16_t *audio = NULL;
+	bool ndsp_ready = false;
+	bool decoder_open = false;
+	stb_vorbis *decoder = NULL;
+	bool success = false;
+	bool cancelled = false;
+	bool exit_requested = false;
+	bool eof = false;
+	bool final_wave_submitted = false;
+	unsigned last_progress = UINT32_MAX;
+	size_t input_len = 0;
+	size_t source_pos = SPOTIFY_OGG_HEADER;
+	size_t pcm_frames = 0;
+	size_t total_audio_frames = 0;
+	int16_t pcm[PLAYER_FRAMES_PER_BUFFER * 2];
+	float **decoded = NULL;
+	int decoded_samples = 0;
+	int decoded_offset = 0;
+	stb_vorbis_info info = {0};
+
+	show_player_stage("Preparando la salida de audio...");
+	if (R_FAILED(ndspInit())) {
+		snprintf(error, sizeof(error),
+		         "No se pudo iniciar NDSP (DSP no disponible).");
+		goto cleanup;
+	}
+	ndsp_ready = true;
+
+	input = malloc(PLAYER_INPUT_CAPACITY);
+	audio = linearAlloc(PLAYER_FRAMES_PER_BUFFER * 4 * PLAYER_WAVE_BUFFERS);
+	if (!input || !audio) {
+		snprintf(error, sizeof(error), "No hay memoria para los buffers de audio.");
+		goto cleanup;
+	}
+	for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++) {
+		waves[i].data_vaddr = (uint8_t *)audio +
+		                      i * PLAYER_FRAMES_PER_BUFFER * 4;
+		waves[i].nsamples = PLAYER_FRAMES_PER_BUFFER;
+		waves[i].status = NDSP_WBUF_DONE;
+	}
+
+	show_player_stage("Autenticando el access point...");
+	ap_session *ap = open_playback_ap(session, error, sizeof(error));
+	if (!ap)
+		goto cleanup;
+
+	show_player_stage("Obteniendo la clave de audio...");
+	int rc = track_stream_begin(session->host, session->library_token, ap,
+	                            selected->uri, NULL, &job.stream,
+	                            error, sizeof(error));
+	ap_close(ap);
+	secure_clear(session->oauth_token, sizeof(session->oauth_token));
+	session->oauth_expires_at = 0;
+	if (rc != 0) {
+		if (rc == AP_KEY_REFUSED)
+			snprintf(error, sizeof(error),
+			         "La cuenta no tiene acceso a la clave de esta pista.");
+		goto cleanup;
+	}
+	consoleClear();
+	printf("Reproduccion local\n\n");
+	printf("%.42s\n", selected->name);
+	printf("Artista: %.42s\n\n", selected->artist);
+	printf("Descargando y reproduciendo...\n\n");
+	printf("B: detener   START: salir\n");
+	frame();
+
+	job.thread = threadCreate(download_worker, &job, 32 * 1024,
+	                          0x18, -2, false);
+	if (!job.thread) {
+		snprintf(error, sizeof(error),
+		         "No se pudo iniciar la descarga en segundo plano.");
+		goto cleanup;
+	}
+
+	ndspSetOutputMode(NDSP_OUTPUT_STEREO);
+	ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
+	ndspChnSetFormat(0, NDSP_FORMAT_STEREO_PCM16);
+	float mix[12] = {0};
+	mix[0] = mix[1] = 1.0f;
+	ndspChnSetMix(0, mix);
+
+	while (aptMainLoop()) {
+		hidScanInput();
+		u32 down = hidKeysDown();
+		if (down & KEY_START) {
+			cancelled = true;
+			exit_requested = true;
+			break;
+		}
+		if (down & KEY_B) {
+			cancelled = true;
+			break;
+		}
+
+		__sync_synchronize();
+		size_t available = job.stream.downloaded;
+		if (job.stream.data && available > source_pos &&
+		    input_len < PLAYER_INPUT_CAPACITY) {
+			size_t copy = available - source_pos;
+			if (copy > PLAYER_INPUT_CAPACITY - input_len)
+				copy = PLAYER_INPUT_CAPACITY - input_len;
+			memcpy(input + input_len, job.stream.data + source_pos, copy);
+			input_len += copy;
+			source_pos += copy;
+		}
+
+		if (!decoder && input_len > 0) {
+			int consumed = 0;
+			int vorbis_error = 0;
+			decoder = stb_vorbis_open_pushdata(input, (int)input_len,
+			                                   &consumed, &vorbis_error, NULL);
+			if (decoder) {
+				if (consumed < 0 || (size_t)consumed > input_len) {
+					snprintf(error, sizeof(error),
+					         "El decodificador devolvio un desplazamiento invalido.");
+					break;
+				}
+				memmove(input, input + consumed, input_len - (size_t)consumed);
+				input_len -= (size_t)consumed;
+				info = stb_vorbis_get_info(decoder);
+				if ((info.channels != 1 && info.channels != 2) ||
+				    info.sample_rate == 0) {
+					snprintf(error, sizeof(error),
+					         "Formato Vorbis no compatible (%d canales).",
+					         info.channels);
+					break;
+				}
+				ndspChnSetRate(0, (float)info.sample_rate);
+				decoder_open = true;
+			} else if (vorbis_error != VORBIS_need_more_data) {
+				snprintf(error, sizeof(error),
+				         "No se pudo abrir el audio Vorbis (error %d).",
+				         vorbis_error);
+				break;
+			}
+		}
+
+		int wave_index = free_wave_index(waves);
+		if (pcm_frames == PLAYER_FRAMES_PER_BUFFER) {
+			if (wave_index >= 0) {
+				memcpy((uint8_t *)audio +
+				       wave_index * PLAYER_FRAMES_PER_BUFFER * 4,
+				       pcm, pcm_frames * 4);
+				submit_wave(&waves[wave_index], pcm_frames);
+				total_audio_frames += pcm_frames;
+				pcm_frames = 0;
+			} else {
+				frame();
+			}
+			continue;
+		}
+
+		if (decoded && decoded_offset < decoded_samples) {
+			size_t amount = (size_t)(decoded_samples - decoded_offset);
+			size_t room = PLAYER_FRAMES_PER_BUFFER - pcm_frames;
+			if (amount > room)
+				amount = room;
+			for (size_t i = 0; i < amount; i++) {
+				for (int channel = 0; channel < 2; channel++) {
+					float sample = decoded[info.channels == 1 ? 0 : channel]
+					                        [decoded_offset + (int)i];
+					if (sample > 1.0f) sample = 1.0f;
+					if (sample < -1.0f) sample = -1.0f;
+					int value = (int)(sample * 32767.0f);
+					pcm[(pcm_frames + i) * 2 + channel] = (int16_t)value;
+				}
+			}
+			decoded_offset += (int)amount;
+			pcm_frames += amount;
+			if (decoded_offset == decoded_samples) {
+				decoded = NULL;
+				decoded_samples = decoded_offset = 0;
+			}
+			continue;
+		}
+
+		bool decoder_needs_more = decoder_open && input_len == 0;
+		if (decoder && input_len > 0) {
+			int channels = 0;
+			int samples = 0;
+			int used = stb_vorbis_decode_frame_pushdata(
+			               decoder, input, (int)input_len, &channels,
+			               &decoded, &samples);
+			if (used < 0 || (size_t)used > input_len) {
+				snprintf(error, sizeof(error),
+				         "El decodificador devolvio un bloque invalido.");
+				break;
+			}
+			if (used > 0) {
+				memmove(input, input + used, input_len - (size_t)used);
+				input_len -= (size_t)used;
+			}
+			if (samples > 0) {
+				if (channels != info.channels) {
+					snprintf(error, sizeof(error),
+					         "El numero de canales Vorbis cambio durante la pista.");
+					break;
+				}
+				decoded_samples = samples;
+				decoded_offset = 0;
+				continue;
+			}
+			if (used > 0)
+				continue;
+			decoder_needs_more = true;
+		}
+
+		__sync_synchronize();
+		available = job.stream.downloaded;
+		bool no_more_data = job.done && source_pos >= available &&
+		                    (!decoder_open || decoder_needs_more);
+		if (no_more_data && !eof) {
+			if (job.stream.dl_failed) {
+				snprintf(error, sizeof(error), "Fallo de descarga: %.190s",
+				         job.stream.dl_err);
+				break;
+			}
+			if (!decoder_open) {
+				snprintf(error, sizeof(error),
+				         "La descarga no contiene una pista Vorbis valida.");
+				break;
+			}
+			input_len = 0;
+			eof = true;
+		}
+
+		if (input_len == PLAYER_INPUT_CAPACITY) {
+			snprintf(error, sizeof(error),
+			         "Un bloque Vorbis supera el limite de memoria.");
+			break;
+		}
+		if (eof && pcm_frames == 0 && !final_wave_submitted)
+			final_wave_submitted = true;
+		if (eof && pcm_frames > 0 && !final_wave_submitted) {
+			wave_index = free_wave_index(waves);
+			if (wave_index >= 0) {
+				memcpy((uint8_t *)audio +
+				       wave_index * PLAYER_FRAMES_PER_BUFFER * 4,
+				       pcm, pcm_frames * 4);
+				submit_wave(&waves[wave_index], pcm_frames);
+				total_audio_frames += pcm_frames;
+				pcm_frames = 0;
+				final_wave_submitted = true;
+				continue;
+			}
+		}
+		if (eof && pcm_frames == 0 && final_wave_submitted) {
+			bool playing = false;
+			for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++)
+				if (waves[i].status == NDSP_WBUF_QUEUED ||
+				    waves[i].status == NDSP_WBUF_PLAYING)
+					playing = true;
+			if (!playing) {
+				success = total_audio_frames > 0;
+				if (!success)
+					snprintf(error, sizeof(error),
+					         "La pista no contiene audio reproducible.");
+				break;
+			}
+		}
+
+		if (!job.done) {
+			char status[64];
+			size_t total = job.stream.total;
+			unsigned percent = total
+			                   ? (unsigned)(available * 100 / total) : 0;
+			if (percent != last_progress) {
+				snprintf(status, sizeof(status),
+				         "Descarga: %u%%   Audio: %lu Hz",
+				         percent, decoder_open
+				         ? (unsigned long)info.sample_rate : 0);
+				player_update_line(status);
+				last_progress = percent;
+			}
+		}
+		frame();
+		if (!aptMainLoop())
+			break;
+	}
+
+cleanup:
+	download_stop_join(&job);
+	if (decoder)
+		stb_vorbis_close(decoder);
+	if (ndsp_ready) {
+		ndspChnWaveBufClear(0);
+		ndspExit();
+	}
+	if (job.stream.data)
+		secure_clear(job.stream.data, job.stream.len);
+	track_stream_free(&job.stream);
+	if (input) {
+		secure_clear(input, PLAYER_INPUT_CAPACITY);
+		free(input);
+	}
+	if (audio)
+		linearFree(audio);
+	secure_clear(&job, sizeof(job));
+
+	if (cancelled)
+		return !exit_requested;
+	if (!success) {
+		consoleClear();
+		printf("No se pudo reproducir la pista\n\n");
+		printf("%s\n\n", error[0] ? error : "La reproduccion se interrumpio.");
+		printf("B: volver   START: salir\n");
+		while (aptMainLoop()) {
+			hidScanInput();
+			u32 down = hidKeysDown();
+			if (down & KEY_START)
+				return false;
+			if (down & KEY_B)
+				return true;
+			frame();
+		}
+		return false;
+	}
+
+	consoleClear();
+	printf("Pista terminada\n\n");
+	printf("%.42s\n", selected->name);
+	printf("Artista: %.42s\n\n", selected->artist);
+	printf("B: volver a la seleccion   START: salir\n");
+	while (aptMainLoop()) {
+		hidScanInput();
+		u32 down = hidKeysDown();
+		if (down & KEY_START)
+			return false;
+		if (down & KEY_B)
+			return true;
+		frame();
+	}
+	return false;
 }
 
 static void frame(void)
@@ -205,12 +693,12 @@ static void show_selection(void)
 	       track->duration_ms / 60000,
 	       (track->duration_ms / 1000) % 60);
 	printf("Cola preparada: %d canciones\n", playback_queue_count);
-	printf("La reproduccion local llega en la fase siguiente.\n\n");
-	printf("B: resultados   Y: nueva busqueda\n");
+	printf("A: reproducir   B: resultados\n");
+	printf("Y: nueva busqueda\n");
 	printf("X: sesion   START: salir\n");
 }
 
-static bool search_flow(const spotify_session *session,
+static bool search_flow(spotify_session *session,
                         char query[SEARCH_QUERY_SIZE])
 {
 	for (;;) {
@@ -304,6 +792,11 @@ show_results_screen:
 						break;
 					if (down & KEY_Y)
 						break;
+					if (down & KEY_A) {
+						if (!playback(session, &playback_queue[0]))
+							return false;
+						show_selection();
+					}
 					frame();
 				}
 				if (!aptMainLoop())
@@ -450,6 +943,13 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	ap_session *ap = ap_login_any(candidates, count, tokens->access_token,
 	                              device_id, &info, &tried,
 	                              detail, sizeof(detail));
+	if (ap) {
+		snprintf(session->oauth_token, sizeof(session->oauth_token), "%s",
+		         tokens->access_token);
+		snprintf(session->refresh_token, sizeof(session->refresh_token), "%s",
+		         tokens->refresh_token);
+		session->oauth_expires_at = tokens->expires_at;
+	}
 	secure_clear(tokens, sizeof(*tokens));
 	if (!ap) {
 		error->category = info.login_error
