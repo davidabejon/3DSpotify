@@ -52,6 +52,10 @@ Queda fuera de alcance: playlists y navegación por biblioteca, recomendaciones,
 
 ### Fase 1: arranque, identidad y sesión directa
 
+**Estado:** implementada en `client/source/native`; verificada compilando el
+target `spotify3ds`. La sesión puede iniciarse con credenciales guardadas o
+mediante emparejamiento, y muestra errores recuperables para volver a intentar.
+
 **Propósito:** reemplazar la configuración de IP del proxy por la identidad Spotify ya guardada en la SD.
 
 **Trabajo:**

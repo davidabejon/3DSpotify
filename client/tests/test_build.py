@@ -60,6 +60,8 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("fetch.c", source_names)
         self.assertNotIn("parse.c", source_names)
         self.assertNotIn("stb_image_impl.c", source_names)
+        self.assertIn("native", source_dirs)
+        self.assertNotIn("probe_play", source_dirs)
         self.assertEqual(mbedtls, "release")
 
     def test_local_stb_vorbis_must_match_pinned_checksum(self):

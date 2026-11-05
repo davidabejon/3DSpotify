@@ -42,9 +42,11 @@ from the PC with:
 C:\devkitPro\tools\bin\3dslink.exe client\source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <CONSOLE_IP>
 ```
 
-This target initially starts from the direct playback probe in `probe_play`;
-later phases will replace that test UI with the interactive client. It does
-not compile `fetch.c` or `parse.c` from the legacy flow.
+The target starts a direct session: it refreshes the stored credential, offers
+pairing when needed, and checks the access-point and library-session
+connections. On the confirmation screen, A retries, Y starts pairing another
+account, and START exits. The probes remain available as separate targets. It
+does not compile `fetch.c` or `parse.c` from the legacy flow.
 
 ## Building the native TLS probe
 
