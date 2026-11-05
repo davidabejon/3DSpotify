@@ -49,12 +49,13 @@ con arriba/abajo; A selecciona, B vuelve y Y permite otra consulta. Las
 peticiones de búsqueda y metadatos se ejecutan mientras la pantalla muestra
 el progreso. A en la pantalla de selección inicia la reproducción local de la
 pista elegida; el cliente abre el access point para obtener la clave, lo cierra
-y descarga/descifra la pista mientras la decodifica hacia NDSP. B detiene la
-reproducción y vuelve a la selección; START detiene y sale. La cola se prepara
-con los resultados de búsqueda, pero el cambio de pista y la pausa pertenecen
-a la siguiente fase. La reproducción completa aún debe validarse en hardware
-real. Los probes siguen disponibles como targets independientes. No compila
-`fetch.c` ni `parse.c` del flujo antiguo.
+y descarga/descifra la pista mientras la decodifica hacia NDSP. Durante la
+reproducción, A pausa/reanuda, izquierda/derecha cambia de pista, arriba/abajo
+ajusta el volumen y B vuelve a resultados; START detiene y sale. La cola sigue
+el orden de los resultados y no envuelve en sus extremos. La reproducción
+completa y los controles aún deben validarse en hardware real. Los probes
+siguen disponibles como targets independientes. No compila `fetch.c` ni
+`parse.c` del flujo antiguo.
 
 ## Compilar el probe TLS nativo
 

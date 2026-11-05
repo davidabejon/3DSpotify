@@ -55,9 +55,16 @@ typedef struct {
 	char detail[256];
 } startup_error;
 
+typedef enum {
+	PLAYER_RETURN_RESULTS,
+	PLAYER_EXIT_APP,
+	PLAYER_TRACK_CHANGED
+} playback_result;
+
 static search_job search;
 static sp_track playback_queue[SEARCH_LIMIT];
 static int playback_queue_count;
+static float playback_volume = 0.7f;
 
 static void frame(void);
 
@@ -82,7 +89,17 @@ static void player_update_line(const char *message)
 	if (!console)
 		return;
 	console->cursorX = 0;
-	console->cursorY = 7;
+	console->cursorY = 8;
+	printf("%-50.50s", message);
+}
+
+static void player_update_status(const char *message)
+{
+	PrintConsole *console = consoleGetDefault();
+	if (!console)
+		return;
+	console->cursorX = 0;
+	console->cursorY = 9;
 	printf("%-50.50s", message);
 }
 
@@ -194,13 +211,29 @@ static void submit_wave(ndspWaveBuf *wave, size_t frames)
 	ndspChnWaveBufAdd(0, wave);
 }
 
-static bool playback(spotify_session *session, const sp_track *selected)
+static void set_playback_volume(float volume)
 {
+	if (volume < 0.0f)
+		volume = 0.0f;
+	if (volume > 1.0f)
+		volume = 1.0f;
+	playback_volume = volume;
+	float mix[12] = {0};
+	mix[0] = mix[1] = playback_volume;
+	ndspChnSetMix(0, mix);
+}
+
+static playback_result playback(spotify_session *session,
+                                const sp_track *queue, int queue_count,
+                                int *track_index)
+{
+	const sp_track *selected = &queue[*track_index];
 	char error[256] = {0};
 	download_job job;
 	memset(&job, 0, sizeof(job));
 	ndspWaveBuf waves[PLAYER_WAVE_BUFFERS];
 	memset(waves, 0, sizeof(waves));
+	bool wave_submitted[PLAYER_WAVE_BUFFERS] = {0};
 	uint8_t *input = NULL;
 	int16_t *audio = NULL;
 	bool ndsp_ready = false;
@@ -209,14 +242,19 @@ static bool playback(spotify_session *session, const sp_track *selected)
 	bool success = false;
 	bool cancelled = false;
 	bool exit_requested = false;
+	bool return_to_results = false;
+	bool track_changed = false;
 	bool eof = false;
 	bool final_wave_submitted = false;
 	unsigned last_progress = UINT32_MAX;
 	unsigned last_sample_rate = UINT32_MAX;
+	unsigned last_elapsed = UINT32_MAX;
+	unsigned last_volume = UINT32_MAX;
 	size_t input_len = 0;
 	size_t source_pos = SPOTIFY_OGG_HEADER;
 	size_t pcm_frames = 0;
 	size_t total_audio_frames = 0;
+	size_t completed_audio_frames = 0;
 	int16_t pcm[PLAYER_FRAMES_PER_BUFFER * 2];
 	float **decoded = NULL;
 	int decoded_samples = 0;
@@ -230,6 +268,7 @@ static bool playback(spotify_session *session, const sp_track *selected)
 		goto cleanup;
 	}
 	ndsp_ready = true;
+	ndspChnSetPaused(0, false);
 
 	input = malloc(PLAYER_INPUT_CAPACITY);
 	audio = linearAlloc(PLAYER_FRAMES_PER_BUFFER * 4 * PLAYER_WAVE_BUFFERS);
@@ -265,9 +304,11 @@ static bool playback(spotify_session *session, const sp_track *selected)
 	consoleClear();
 	printf("Reproduccion local\n\n");
 	printf("%.42s\n", selected->name);
-	printf("Artista: %.42s\n\n", selected->artist);
-	printf("Descargando y reproduciendo...\n\n");
-	printf("B: detener   START: salir\n");
+	printf("Artista: %.42s\n", selected->artist);
+	printf("Pista %d/%d de la cola\n\n", *track_index + 1, queue_count);
+	printf("Preparando descarga y decodificacion...\n");
+	printf("A: pausa   Izq/der: pista   Arr/ab: volumen");
+	printf("\nB: resultados   START: salir\n");
 	frame();
 
 	job.thread = threadCreate(download_worker, &job, 32 * 1024,
@@ -281,9 +322,7 @@ static bool playback(spotify_session *session, const sp_track *selected)
 	ndspSetOutputMode(NDSP_OUTPUT_STEREO);
 	ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
 	ndspChnSetFormat(0, NDSP_FORMAT_STEREO_PCM16);
-	float mix[12] = {0};
-	mix[0] = mix[1] = 1.0f;
-	ndspChnSetMix(0, mix);
+	set_playback_volume(playback_volume);
 
 	while (aptMainLoop()) {
 		hidScanInput();
@@ -295,7 +334,43 @@ static bool playback(spotify_session *session, const sp_track *selected)
 		}
 		if (down & KEY_B) {
 			cancelled = true;
+			return_to_results = true;
 			break;
+		}
+		if (down & KEY_A) {
+			bool paused = !ndspChnIsPaused(0);
+			ndspChnSetPaused(0, paused);
+			player_update_status(paused ? "Pausada" : "Reproduciendo");
+		}
+		if ((down & KEY_LEFT) || (down & KEY_RIGHT)) {
+			int direction = (down & KEY_LEFT) ? -1 : 1;
+			int next = *track_index + direction;
+			if (next < 0 || next >= queue_count) {
+				player_update_status(next < 0
+				                     ? "Inicio de cola; no hay pista anterior"
+				                     : "Fin de cola; no hay pista siguiente");
+			} else {
+				*track_index = next;
+				track_changed = true;
+				cancelled = true;
+				break;
+			}
+		}
+		if ((down & KEY_UP) || (down & KEY_DOWN)) {
+			float change = (down & KEY_UP) ? 0.1f : -0.1f;
+			set_playback_volume(playback_volume + change);
+			char volume_status[48];
+			snprintf(volume_status, sizeof(volume_status),
+			         "Volumen local: %u%%",
+			         (unsigned)(playback_volume * 100.0f + 0.5f));
+			player_update_status(volume_status);
+		}
+
+		for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++) {
+			if (wave_submitted[i] && waves[i].status == NDSP_WBUF_DONE) {
+				completed_audio_frames += waves[i].nsamples;
+				wave_submitted[i] = false;
+			}
 		}
 
 		__sync_synchronize();
@@ -344,10 +419,13 @@ static bool playback(spotify_session *session, const sp_track *selected)
 		int wave_index = free_wave_index(waves);
 		if (pcm_frames == PLAYER_FRAMES_PER_BUFFER) {
 			if (wave_index >= 0) {
-				memcpy((uint8_t *)audio +
-				       wave_index * PLAYER_FRAMES_PER_BUFFER * 4,
+				waves[wave_index].data_pcm16 =
+					(int16_t *)((uint8_t *)audio +
+					wave_index * PLAYER_FRAMES_PER_BUFFER * 4);
+				memcpy(waves[wave_index].data_pcm16,
 				       pcm, pcm_frames * 4);
 				submit_wave(&waves[wave_index], pcm_frames);
+				wave_submitted[wave_index] = true;
 				total_audio_frames += pcm_frames;
 				pcm_frames = 0;
 			} else {
@@ -440,10 +518,13 @@ static bool playback(spotify_session *session, const sp_track *selected)
 		if (eof && pcm_frames > 0 && !final_wave_submitted) {
 			wave_index = free_wave_index(waves);
 			if (wave_index >= 0) {
-				memcpy((uint8_t *)audio +
-				       wave_index * PLAYER_FRAMES_PER_BUFFER * 4,
+				waves[wave_index].data_pcm16 =
+					(int16_t *)((uint8_t *)audio +
+					wave_index * PLAYER_FRAMES_PER_BUFFER * 4);
+				memcpy(waves[wave_index].data_pcm16,
 				       pcm, pcm_frames * 4);
 				submit_wave(&waves[wave_index], pcm_frames);
+				wave_submitted[wave_index] = true;
 				total_audio_frames += pcm_frames;
 				pcm_frames = 0;
 				final_wave_submitted = true;
@@ -465,20 +546,40 @@ static bool playback(spotify_session *session, const sp_track *selected)
 			}
 		}
 
+		size_t played_frames = completed_audio_frames;
+		u16 current_sequence = ndspChnGetWaveBufSeq(0);
+		for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++)
+			if (wave_submitted[i] &&
+			    waves[i].sequence_id == current_sequence) {
+				u32 position = ndspChnGetSamplePos(0);
+				if (position < waves[i].nsamples)
+					played_frames += position;
+				break;
+			}
+
 		unsigned percent = job.stream.total
 		                   ? (unsigned)(available * 100 /
 		                                job.stream.total) : 0;
 		if (job.done && job.stream.dl_done)
 			percent = 100;
 		unsigned sample_rate = decoder_open ? info.sample_rate : 0;
-		if (percent != last_progress || sample_rate != last_sample_rate) {
+		unsigned elapsed = sample_rate
+		                   ? (unsigned)(played_frames / sample_rate) : 0;
+		unsigned volume = (unsigned)(playback_volume * 100.0f + 0.5f);
+		if (percent != last_progress || sample_rate != last_sample_rate ||
+		    elapsed != last_elapsed || volume != last_volume) {
 			char status[64];
 			snprintf(status, sizeof(status),
-			         "Descarga: %u%%   Audio: %u Hz",
-			         percent, sample_rate);
+			         "%02u:%02u / %02d:%02d  Descarga:%u%% %uHz V:%u%%",
+			         elapsed / 60, elapsed % 60,
+			         selected->duration_ms / 60000,
+			         (selected->duration_ms / 1000) % 60,
+			         percent, sample_rate, volume);
 			player_update_line(status);
 			last_progress = percent;
 			last_sample_rate = sample_rate;
+			last_elapsed = elapsed;
+			last_volume = volume;
 		}
 		frame();
 		if (!aptMainLoop())
@@ -504,40 +605,47 @@ cleanup:
 		linearFree(audio);
 	secure_clear(&job, sizeof(job));
 
-	if (cancelled)
-		return !exit_requested;
+	if (cancelled) {
+		if (exit_requested)
+			return PLAYER_EXIT_APP;
+		if (track_changed)
+			return PLAYER_TRACK_CHANGED;
+		return_to_results = true;
+	}
 	if (!success) {
+		if (return_to_results)
+			return PLAYER_RETURN_RESULTS;
 		consoleClear();
 		printf("No se pudo reproducir la pista\n\n");
 		printf("%s\n\n", error[0] ? error : "La reproduccion se interrumpio.");
-		printf("B: volver   START: salir\n");
+		printf("B: resultados   START: salir\n");
 		while (aptMainLoop()) {
 			hidScanInput();
 			u32 down = hidKeysDown();
 			if (down & KEY_START)
-				return false;
+				return PLAYER_EXIT_APP;
 			if (down & KEY_B)
-				return true;
+				return PLAYER_RETURN_RESULTS;
 			frame();
 		}
-		return false;
+		return PLAYER_EXIT_APP;
 	}
 
 	consoleClear();
 	printf("Pista terminada\n\n");
 	printf("%.42s\n", selected->name);
 	printf("Artista: %.42s\n\n", selected->artist);
-	printf("B: volver a la seleccion   START: salir\n");
+	printf("B: resultados   START: salir\n");
 	while (aptMainLoop()) {
 		hidScanInput();
 		u32 down = hidKeysDown();
 		if (down & KEY_START)
-			return false;
+			return PLAYER_EXIT_APP;
 		if (down & KEY_B)
-			return true;
+			return PLAYER_RETURN_RESULTS;
 		frame();
 	}
-	return false;
+	return PLAYER_EXIT_APP;
 }
 
 static void frame(void)
@@ -673,19 +781,16 @@ static void show_results(const char *query, int selected)
 	printf("Y: nueva busqueda  B: volver  START: salir\n");
 }
 
-static void prepare_queue(int selected)
+static void prepare_queue(void)
 {
-	playback_queue_count = 0;
-	playback_queue[playback_queue_count++] = search.tracks[selected];
-	for (int i = 0; i < search.count; i++) {
-		if (i != selected)
-			playback_queue[playback_queue_count++] = search.tracks[i];
-	}
+	playback_queue_count = search.count;
+	memcpy(playback_queue, search.tracks,
+	       (size_t)playback_queue_count * sizeof(playback_queue[0]));
 }
 
-static void show_selection(void)
+static void show_selection(int selected)
 {
-	const sp_track *track = &playback_queue[0];
+	const sp_track *track = &playback_queue[selected];
 	consoleClear();
 	printf("Cancion seleccionada\n\n");
 	printf("%.42s\n", track->name);
@@ -694,7 +799,7 @@ static void show_selection(void)
 	printf("Duracion: %d:%02d\n\n",
 	       track->duration_ms / 60000,
 	       (track->duration_ms / 1000) % 60);
-	printf("Cola preparada: %d canciones\n", playback_queue_count);
+	printf("Cola: %d/%d\n", selected + 1, playback_queue_count);
 	printf("A: reproducir   B: resultados\n");
 	printf("Y: nueva busqueda\n");
 	printf("X: sesion   START: salir\n");
@@ -781,8 +886,9 @@ show_results_screen:
 			if (selection_changed)
 				show_results(query, selected);
 			if (down & KEY_A) {
-				prepare_queue(selected);
-				show_selection();
+				prepare_queue();
+				int queue_index = selected;
+				show_selection(queue_index);
 				for (;;) {
 					hidScanInput();
 					down = hidKeysDown();
@@ -795,9 +901,22 @@ show_results_screen:
 					if (down & KEY_Y)
 						break;
 					if (down & KEY_A) {
-						if (!playback(session, &playback_queue[0]))
-							return false;
-						show_selection();
+						for (;;) {
+							playback_result result =
+								playback(session, playback_queue,
+								         playback_queue_count,
+								         &queue_index);
+							if (result == PLAYER_EXIT_APP)
+								return false;
+							if (result == PLAYER_TRACK_CHANGED)
+								continue;
+							if (result == PLAYER_RETURN_RESULTS) {
+								selected = queue_index;
+								goto return_to_results;
+							}
+							break;
+						}
+						show_selection(queue_index);
 					}
 					frame();
 				}
@@ -805,6 +924,9 @@ show_results_screen:
 					return false;
 				if (hidKeysDown() & KEY_Y)
 					break;
+				show_results(query, selected);
+				continue;
+return_to_results:
 				show_results(query, selected);
 				continue;
 			}

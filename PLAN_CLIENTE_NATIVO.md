@@ -101,9 +101,8 @@ pushdata y reproducción NDSP con descarga cancelable, watermark y liberación
 ordenada. La compilación local no sustituye la validación de reproducción
 completa en una 3DS real, que sigue pendiente.
 
-**Controles provisionales:** `A` inicia la pista seleccionada; `B` detiene y
-vuelve a la selección; `START` detiene y sale. Pausa y cambio de pista quedan
-para la fase 4.
+**Controles provisionales:** `A` inicia la pista seleccionada; los controles
+de reproduccion y la cola se describen en la fase 4.
 
 **Propósito:** convertir la prueba de reproducción de una sola pista en un componente que pueda reproducir la selección del usuario hasta el final.
 
@@ -122,6 +121,16 @@ para la fase 4.
 **Criterio de aceptación:** se reproduce una pista completa en hardware real; la consola sigue respondiendo durante la descarga y no hay lectura fuera del watermark, uso de memoria después de liberar ni audio corrupto al llegar al final.
 
 ### Fase 4: controles y cola de reproducción
+
+**Estado:** implementada en `client/source/native`; controles locales de
+pausa, volumen y navegación por la cola, con comportamiento explícito en los
+extremos. Se ha compilado el target nativo y pasado el conjunto de pruebas de
+build; la validación de botones y audio en hardware real sigue pendiente.
+
+**Controles implementados:** `A` pausa/reanuda; izquierda/derecha cambia a la
+pista anterior/siguiente de los resultados; arriba/abajo ajusta el volumen
+local; `B` detiene y vuelve a resultados; `START` detiene y sale. En los
+extremos de la cola no se envuelve: se muestra un aviso.
 
 **Propósito:** conectar los botones a la reproducción local, no a comandos del servidor.
 

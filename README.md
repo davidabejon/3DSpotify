@@ -50,11 +50,12 @@ select, B to return, and Y to enter another query. Search and metadata
 requests run while progress is displayed. Press A on the selection screen to
 play the chosen track locally. The client opens the access point to obtain the
 audio key, closes it, and then downloads/decrypts the track while decoding it
-to NDSP. B stops playback and returns to the selection; START stops and exits.
-The queue is built from the search results, but pause and track changes are
-part of the next phase. Complete playback still needs validation on real
-hardware. The probes remain available as separate targets. It does not compile
-`fetch.c` or `parse.c` from the legacy flow.
+to NDSP. During playback, A pauses/resumes, left/right changes track, up/down
+adjusts local volume, and B returns to results; START stops and exits. The
+queue follows search-result order and does not wrap at either end. Complete
+playback and controls still need validation on real hardware. The probes
+remain available as separate targets. It does not compile `fetch.c` or
+`parse.c` from the legacy flow.
 
 ## Building the native TLS probe
 
