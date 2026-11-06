@@ -33,4 +33,14 @@ static inline top_mode top_mode_for(app_tab tab, player_phase phase)
 	return tab == TAB_PLAYER ? TOP_ART_BIG : TOP_NOW_CARD;
 }
 
+/* The spinner, centred over whatever the top screen shows, on any tab:
+ * while a track loads or plays and nothing of its audio has downloaded
+ * yet. A finished track counts as fully downloaded. */
+static inline bool top_shows_spinner(player_phase phase,
+                                     unsigned download_pct)
+{
+	return (phase == PLAYER_PHASE_LOADING ||
+	        phase == PLAYER_PHASE_PLAYING) && download_pct == 0;
+}
+
 #endif

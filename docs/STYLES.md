@@ -84,8 +84,10 @@ Todas las combinaciones de la tabla tienen un contraste ≥ 4.5:1, también en e
 
 - Degradado únicamente en el fondo de pantalla (`fondo_sup` → `fondo_inf`, vertical). Todo
   lo demás, relleno plano.
-- No usar transparencias ni mezclas alfa en ningún elemento. Única excepción: el logotipo
-  (`romfs/gfx/logo.png`) se dibuja con su propio canal alfa.
+- No usar transparencias ni mezclas alfa en ningún elemento. Excepciones: el logotipo
+  (`romfs/gfx/logo.png`) se dibuja con su propio canal alfa, y el spinner de descarga de la
+  pantalla superior va sobre un velo gris `#404040` al ~70 % de opacidad (`SCRIM_*` en
+  `theme.h`), 8 px más grande que el spinner por cada lado.
 - No usar `#1DB954` ni `#1ED760`.
 
 ---
@@ -313,8 +315,12 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Reposo: panel `capa` con contorno 1 px `tinta`, icono `texto`.
 - Activa: relleno `clorofila`, banda inferior 2 px `musgo`, contorno 1 px `tinta`, icono
   `tinta`.
-- Pulsada (§6.3): desplazada 2 px a la derecha y abajo, relleno `musgo`, icono `tinta`. Se
-  dibuja la última, por encima de sus vecinas.
+- Pulsada: relleno `musgo`, icono `tinta`. A diferencia del resto de controles (§6.3), no se
+  desplaza: su borde inferior sube 4 px y la pestaña encoge solo hacia arriba. La franja que
+  queda debajo se rellena con `fondo_sup`, para que las filas que pasan por debajo de la
+  barra sigan ocultas.
+- La pestaña activa, sin pulsar, tiene el borde inferior 2 px más arriba mientras está
+  seleccionada.
 - Táctil (§6.4): la pestaña se pulsa al tocarla y se activa al levantar el lápiz dentro.
 - Botones (§6.5): L/R pasan a la pestaña anterior o siguiente, en cualquier pantalla; ZL/ZR
   (solo New 3DS) hacen lo mismo. Ninguna vista usa L/R para otra cosa.

@@ -118,14 +118,23 @@ bool tabbar_dirty(void)
 }
 
 /* 5.12: at rest a `capa` panel with the icon in `texto`; active, flat
- * `clorofila` with a `musgo` bottom band and the icon in `tinta`; pressed
- * (6.3), moved onto its shadow in `musgo`, icon in `tinta`. */
+ * `clorofila` with a `musgo` bottom band and the icon in `tinta`; pressed,
+ * `musgo` with the icon in `tinta`. Pressed and active tabs do not move
+ * like other controls (6.3): their bottom edge rises (tabs_tab_face), more
+ * while pressed, and the strip left below is filled with the background
+ * so rows scrolling under the bar stay hidden. */
 static void draw_tab(int tab, bool pressed)
 {
-	ui_rect r = tabs_tab_rect(tab);
+	tab_face face = pressed ? TAB_FACE_PRESSED
+	              : tab == (int)active ? TAB_FACE_ACTIVE : TAB_FACE_REST;
+	ui_rect r = tabs_tab_face(tab, face);
+	if (face != TAB_FACE_REST) {
+		ui_rect full = tabs_tab_rect(tab);
+		ui_rect strip = { full.x, r.y + r.h, full.w, full.h - r.h };
+		ui_fill(strip, COL_FONDO_SUP);
+	}
 	u32 ink;
 	if (pressed) {
-		r = ui_rect_offset(r, PRESS_SHIFT, PRESS_SHIFT);
 		ui_fill(r, COL_TINTA);
 		ui_fill(ui_rect_inset(r, OUTLINE_W), COL_MUSGO);
 		ink = COL_TINTA;
@@ -148,13 +157,9 @@ static void draw_tab(int tab, bool pressed)
 void tabbar_draw(void)
 {
 	tabbar_look look = current_look();
-	/* Pressed tabs last: they move over their neighbours. */
+	/* Tabs only shrink inside their own space: no order needed. */
 	for (int i = 0; i < TAB_COUNT; i++)
-		if (!look.pressed[i])
-			draw_tab(i, false);
-	for (int i = 0; i < TAB_COUNT; i++)
-		if (look.pressed[i])
-			draw_tab(i, true);
+		draw_tab(i, look.pressed[i]);
 	drawn = look;
 	drawn_valid = true;
 }

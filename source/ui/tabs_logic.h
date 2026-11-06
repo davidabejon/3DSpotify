@@ -36,6 +36,26 @@ static inline ui_rect tabs_tab_rect(int tab)
 	return r;
 }
 
+/* How a tab looks: its bottom edge rises and it shrinks upwards only,
+ * TAB_LIFT_ACTIVE px while it is the active tab and TAB_LIFT_PRESSED px
+ * while pressed. */
+typedef enum {
+	TAB_FACE_REST,
+	TAB_FACE_ACTIVE,
+	TAB_FACE_PRESSED
+} tab_face;
+
+/* What tab `tab` draws. Hit testing keeps the full tabs_tab_rect. */
+static inline ui_rect tabs_tab_face(int tab, tab_face face)
+{
+	ui_rect r = tabs_tab_rect(tab);
+	if (face == TAB_FACE_ACTIVE)
+		r.h -= TAB_LIFT_ACTIVE;
+	else if (face == TAB_FACE_PRESSED)
+		r.h -= TAB_LIFT_PRESSED;
+	return r;
+}
+
 /* The tab under (x, y), or -1 outside the bar. */
 static inline int tabs_hit(int x, int y)
 {

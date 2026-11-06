@@ -534,6 +534,13 @@ class BuildTests(unittest.TestCase):
         # Touch acts on release (6.4); buttons press the new tab (6.5).
         self.assertIn("TOUCH_ACTIVATE", tabbar)
         self.assertIn("press_begin(&press[next]);", tabbar)
+        # Pressed and active tabs shrink upwards instead of moving (5.12).
+        self.assertIn("tabs_tab_face(tab, face)", tabbar)
+        self.assertIn("pressed ? TAB_FACE_PRESSED", tabbar)
+        theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
+        self.assertIn("TAB_LIFT_ACTIVE = 2", theme)
+        self.assertIn("TAB_LIFT_PRESSED = 4", theme)
+        self.assertNotIn("ui_rect_offset(r, PRESS_SHIFT, PRESS_SHIFT)", tabbar)
         # Flat and square, through the draw.c helpers.
         for name in ("tabbar.c", "view_player.c", "view_settings.c"):
             source = (ui_dir / name).read_text(encoding="utf-8")
@@ -657,6 +664,23 @@ class BuildTests(unittest.TestCase):
         top = (ui_dir / "top.c").read_text(encoding="utf-8")
         self.assertIn("logo_draw_centered(", top)
         self.assertNotIn("view_results", top)
+        # The download spinner: centred, on any tab, animated by steps.
+        self.assertIn("ui_spinner(SCREEN_TOP_W / 2, SCREEN_H / 2, "
+                      "spinner_step())", top)
+        self.assertIn("top_shows_spinner(info->phase, info->download_pct)",
+                      top)
+        # Its translucent backdrop is the only alpha in the UI (2.7).
+        for path in [build.ROOT / "main.c", *ui_dir.glob("*.[ch]")]:
+            if path.name not in ("theme.h", "draw.c"):
+                self.assertNotIn("SCRIM_", path.read_text(encoding="utf-8"),
+                                 path.name)
+        draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
+        self.assertEqual(draw.count("SCRIM_COLOR"), 1)
+        self.assertIn("ui_fill(spinner_backdrop_rect(cx, cy), SCRIM_COLOR);",
+                      draw)
+        spinner = (ui_dir / "spinner_logic.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", spinner)
+        self.assertNotIn("#include <citro", spinner)
         # The search bubble is on the bottom screen: 5.9 with the loading
         # indicator, and the language bubble stacked above it.
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")

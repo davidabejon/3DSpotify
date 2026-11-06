@@ -2,6 +2,7 @@
 
 #include "icons.h"
 #include "player_logic.h"
+#include "spinner_logic.h"
 #include "text_fit.h"
 
 #include <math.h>
@@ -226,6 +227,19 @@ void ui_loader(int cx, int cy, int step)
 		                cy - LOADER_BAR_H / 2 - up, LOADER_BAR_W,
 		                LOADER_BAR_H };
 		outlined(bar, COL_CLOROFILA);
+	}
+}
+
+void ui_spinner(int cx, int cy, int step)
+{
+	int lit = spinner_lit(step);
+	int trail = spinner_lit(step - 1);
+	/* citro2d blends by alpha: the backdrop lets the screen show through. */
+	ui_fill(spinner_backdrop_rect(cx, cy), SCRIM_COLOR);
+	for (int i = 0; i < SPINNER_CELLS; i++) {
+		u32 fill = i == lit ? COL_CLOROFILA
+		         : i == trail ? COL_MUSGO : COL_CAPA_ALTA;
+		outlined(spinner_cell_rect(cx, cy, i), fill);
 	}
 }
 

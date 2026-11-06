@@ -8,6 +8,7 @@
 #include "player_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
+#include "spinner_logic.h"
 #include "settings_logic.h"
 #include "tabs_logic.h"
 #include "text_fit.h"
@@ -890,6 +891,21 @@ static void test_tabs(void)
 	/* Outside the bar: nothing. */
 	assert(tabs_hit(10, TAB_H) == -1 && tabs_hit(10, 230) == -1);
 	assert(tabs_hit(-1, 5) == -1 && tabs_hit(SCREEN_BOTTOM_W, 5) == -1);
+	/* Active and pressed: only the bottom edge rises, 2 and 4 px. */
+	assert(TAB_LIFT_PRESSED > TAB_LIFT_ACTIVE && TAB_LIFT_ACTIVE > 0);
+	for (int t = 0; t < TAB_COUNT; t++) {
+		ui_rect full = tabs_tab_rect(t);
+		ui_rect rest = tabs_tab_face(t, TAB_FACE_REST);
+		ui_rect on = tabs_tab_face(t, TAB_FACE_ACTIVE);
+		ui_rect down = tabs_tab_face(t, TAB_FACE_PRESSED);
+		assert(rest.x == full.x && rest.y == full.y && rest.w == full.w &&
+		       rest.h == full.h);
+		assert(on.x == full.x && on.y == full.y && on.w == full.w);
+		assert(down.x == full.x && down.y == full.y && down.w == full.w);
+		assert(on.h == full.h - TAB_LIFT_ACTIVE);
+		assert(down.h == full.h - TAB_LIFT_PRESSED);
+		assert(down.h >= ICON_S + 2 * SP_1);
+	}
 	/* The last tab ends at the screen's edge. */
 	assert(tabs_tab_rect(TAB_SETTINGS).x + tabs_tab_rect(TAB_SETTINGS).w ==
 	       SCREEN_BOTTOM_W);
@@ -1115,6 +1131,60 @@ static void test_list_bubbles(void)
 	assert(second.y > TAB_H);
 }
 
+static void test_spinner(void)
+{
+	/* A 44 px ring of 8 blocks centred on the top screen: whole pixels,
+	 * inside the screen, no two blocks touching, the centre empty. */
+	int cx = SCREEN_TOP_W / 2, cy = SCREEN_H / 2;
+	assert(SPINNER_SIZE == 44);
+	ui_rect box = { cx - SPINNER_SIZE / 2, cy - SPINNER_SIZE / 2,
+	                SPINNER_SIZE, SPINNER_SIZE };
+	assert(box.x * 2 + box.w == SCREEN_TOP_W);
+	assert(box.y * 2 + box.h == SCREEN_H);
+	ui_rect centre = { box.x + SPINNER_CELL + SPINNER_GAP,
+	                   box.y + SPINNER_CELL + SPINNER_GAP, SPINNER_CELL,
+	                   SPINNER_CELL };
+	for (int i = 0; i < SPINNER_CELLS; i++) {
+		ui_rect a = spinner_cell_rect(cx, cy, i);
+		assert(a.w == SPINNER_CELL && a.h == SPINNER_CELL);
+		assert(a.x >= box.x && a.y >= box.y);
+		assert(a.x + a.w <= box.x + box.w && a.y + a.h <= box.y + box.h);
+		assert(!overlaps(a, centre));
+		for (int j = i + 1; j < SPINNER_CELLS; j++)
+			assert(!overlaps(a, spinner_cell_rect(cx, cy, j)));
+		/* Clockwise: each block is a grid step from the previous. */
+		ui_rect b = spinner_cell_rect(cx, cy, i + 1);
+		int dx = b.x - a.x, dy = b.y - a.y;
+		int pitch = SPINNER_CELL + SPINNER_GAP;
+		assert((dx == 0) != (dy == 0));
+		assert(dx == 0 || dx == pitch || dx == -pitch);
+		assert(dy == 0 || dy == pitch || dy == -pitch);
+	}
+	/* The backdrop: SPINNER_PAD px around the ring, centred, translucent. */
+	ui_rect back = spinner_backdrop_rect(cx, cy);
+	assert(back.w == SPINNER_SIZE + 2 * SPINNER_PAD && back.h == back.w);
+	assert(back.x == box.x - SPINNER_PAD && back.y == box.y - SPINNER_PAD);
+	assert(back.x * 2 + back.w == SCREEN_TOP_W);
+	assert(back.y * 2 + back.h == SCREEN_H);
+	assert((SCRIM_COLOR >> 24) == SCRIM_ALPHA);
+	assert(SCRIM_ALPHA > 0 && SCRIM_ALPHA < 0xFF);
+	assert((SCRIM_COLOR & 0x00FFFFFFu) == (SCRIM_RGB & 0x00FFFFFFu));
+	/* The top-left block, then right along the top. */
+	assert(spinner_cell_rect(cx, cy, 0).x == box.x);
+	assert(spinner_cell_rect(cx, cy, 1).y == box.y);
+	assert(spinner_lit(0) == 0 && spinner_lit(9) == 1 &&
+	       spinner_lit(-1) == SPINNER_CELLS - 1);
+
+	/* Only while a track loads or plays with nothing downloaded. */
+	assert(top_shows_spinner(PLAYER_PHASE_LOADING, 0));
+	assert(top_shows_spinner(PLAYER_PHASE_PLAYING, 0));
+	assert(!top_shows_spinner(PLAYER_PHASE_LOADING, 1));
+	assert(!top_shows_spinner(PLAYER_PHASE_PLAYING, 100));
+	assert(!top_shows_spinner(PLAYER_PHASE_IDLE, 0));
+	assert(!top_shows_spinner(PLAYER_PHASE_FINISHED, 0));
+	assert(!top_shows_spinner(PLAYER_PHASE_FAILED, 0));
+}
+
 static void test_top_mode(void)
 {
 	static const player_phase phases[] = {
@@ -1146,6 +1216,7 @@ int main(void)
 	test_player_shared_helpers();
 	test_now_layout();
 	test_list_bubbles();
+	test_spinner();
 	test_top_mode();
 	test_list_drag();
 	test_art_url();

@@ -81,6 +81,11 @@ void ui_progress(ui_rect r, int download, int progress, bool handle);
 #define UI_LOADER_W (UI_LOADER_BARS * LOADER_BAR_W + (UI_LOADER_BARS - 1) * SP_1)
 void ui_loader(int cx, int cy, int step);
 
+/* The download spinner (spinner_logic.h), centred on (cx, cy): a ring of
+ * square blocks whose lit block moves clockwise, on a translucent grey
+ * square; `step` advances every LOADER_STEP frames. */
+void ui_spinner(int cx, int cy, int step);
+
 /* A notice (5.8): raised `coral` (error) or `ambar` (warning) surface with
  * an icon, a title and an explanation that wraps inside it, all `tinta`. */
 void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
