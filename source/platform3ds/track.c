@@ -1,5 +1,6 @@
 #include "track.h"
 #include "http3ds.h"
+#include "http_logic.h"
 
 #include <3ds.h>
 #include <stdio.h>
@@ -272,6 +273,17 @@ static void stream_rewind(track_stream *ts, size_t at)
 	ts->downloaded = at;
 }
 
+/* Sleeps before the next pass, in slices, so a skip or a seek is not kept
+ * waiting. */
+static void retry_wait(track_stream *ts, unsigned ms)
+{
+	for (unsigned waited = 0; waited < ms; waited += 100) {
+		if ((ts->stop && *ts->stop) || ts->dl_restart_at >= 0)
+			return;
+		svcSleepThread(100 * 1000000LL);
+	}
+}
+
 int track_stream_download(track_stream *ts, volatile bool *stop)
 {
 	ts->stop = stop;
@@ -287,17 +299,22 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 	ts->nc_off = 0;
 	ts->aes = &aes;
 
-	/* Two passes over the URL list: a Wi-Fi blip at 90% should not cost
-	 * the track, and every attempt resumes where the last one stopped. A
-	 * reposition earns two fresh passes from the new offset. */
-	for (int pass = 0; pass < 2 && !ts->dl_done && !ts->cb_fatal; pass++) {
+	/* Passes over the URL list until the file is whole, every attempt
+	 * resuming where the last one stopped. A closed lid sleeps the console
+	 * and drops Wi-Fi mid-request; on waking, the network takes a while to
+	 * come back, so empty passes back off and the download only gives up
+	 * after several in a row. Any byte gained, or a reposition, resets the
+	 * count. */
+	int failures = 0;
+	while (!ts->dl_done && !ts->cb_fatal && !(stop && *stop)) {
 		if (ts->dl_restart_at >= 0) {
 			size_t at = (size_t)ts->dl_restart_at;
 			ts->dl_restart_at = -1;
 			stream_rewind(ts, at);
-			pass = -1;
+			failures = 0;
 			continue;
 		}
+		size_t before = ts->write_pos;
 		for (int i = 0; i < ts->storage.count; i++) {
 			if ((stop && *stop) || ts->cb_fatal || ts->dl_restart_at >= 0)
 				break;
@@ -310,6 +327,14 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 			if (ts->dl_done || (stop && *stop))
 				break;
 		}
+		if (ts->dl_done || ts->cb_fatal || (stop && *stop) ||
+		    ts->dl_restart_at >= 0)
+			continue;
+		if (ts->write_pos != before)
+			failures = 0;
+		else if (++failures >= DOWNLOAD_MAX_FAILED_PASSES)
+			break;
+		retry_wait(ts, download_retry_delay_ms(failures));
 	}
 	ts->aes = NULL;
 	mbedtls_aes_free(&aes);

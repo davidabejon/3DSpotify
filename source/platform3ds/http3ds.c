@@ -1,5 +1,6 @@
 #include "http3ds.h"
 #include "tls3ds.h"
+#include "http_logic.h"
 
 #include <ctype.h>
 #include <stdbool.h>
@@ -352,10 +353,12 @@ static const char *find_header(const char *headers, const char *name)
 	return NULL;
 }
 
-int http_get_url_stream(const char *url, size_t offset,
-                        bool (*cb)(void *ctx, const char *data, size_t n),
-                        void *ctx, size_t *total_out, int *status_out,
-                        char *err, size_t errlen)
+/* One request, no redirects followed. Returns 1 with `next` filled when the
+ * reply is a redirect, so the caller can ask again there. */
+static int stream_once(const char *url, size_t offset,
+                       bool (*cb)(void *ctx, const char *data, size_t n),
+                       void *ctx, size_t *total_out, int *status_out,
+                       char *next, size_t nextlen, char *err, size_t errlen)
 {
 	if (strncmp(url, "https://", 8) != 0) {
 		snprintf(err, errlen, "not an https url");
@@ -429,6 +432,18 @@ int http_get_url_stream(const char *url, size_t offset,
 	}
 	if (status_out)
 		*status_out = status;
+	if (http_status_is_redirect(status)) {
+		/* Edges hand a request to another node with a redirect, which is
+		 * what a resume after waking from sleep often meets. */
+		const char *loc = find_header(hbuf, "location:");
+		tls_close(c);
+		if (!loc || !http_redirect_url(url, loc, next, nextlen)) {
+			snprintf(err, errlen, "CDN answered %d without a usable "
+			         "location", status);
+			return -1;
+		}
+		return 1;
+	}
 	if (status != 200 && status != 206) {
 		snprintf(err, errlen, "CDN answered %d", status);
 		tls_close(c);
@@ -483,6 +498,41 @@ int http_get_url_stream(const char *url, size_t offset,
 	}
 	tls_close(c);
 	return 0;
+}
+
+int http_get_url_stream(const char *url, size_t offset,
+                        bool (*cb)(void *ctx, const char *data, size_t n),
+                        void *ctx, size_t *total_out, int *status_out,
+                        char *err, size_t errlen)
+{
+	/* Signed CDN URLs run long and a redirect target is no shorter; on the
+	 * heap, because the download thread's stack already holds the reply's
+	 * header and body buffers. */
+	enum { URL_CAP = 1024 };
+	char *current = malloc(2 * URL_CAP);
+	if (!current) {
+		snprintf(err, errlen, "out of memory");
+		return -1;
+	}
+	char *next = current + URL_CAP;
+	int rc = -1;
+	if (snprintf(current, URL_CAP, "%s", url) >= URL_CAP) {
+		snprintf(err, errlen, "url too long");
+		goto out;
+	}
+	for (int hop = 0; hop <= HTTP_MAX_REDIRECTS; hop++) {
+		rc = stream_once(current, offset, cb, ctx, total_out, status_out,
+		                 next, URL_CAP, err, errlen);
+		if (rc != 1)
+			goto out;
+		memcpy(current, next, URL_CAP);
+	}
+	snprintf(err, errlen, "CDN redirected more than %d times",
+	         HTTP_MAX_REDIRECTS);
+	rc = -1;
+out:
+	free(current);
+	return rc;
 }
 
 /* ---------------- keep-alive sessions ---------------- */

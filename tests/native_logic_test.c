@@ -1,5 +1,6 @@
 #include "art_url.h"
 #include "home_logic.h"
+#include "http_logic.h"
 #include "image_util.h"
 #include "lang.h"
 #include "layout.h"
@@ -1208,6 +1209,56 @@ static void test_top_mode(void)
 		}
 }
 
+static void test_http_redirects(void)
+{
+	const char *from = "https://audio4-fa.scdn.co/audio/abc?sig=1";
+	char out[128];
+
+	assert(http_status_is_redirect(301));
+	assert(http_status_is_redirect(302));
+	assert(http_status_is_redirect(307));
+	assert(http_status_is_redirect(308));
+	assert(!http_status_is_redirect(200));
+	assert(!http_status_is_redirect(206));
+	assert(!http_status_is_redirect(304));
+	assert(!http_status_is_redirect(403));
+
+	assert(http_redirect_url(from, " https://edge.example/a?b=1
+Via: x",
+	                         out, sizeof(out)));
+	assert(strcmp(out, "https://edge.example/a?b=1") == 0);
+	assert(http_redirect_url(from, "//edge.example/a  
+", out,
+	                         sizeof(out)));
+	assert(strcmp(out, "https://edge.example/a") == 0);
+	assert(http_redirect_url(from, "/audio/def?sig=2", out, sizeof(out)));
+	assert(strcmp(out, "https://audio4-fa.scdn.co/audio/def?sig=2") == 0);
+	assert(http_redirect_url("https://host.example", "/p", out,
+	                         sizeof(out)));
+	assert(strcmp(out, "https://host.example/p") == 0);
+
+	assert(!http_redirect_url(from, "http://edge.example/a", out,
+	                          sizeof(out)));
+	assert(!http_redirect_url(from, "relative/path", out, sizeof(out)));
+	assert(!http_redirect_url(from, "  
+", out, sizeof(out)));
+	assert(!http_redirect_url(from, "https://edge.example/a", out, 10));
+}
+
+static void test_download_retry_delay(void)
+{
+	assert(download_retry_delay_ms(1) == 1000);
+	assert(download_retry_delay_ms(2) == 2000);
+	assert(download_retry_delay_ms(3) == 4000);
+	assert(download_retry_delay_ms(4) == 8000);
+	assert(download_retry_delay_ms(DOWNLOAD_MAX_FAILED_PASSES) == 8000);
+	unsigned total = 0;
+	for (int i = 1; i < DOWNLOAD_MAX_FAILED_PASSES; i++)
+		total += download_retry_delay_ms(i);
+	/* Long enough to ride out waking from sleep, short of hanging. */
+	assert(total >= 30000 && total <= 90000);
+}
+
 int main(void)
 {
 	test_tabs();
@@ -1236,6 +1287,8 @@ int main(void)
 	test_image_pow2();
 	test_image_copy_to_texture();
 	test_search_path_encoding();
+	test_http_redirects();
+	test_download_retry_delay();
 	test_queue_boundaries();
 	test_language_tables();
 	test_language_switching();
