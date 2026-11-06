@@ -9,9 +9,11 @@
  * once at start-up. No allocation per thumbnail, and no citro3d call off
  * the main thread.
  *
- * thumbs_stop cancels and joins the worker: call it before playback, so it
- * does not compete with the audio download, and when leaving the results.
- * It waits for the request in flight, if any. */
+ * thumbs_stop cancels the worker: call it before playback, so it does not
+ * compete with the audio download, and when leaving the results. It does
+ * not wait: the request in flight, if any, ends on its own and the worker
+ * is reaped afterwards; thumbs_stopping says when it is gone. Only
+ * thumbs_exit waits for it. */
 #ifndef THUMBS_H
 #define THUMBS_H
 
@@ -44,7 +46,13 @@ bool thumbs_poll(void);
 /* The thumbnail of track `index`, when it is ready. */
 bool thumbs_image(int index, C2D_Image *out);
 
-/* Cancels pending fetches and joins the worker. */
+/* Cancels pending fetches and asks the worker to stop, without waiting. */
 void thumbs_stop(void);
+/* True while a stopped worker is still finishing its request in flight. */
+bool thumbs_stopping(void);
+/* Stops the worker and waits for it to return. Only when the network is
+ * going away (leaving the tabs, before tls_global_exit and socExit): a
+ * worker left running there would use a freed TLS context and socket. */
+void thumbs_wait(void);
 
 #endif

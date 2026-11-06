@@ -608,7 +608,9 @@ Ambas pantallas: degradado vertical `fondo_sup` → `fondo_inf` a pantalla compl
   - Pool fijo de texturas 64×64 RGBA8, sin reservas por miniatura. Decodificación y conversión
     a formato tiled en el hilo; subida de la textura en el hilo principal.
   - Marcar `dirty` al llegar cada miniatura visible.
-  - Cancelar y esperar al hilo antes de reproducir y mientras se descarga el audio. Lo ya
+  - Pausarlas mientras se prepara la pista (token, access point, clave de audio): se pide
+    parar al hilo sin esperarlo, y la preparación empieza cuando termina su petición en
+    curso. Durante la descarga del audio siguen: son unos KB frente a megas de audio. Lo ya
     descargado se conserva.
   - No pararlo al salir de la pestaña «Búsqueda»: esperar a su petición en curso bloquearía
     el hilo principal, y con él el audio. Solo pide las filas visibles y las 4 siguientes.
