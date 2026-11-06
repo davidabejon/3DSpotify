@@ -15,6 +15,7 @@
 #include "logo.h"
 #include "pair3ds.h"
 #include "player_logic.h"
+#include "power_logic.h"
 #include "spclient.h"
 #include "tabbar.h"
 #include "textscreen.h"
@@ -94,6 +95,31 @@ static screen_view active_view = VIEW_TEXT;
 static app_tab active_tab = TAB_HOME;
 /* An applet (the keyboard) drew over both screens. */
 static bool screens_lost;
+
+/* Closing the lid over music darkens the screens instead of sleeping. */
+static bool ptmu_ready;
+static bool lcd_ready;
+static bool screens_dark;
+/* NDM drops the Wi-Fi when the lid shuts, sleep or not, unless the app
+ * holds the connection in the exclusive infrastructure state. */
+static bool ndm_ready;
+static bool wifi_held;
+
+static void wifi_hold(bool hold)
+{
+	if (!ndm_ready || hold == wifi_held)
+		return;
+	if (hold) {
+		if (R_FAILED(NDMU_EnterExclusiveState(
+		        NDM_EXCLUSIVE_STATE_INFRASTRUCTURE)))
+			return;
+		NDMU_LockState();
+	} else {
+		NDMU_UnlockState();
+		NDMU_LeaveExclusiveState();
+	}
+	wifi_held = hold;
+}
 
 static void frame(void);
 static void switch_tab(app_tab tab);
@@ -287,6 +313,18 @@ typedef struct {
 
 static player_engine player;
 
+/* The DSP is set up once and kept for the whole run: starting it again for
+ * every track meant starting it with the lid already shut whenever the
+ * user closed it during loading, and then the track never sounded. */
+static bool ndsp_up;
+
+static bool audio_open(void)
+{
+	if (!ndsp_up)
+		ndsp_up = R_SUCCEEDED(ndspInit());
+	return ndsp_up;
+}
+
 /* A track's network steps, off the main thread: everything that may wait
  * on the network before the first byte of audio. One at a time: a skipped
  * track's preparation is left to finish ("abandoned") and reaped, and the
@@ -429,8 +467,9 @@ static void player_release(void)
 	if (s->decoder)
 		stb_vorbis_close(s->decoder);
 	if (s->ndsp_ready) {
+		/* The DSP stays up for the next track; only the channel goes. */
 		ndspChnWaveBufClear(0);
-		ndspExit();
+		ndspChnReset(0);
 	}
 	if (s->input) {
 		secure_clear(s->input, PLAYER_INPUT_CAPACITY);
@@ -526,7 +565,7 @@ static void player_begin_audio(void)
 		return;
 	}
 
-	if (R_FAILED(ndspInit())) {
+	if (!audio_open()) {
 		player_fail(tr(STR_ERR_NDSP));
 		return;
 	}
@@ -913,11 +952,47 @@ static player_info player_snapshot(void)
  * tab bar goes over it; the artwork's own changes only count while the
  * cover is on screen, and switching tabs always repaints. The text screens
  * keep the artwork on top, as before. */
+/* Called every frame: keeps the console awake while music is due, and
+ * darkens the screens while the lid is shut over it. */
+static void power_poll(void)
+{
+	if (!ptmu_ready || !lcd_ready)
+		return;   /* without both, closing the lid just sleeps as before */
+	bool awake = power_keep_awake(player.phase, player.paused || player.held,
+	                              osIsHeadsetConnected());
+	u8 shell = 1;
+	if (R_FAILED(PTMU_GetShellState(&shell)))
+		shell = 1;
+	bool lit = power_screens_lit(shell != 0, awake);
+	/* Before sleep is allowed again: that sleeps at once if the lid is
+	 * shut, and NDM should take the connection back first. */
+	wifi_hold(awake);
+	if (lit && screens_dark) {
+		GSPLCD_PowerOnAllBacklights();
+		screens_dark = false;
+		screens_lost = true;
+	} else if (!lit && !screens_dark) {
+		GSPLCD_PowerOffAllBacklights();
+		screens_dark = true;
+	}
+	/* Allowing sleep again with the lid shut sleeps at once, which is why
+	 * the screens were lit first. */
+	if (aptIsSleepAllowed() == awake)
+		aptSetSleepAllowed(!awake);
+}
+
 static void frame(void)
 {
 	/* 0: the text screen; 1 + tab: that tab. */
 	static int drawn_screen = -1;
 	artwork_poll(&cover_art);
+	power_poll();
+	if (screens_dark) {
+		/* Nobody can see them: drawing would only cost battery. The
+		 * repaint comes when the lid opens. */
+		gspWaitForVBlank();
+		return;
+	}
 	bool restored = ui_take_restored() || screens_lost;
 	screens_lost = false;
 	bool tabs = active_view == VIEW_TABS;
@@ -1601,6 +1676,12 @@ int main(int argc, char **argv)
 		gfxExit();
 		return 1;
 	}
+	ptmu_ready = R_SUCCEEDED(ptmuInit());
+	lcd_ready = R_SUCCEEDED(gspLcdInit());
+	ndm_ready = R_SUCCEEDED(ndmuInit());
+	/* Now, with the lid surely open; a failure is retried, and reported,
+	 * on the first play. */
+	audio_open();
 	/* Without icons, thumbnails or the logo the views still work, just
 	 * without them. */
 	icons_init();
@@ -1736,6 +1817,18 @@ done:
 	thumbs_exit();
 	icons_exit();
 	textscreen_exit();
+	if (screens_dark)
+		GSPLCD_PowerOnAllBacklights();
+	if (ndsp_up)
+		ndspExit();
+	wifi_hold(false);
+	if (ndm_ready)
+		ndmuExit();
+	aptSetSleepAllowed(true);
+	if (lcd_ready)
+		gspLcdExit();
+	if (ptmu_ready)
+		ptmuExit();
 	ui_exit();
 	if (romfs_ready)
 		romfsExit();
