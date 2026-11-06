@@ -313,6 +313,18 @@ typedef struct {
 
 static player_engine player;
 
+/* The DSP is set up once and kept for the whole run: starting it again for
+ * every track meant starting it with the lid already shut whenever the
+ * user closed it during loading, and then the track never sounded. */
+static bool ndsp_up;
+
+static bool audio_open(void)
+{
+	if (!ndsp_up)
+		ndsp_up = R_SUCCEEDED(ndspInit());
+	return ndsp_up;
+}
+
 /* A track's network steps, off the main thread: everything that may wait
  * on the network before the first byte of audio. One at a time: a skipped
  * track's preparation is left to finish ("abandoned") and reaped, and the
@@ -455,8 +467,9 @@ static void player_release(void)
 	if (s->decoder)
 		stb_vorbis_close(s->decoder);
 	if (s->ndsp_ready) {
+		/* The DSP stays up for the next track; only the channel goes. */
 		ndspChnWaveBufClear(0);
-		ndspExit();
+		ndspChnReset(0);
 	}
 	if (s->input) {
 		secure_clear(s->input, PLAYER_INPUT_CAPACITY);
@@ -552,7 +565,7 @@ static void player_begin_audio(void)
 		return;
 	}
 
-	if (R_FAILED(ndspInit())) {
+	if (!audio_open()) {
 		player_fail(tr(STR_ERR_NDSP));
 		return;
 	}
@@ -1666,6 +1679,9 @@ int main(int argc, char **argv)
 	ptmu_ready = R_SUCCEEDED(ptmuInit());
 	lcd_ready = R_SUCCEEDED(gspLcdInit());
 	ndm_ready = R_SUCCEEDED(ndmuInit());
+	/* Now, with the lid surely open; a failure is retried, and reported,
+	 * on the first play. */
+	audio_open();
 	/* Without icons, thumbnails or the logo the views still work, just
 	 * without them. */
 	icons_init();
@@ -1803,6 +1819,8 @@ done:
 	textscreen_exit();
 	if (screens_dark)
 		GSPLCD_PowerOnAllBacklights();
+	if (ndsp_up)
+		ndspExit();
 	wifi_hold(false);
 	if (ndm_ready)
 		ndmuExit();
