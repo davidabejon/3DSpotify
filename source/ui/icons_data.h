@@ -7,6 +7,8 @@
 typedef enum {
 	ICON_SEARCH,
 	ICON_LANGUAGE,
+	ICON_NOTE,
+	ICON_ERROR,
 	ICON_COUNT
 } icon_id;
 

@@ -2,6 +2,7 @@
 #include "image_util.h"
 #include "lang.h"
 #include "layout.h"
+#include "list_logic.h"
 #include "player_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
@@ -529,8 +530,105 @@ static void test_theme_contrast(void)
 	assert(luminance(COL_MUSGO) < luminance(COL_CLOROFILA));
 }
 
+static void test_list_logic(void)
+{
+	bool bumped;
+	/* Clamping. */
+	assert(list_clamp(5, 3) == 2 && list_clamp(-1, 3) == 0);
+	assert(list_clamp(4, 0) == 0);
+
+	/* Moving stops at the ends and reports the bump (6.6). */
+	assert(list_move(0, 1, 24, &bumped) == 1 && !bumped);
+	assert(list_move(0, -1, 24, &bumped) == 0 && bumped);
+	assert(list_move(23, 1, 24, &bumped) == 23 && bumped);
+	assert(list_move(2, -RESULTS_PER_PAGE, 24, &bumped) == 0 && !bumped);
+	assert(list_move(21, RESULTS_PER_PAGE, 24, &bumped) == 23 && !bumped);
+	assert(list_move(0, 1, 0, &bumped) == 0 && !bumped);
+
+	/* Scrolling moves just enough to keep the selection visible. */
+	assert(list_scroll(0, 3, 24, 4) == 0);
+	assert(list_scroll(0, 4, 24, 4) == 1);
+	assert(list_scroll(5, 4, 24, 4) == 4);
+	assert(list_scroll(5, 6, 24, 4) == 5);
+	assert(list_scroll(0, 23, 24, 4) == 20);
+	assert(list_scroll(30, 23, 24, 4) == 20);
+	assert(list_scroll(2, 1, 3, 4) == 0);
+	assert(list_scroll(0, 0, 0, 4) == 0);
+
+	/* "from-to of count". */
+	int from, to;
+	list_range(0, 24, 4, &from, &to);
+	assert(from == 1 && to == 4);
+	list_range(20, 24, 4, &from, &to);
+	assert(from == 21 && to == 24);
+	list_range(0, 3, 4, &from, &to);
+	assert(from == 1 && to == 3);
+	list_range(0, 0, 4, &from, &to);
+	assert(from == 0 && to == 0);
+
+	/* 7.4: four rows of ROW_H, SP_1 apart, fill the 192 px between the
+	 * bars exactly. */
+	ui_rect header = list_header_rect();
+	ui_rect hints = list_hints_rect();
+	assert(header.h == BAR_H && hints.h == BAR_H);
+	assert(list_row_rect(0).y == header.y + header.h + SP_1);
+	for (int slot = 1; slot < RESULTS_PER_PAGE; slot++)
+		assert(list_row_rect(slot).y ==
+		       list_row_rect(slot - 1).y + ROW_H + SP_1);
+	ui_rect last = list_row_rect(RESULTS_PER_PAGE - 1);
+	assert(last.y + last.h == hints.y);
+	assert(list_row_rect(0).x == SP_2 &&
+	       list_row_rect(0).w == SCREEN_BOTTOM_W - 2 * SP_2);
+	/* Pressed rows move PRESS_SHIFT right and stay on screen. */
+	assert(last.x + last.w + PRESS_SHIFT <= SCREEN_BOTTOM_W);
+
+	/* 5.3: a 36 px thumbnail SP_1 from the row's edges, text SP_2 after. */
+	ui_rect row = list_row_rect(1);
+	ui_rect thumb = list_thumb_rect(row);
+	assert(thumb.w == THUMB_SIZE && thumb.h == THUMB_SIZE);
+	assert(thumb.x == row.x + SP_1 && thumb.y == row.y + SP_1);
+	assert(thumb.y + thumb.h + SP_1 == row.y + row.h);
+	assert(list_text_x(row) == thumb.x + thumb.w + SP_2);
+
+	/* Hit testing: rows only, offset by the scroll, not past the end. */
+	ui_rect r0 = list_row_rect(0);
+	assert(list_hit_row(r0.x + 1, r0.y + 1, 0, 24) == 0);
+	assert(list_hit_row(r0.x + 1, r0.y + 1, 7, 24) == 7);
+	assert(list_hit_row(r0.x + 1, r0.y + r0.h, 0, 24) == -1);  /* gap */
+	assert(list_hit_row(r0.x + 1, last.y + 1, 0, 24) == 3);
+	assert(list_hit_row(r0.x + 1, last.y + 1, 0, 3) == -1);
+	assert(list_hit_row(r0.x + 1, 5, 0, 24) == -1);            /* header */
+	assert(list_hit_row(r0.x + 1, 230, 0, 24) == -1);          /* bar */
+	assert(list_hit_row(2, r0.y + 1, 0, 24) == -1);            /* margin */
+
+	/* Empty and error states: notice, then a 32 px button SP_4 below,
+	 * clear of the bar with its shadow. */
+	ui_rect notice = list_notice_rect();
+	ui_rect button = list_action_rect(100, false);
+	ui_rect centred = list_action_rect(100, true);
+	assert(notice.y == BAR_H + SP_4);
+	assert(button.y == notice.y + notice.h + SP_4);
+	assert(button.h == TOUCH_MIN && button.w == 100 + 2 * SP_3);
+	assert(button.x == SP_2);
+	assert(centred.x * 2 + centred.w == SCREEN_BOTTOM_W);
+	assert(button.y + button.h + SHADOW_OFF + SP_1 <= hints.y);
+	assert(list_action_rect(1000, false).w == notice.w);
+
+	/* Durations: never cut, never negative. */
+	char text[16];
+	list_format_duration(320000, text, sizeof(text));
+	assert(strcmp(text, "5:20") == 0);
+	list_format_duration(9000, text, sizeof(text));
+	assert(strcmp(text, "0:09") == 0);
+	list_format_duration(-5, text, sizeof(text));
+	assert(strcmp(text, "0:00") == 0);
+	list_format_duration(3725000, text, sizeof(text));
+	assert(strcmp(text, "62:05") == 0);
+}
+
 int main(void)
 {
+	test_list_logic();
 	test_layout_rects();
 	test_press_timing();
 	test_touch_tracking();

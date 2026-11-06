@@ -73,9 +73,14 @@ token is saved to the SD card for later launches. On the home screen, tap
 below it as a button that runs it again: tap it, or move to it with up/down
 and press A. A tap acts when you lift the stylus inside the button; sliding
 off cancels it. X reconnects, Y pairs another account, SELECT switches the
-language, and START exits. Use up/down to move through results, A to select, B to return, and Y to enter
-another query. B cancels a pending search after the current network request
-finishes.
+language, and START exits.
+
+Results show four songs at a time; the top screen shows the details of the
+highlighted one. Use up/down to move through them and L/R to jump four at a
+time. Tap a song to highlight it and tap it again to open it, or press A.
+B returns and Y enters another query. If the search fails, A (or the button
+on screen) tries again. B cancels a pending search after the current network
+request finishes.
 
 Press A on the selection screen to play the chosen track locally. During
 playback, the top screen shows album artwork (or a neutral background when it

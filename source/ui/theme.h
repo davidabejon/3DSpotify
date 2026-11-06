@@ -89,6 +89,9 @@ enum {
 	ICON_M = 24,          /* §5.10 iconos del reproductor */
 	BUBBLE_H = 28,        /* §5.9 icono de 16 px + 6 px arriba y abajo */
 	GLYPH_SHIFT = 1,      /* §6.5 glifo invertido, 1 px abajo */
+	LOADER_BAR_W = 4,     /* §5.7 barras de 4×12 px */
+	LOADER_BAR_H = 12,
+	LOADER_STEP_PX = 2,   /* §5.7 pasos de 2 px */
 };
 
 #endif

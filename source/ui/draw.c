@@ -52,10 +52,18 @@ void ui_focus_ring(ui_rect r)
 	ui_fill(right, COL_LIMA);
 }
 
-static float line_height(float scale)
+int ui_line_height(float scale)
 {
 	const FINF_s *info = C2D_FontGetInfo(NULL);
-	return (info && info->lineFeed ? info->lineFeed : 30.0f) * scale;
+	float feed = info && info->lineFeed ? info->lineFeed : 30.0f;
+	return (int)lroundf(feed * scale);
+}
+
+void ui_text_wrapped(const C2D_Text *text, int x, int y, float scale,
+                     u32 color, int width)
+{
+	C2D_DrawText(text, C2D_WithColor | C2D_WordWrap, x, y, 0.0f, scale,
+	             scale, color, (float)width);
 }
 
 float ui_text_width(const C2D_Text *text, float scale)
@@ -67,7 +75,7 @@ float ui_text_width(const C2D_Text *text, float scale)
 
 void ui_text(const C2D_Text *text, int x, int cy, float scale, u32 color)
 {
-	int y = cy - (int)lroundf(line_height(scale) / 2);
+	int y = cy - ui_line_height(scale) / 2;
 	C2D_DrawText(text, C2D_WithColor, x, y, 0.0f, scale, scale, color);
 }
 
@@ -150,6 +158,50 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color, bool inverted)
 	ui_text_centered(letter, r.x + r.w / 2, r.y + r.h / 2, TXT_META,
 	                 inverted ? color : COL_TINTA);
 	return w;
+}
+
+void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
+{
+	ui_panel(bar);
+	int cy = bar.y + bar.h / 2;
+	int x = bar.x + SP_2;
+	for (int i = 0; i < count; i++) {
+		x += ui_glyph(x, cy, hints[i].letter, hints[i].color,
+		              hints[i].inverted) + SP_1;
+		ui_text(hints[i].label, x, cy, TXT_META, COL_TEXTO_2);
+		x += ui_px_ceil(ui_text_width(hints[i].label, TXT_META)) + SP_3;
+	}
+}
+
+void ui_loader(int cx, int cy, int step)
+{
+	/* Each bar a step behind the previous one: 0, -2, -4, -2 px. */
+	static const int lift[] = { 0, 1, 2, 1 };
+	const int bars = 3;
+	int width = bars * LOADER_BAR_W + (bars - 1) * SP_1;
+	int x = cx - width / 2;
+	for (int i = 0; i < bars; i++) {
+		int up = lift[(step + i) % 4] * LOADER_STEP_PX;
+		ui_rect bar = { x + i * (LOADER_BAR_W + SP_1),
+		                cy - LOADER_BAR_H / 2 - up, LOADER_BAR_W,
+		                LOADER_BAR_H };
+		outlined(bar, COL_CLOROFILA);
+	}
+}
+
+void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
+               const C2D_Text *title, const C2D_Text *body)
+{
+	ui_rect body_rect = error
+		? ui_bevel_rect(r, COL_CORAL, COL_CORAL_LUZ, COL_CORAL_OSC, false)
+		: ui_bevel_rect(r, COL_AMBAR, COL_AMBAR_LUZ, COL_AMBAR_OSC, false);
+	int x = body_rect.x + SP_3;
+	int title_cy = body_rect.y + SP_3 + ICON_S / 2;
+	ui_icon(icon, x, body_rect.y + SP_3, COL_TINTA);
+	ui_text(title, x + ICON_S + SP_1, title_cy, TXT_CABEZA, COL_TINTA);
+	int body_y = body_rect.y + SP_3 + ICON_S + SP_2;
+	ui_text_wrapped(body, x, body_y, TXT_CUERPO, COL_TINTA,
+	                body_rect.w - 2 * SP_3);
 }
 
 float ui_bubble_content_width(const C2D_Text *text)

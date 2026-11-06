@@ -72,9 +72,14 @@ abrir el teclado. Debajo aparece tu última búsqueda como un botón que la
 repite: tócalo, o llega a él con arriba/abajo y pulsa A. Un toque actúa al
 levantar el lápiz dentro del botón; si lo deslizas fuera, se cancela. X vuelve
 a conectar, Y permite emparejar otra cuenta, SELECT cambia el idioma y START
-sale. En resultados, arriba/abajo
-desplaza la lista, A selecciona, B vuelve y Y inicia otra consulta. B cancela
-una búsqueda pendiente cuando termine la petición de red activa.
+sale.
+
+Los resultados muestran cuatro canciones a la vez; la pantalla superior
+muestra los datos de la marcada. Arriba/abajo recorre la lista y L/R salta de
+cuatro en cuatro. Toca una canción para marcarla y tócala otra vez para
+abrirla, o pulsa A. B vuelve e Y inicia otra consulta. Si la búsqueda falla, A
+(o el botón de la pantalla) la repite. B cancela una búsqueda pendiente cuando
+termine la petición de red activa.
 
 A en la pantalla de selección inicia la reproducción local. Durante la
 reproducción, la pantalla superior muestra la carátula (o un fondo neutro si

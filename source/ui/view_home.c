@@ -329,16 +329,12 @@ void view_home_draw_top(void)
 
 static void draw_button_bar(const home_look *look)
 {
-	ui_rect bar = home_hints_rect();
-	ui_panel(bar);
-	int cy = bar.y + bar.h / 2;
-	int x = SP_2;
+	ui_hint hints[GLYPH_COUNT];
 	for (int i = 0; i < GLYPH_COUNT; i++) {
-		x += ui_glyph(x, cy, &letter_text[i], glyph_colors[i],
-		              look->glyph[i]) + SP_1;
-		ui_text(&hint_text[i], x, cy, TXT_META, COL_TEXTO_2);
-		x += ui_px_ceil(ui_text_width(&hint_text[i], TXT_META)) + SP_3;
+		hints[i] = (ui_hint){ &letter_text[i], &hint_text[i],
+		                      glyph_colors[i], look->glyph[i] };
 	}
+	ui_button_bar(home_hints_rect(), hints, GLYPH_COUNT);
 }
 
 void view_home_draw_bottom(void)

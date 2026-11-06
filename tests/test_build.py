@@ -139,7 +139,7 @@ class BuildTests(unittest.TestCase):
         # cancelled keyboard does not wipe it.
         self.assertIn("action == HOME_ACTION_REPEAT", app)
         ask = app[app.index("static bool ask_search_query("):
-                  app.index("static void show_search_error(")]
+                  app.index("static str_id search_error_advice(")]
         self.assertIn("if (confirmed)", ask)
 
     def test_ui_follows_style_guide(self):
@@ -162,7 +162,7 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("C2D_Color32", source, path.name)
             self.assertNotIn("UI_COLOR_", source, path.name)
         # The redesigned views: no loose colours, sizes or text scales.
-        for name in ("view_home.c", "draw.c"):
+        for name in ("view_home.c", "view_results.c", "draw.c"):
             source = (ui_dir / name).read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
             # 0.0f is the depth argument of the C2D calls.
@@ -174,12 +174,15 @@ class BuildTests(unittest.TestCase):
         self.assertIn("void ui_panel(", draw)
         self.assertIn("void ui_button(", draw)
         home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
-        for source, name in ((draw, "draw.c"), (home, "view_home.c")):
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        for source, name in ((draw, "draw.c"), (home, "view_home.c"),
+                             (results, "view_results.c")):
             for call in ("C2D_DrawCircle", "C2D_DrawTriangle",
                          "C2D_DrawRectangle(", "C2D_DrawEllipse",
                          "color_fade", "color_mix"):
                 self.assertNotIn(call, source, name)
         self.assertNotIn("C2D_DrawRect", home)
+        self.assertNotIn("C2D_DrawRect", results)
         # Icons: crisp at whole pixels (5.10).
         icons = (ui_dir / "icons.c").read_text(encoding="utf-8")
         self.assertIn("GPU_NEAREST, GPU_NEAREST", icons)
@@ -199,6 +202,44 @@ class BuildTests(unittest.TestCase):
         self.assertIn("icons_init();", app)
         self.assertLess(app.index("icons_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
+
+    def test_results_view_replaces_search_text_screens(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("view_results.c", "view_results.h", "list_logic.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        for gone in ("show_search_progress", "show_search_error",
+                     "show_results(", "RESULTS_PER_PAGE 7"):
+            self.assertNotIn(gone, app)
+        logic = (ui_dir / "list_logic.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", logic)
+        self.assertNotIn("#include <citro", logic)
+        # 7.4: four rows per screen, L/R jump as many.
+        self.assertIn("#define RESULTS_PER_PAGE 4", logic)
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("move_focus(RESULTS_PER_PAGE)", results)
+        self.assertIn("KEY_L", results)
+        # Rows are cut in pixels, never the duration (5.3, 3.3).
+        self.assertIn("parse_fitted(&row_title[i]", results)
+        self.assertIn("ICON_NOTE", results)
+        # On-demand render and view switching.
+        frame = app[app.index("static void frame(void)"):
+                    app.index("static void show_progress(")]
+        self.assertIn("view_results_dirty()", frame)
+        self.assertIn("view_results_draw_bottom()", frame)
+        self.assertIn("view_results_init()", app)
+        self.assertLess(app.index("view_results_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        # Searching is a state of the view; B and START still cancel.
+        search = app[app.index("static search_result search_tracks("):
+                     app.index("static bool ask_search_query(")]
+        self.assertIn("view_results_searching(search.query)", search)
+        self.assertIn("view_results_cancelling()", search)
+        self.assertIn("down & (KEY_B | KEY_START)", search)
+        # The selection survives playback (F3) and errors can be retried.
+        self.assertIn("*selected = queue_index;", app)
+        self.assertIn("case RESULTS_ACTION_RETRY:", app)
+        self.assertIn("search_error_advice(search.error)", app)
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
