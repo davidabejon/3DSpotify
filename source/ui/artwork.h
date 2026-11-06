@@ -17,6 +17,8 @@
 
 #include <stdbool.h>
 
+#include "layout.h"
+
 #include <3ds/thread.h>
 
 /* 256 is enough: the cover is shown at about 212 px. */
@@ -47,6 +49,13 @@ bool artwork_dirty(const artwork_state *artwork);
 /* Draws into the current scene (the top screen): the background, and the
  * cover when there is one. */
 void artwork_draw(artwork_state *artwork);
+/* Draws the cover into `box` on the top screen (7.5): a `sombra` hard
+ * shadow `shadow` px to the right and down (0: none), a 1 px `tinta`
+ * outline and the image fitted inside. Without an image, the `capa_alta`
+ * square with the note icon, the same size, so nothing moves when it
+ * arrives (ui_art). Clears the dirty flag, like artwork_draw: only check
+ * artwork_dirty while one of the two draws the cover. */
+void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow);
 /* Forces a repaint, for when something else (an applet such as the software
  * keyboard) may have drawn over the top screen. */
 void artwork_invalidate(artwork_state *artwork);

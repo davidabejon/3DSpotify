@@ -4,12 +4,17 @@
 #include "lang.h"
 #include "layout.h"
 #include "list_logic.h"
+#include "now_layout.h"
 #include "player_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
+#include "spinner_logic.h"
+#include "settings_logic.h"
+#include "tabs_logic.h"
 #include "text_fit.h"
 #include "thumb_queue.h"
 #include "theme.h"
+#include "top_logic.h"
 
 #include <assert.h>
 #include <math.h>
@@ -43,14 +48,6 @@ static void test_queue_boundaries(void)
 	assert(playback_queue_step(0, 0, 1) == -1);
 	assert(playback_queue_step(3, 3, -1) == -1);
 	assert(playback_queue_step(1, 3, 0) == -1);
-}
-
-static void test_playback_cancel_transitions(void)
-{
-	assert(playback_cancel_result(false, false) == PLAYER_RETURN_RESULTS);
-	assert(playback_cancel_result(false, true) == PLAYER_TRACK_CHANGED);
-	assert(playback_cancel_result(true, false) == PLAYER_EXIT_APP);
-	assert(playback_cancel_result(true, true) == PLAYER_EXIT_APP);
 }
 
 /* The conversion specifiers of a printf format, flags and widths included,
@@ -114,9 +111,9 @@ static void test_language_switching(void)
 	assert(!lang_from_code("fr", &lang));
 	assert(!lang_from_code(NULL, &lang));
 	lang_set(LANG_ES);
-	assert(strcmp(tr(STR_PLAYER_TITLE), "Reproduccion local") == 0);
+	assert(strcmp(tr(STR_PLAYER_FINISHED_TITLE), "Pista terminada") == 0);
 	lang_set(lang_next(lang_get()));
-	assert(strcmp(tr(STR_PLAYER_TITLE), "Local playback") == 0);
+	assert(strcmp(tr(STR_PLAYER_FINISHED_TITLE), "Track finished") == 0);
 	lang_set((lang_id)LANG_COUNT);
 	assert(lang_get() == LANG_EN);
 	assert(strcmp(lang_text(LANG_ES, (str_id)STR_COUNT), "") == 0);
@@ -197,6 +194,61 @@ static void test_image_to_texture(void)
 	image_to_texture(src, 2, 2, tex, 8, 16, 16);
 	image_to_texture(NULL, 2, 2, tex, 8, 1, 1);
 	assert(tex[0] == 0x11);
+}
+
+static void test_image_pow2(void)
+{
+	assert(image_pow2(0) == 8);
+	assert(image_pow2(1) == 8);
+	assert(image_pow2(8) == 8);
+	assert(image_pow2(9) == 16);
+	assert(image_pow2(128) == 128);
+	assert(image_pow2(129) == 256);
+	assert(image_pow2(1024) == 1024);
+	assert(image_pow2(1025) == 0);
+}
+
+static void test_image_copy_to_texture(void)
+{
+	/* A 10x3 image in a 16x8 texture: every pixel lands unfiltered at its
+	 * Morton offset, as A, B, G, R. */
+	enum { W = 10, H = 3, TW = 16, TH = 8 };
+	uint8_t src[W * H * 4];
+	for (int i = 0; i < W * H; i++) {
+		src[i * 4] = (uint8_t)i;           /* R carries the index */
+		src[i * 4 + 1] = (uint8_t)(i + 1); /* G */
+		src[i * 4 + 2] = (uint8_t)(i + 2); /* B */
+		src[i * 4 + 3] = (i & 1) ? 255 : 0;
+	}
+	uint8_t tex[TW * TH * 4];
+	memset(tex, 0xEE, sizeof(tex));
+	image_copy_to_texture(src, W, H, tex, TW, TH);
+	for (int y = 0; y < TH; y++)
+		for (int x = 0; x < TW; x++) {
+			uint32_t at = image_morton_offset((uint32_t)x, (uint32_t)y,
+			                                  TW) * 4;
+			if (x < W && y < H) {
+				int i = y * W + x;
+				assert(tex[at] == ((i & 1) ? 255 : 0));
+				assert(tex[at + 1] == (uint8_t)(i + 2));
+				assert(tex[at + 2] == (uint8_t)(i + 1));
+				assert(tex[at + 3] == (uint8_t)i);
+			} else {
+				/* Nothing outside w x h is written. */
+				assert(tex[at] == 0xEE && tex[at + 1] == 0xEE &&
+				       tex[at + 2] == 0xEE && tex[at + 3] == 0xEE);
+			}
+		}
+
+	/* Images that do not fit, bad widths and NULLs leave it alone. */
+	memset(tex, 0x11, sizeof(tex));
+	image_copy_to_texture(src, TW + 1, 1, tex, TW, TH);
+	image_copy_to_texture(src, 1, TH + 1, tex, TW, TH);
+	image_copy_to_texture(src, 1, 1, tex, 12, TH);
+	image_copy_to_texture(NULL, 1, 1, tex, TW, TH);
+	image_copy_to_texture(src, 0, 1, tex, TW, TH);
+	for (size_t i = 0; i < sizeof(tex); i++)
+		assert(tex[i] == 0x11);
 }
 
 /* Every byte is 6 px wide, so a multibyte character is wider than it looks:
@@ -296,15 +348,16 @@ static void test_home_layout(void)
 	ui_rect search = home_search_rect(content);
 	ui_rect label = home_label_rect();
 	ui_rect repeat = home_repeat_rect(50);
-	ui_rect header = home_header_rect();
+	ui_rect tabs = tabs_bar_rect();
 	ui_rect hints = home_hints_rect();
 
-	/* Bars of BAR_H at both ends; 8 px side margins (STYLES.md 4.2). */
-	assert(header.y == 0 && header.h == BAR_H);
+	/* The tab bar on top, the button bar at the bottom; 8 px side margins
+	 * (STYLES.md 4.2). */
+	assert(tabs.y == 0 && tabs.h == TAB_H);
 	assert(hints.h == BAR_H && hints.y + hints.h == SCREEN_H);
 	assert(search.x == SP_2 && repeat.x == SP_2);
-	/* Blocks SP_4 apart, starting SP_4 under the header. */
-	assert(search.y == header.h + SP_4);
+	/* Blocks SP_4 apart, starting SP_4 under the tab bar. */
+	assert(search.y == tabs.h + SP_4);
 	assert(label.y == search.y + search.h + SP_4);
 	assert(repeat.y >= label.y + label.h);
 
@@ -569,25 +622,24 @@ static void test_list_logic(void)
 	assert(from == 0 && to == 0);
 
 	/* 7.4: four rows of ROW_H, SP_1 apart and SP_1 from both bars, fill
-	 * the 192 px between them exactly. */
-	ui_rect header = list_header_rect();
+	 * the 184 px between the tab bar and the button bar exactly. */
 	ui_rect hints = list_hints_rect();
-	assert(header.h == BAR_H && hints.h == BAR_H);
-	assert(list_row_rect(0).y == header.y + header.h + SP_1);
+	assert(list_top() == TAB_H && hints.h == BAR_H);
+	assert(4 * ROW_H + 5 * SP_1 == SCREEN_H - TAB_H - BAR_H);
+	assert(list_row_rect(0).y == list_top() + SP_1);
 	for (int slot = 1; slot < RESULTS_PER_PAGE; slot++)
 		assert(list_row_rect(slot).y ==
 		       list_row_rect(slot - 1).y + ROW_H + SP_1);
 	ui_rect last = list_row_rect(RESULTS_PER_PAGE - 1);
-	/* The same gap over the button bar as under the header. */
+	/* The same gap over the button bar as under the tab bar. */
 	assert(last.y + last.h + SP_1 == hints.y);
-	assert(list_row_rect(0).y - (header.y + header.h) ==
-	       hints.y - (last.y + last.h));
+	assert(list_row_rect(0).y - list_top() == hints.y - (last.y + last.h));
 	assert(list_row_rect(0).x == SP_2 &&
 	       list_row_rect(0).w == SCREEN_BOTTOM_W - 2 * SP_2);
 	/* Pressed rows move PRESS_SHIFT right and stay on screen. */
 	assert(last.x + last.w + PRESS_SHIFT <= SCREEN_BOTTOM_W);
 
-	/* 5.3: a 36 px thumbnail SP_1 from the row's edges, text SP_2 after. */
+	/* 5.3: a thumbnail SP_1 from the row's edges, text SP_2 after. */
 	ui_rect row = list_row_rect(1);
 	ui_rect thumb = list_thumb_rect(row);
 	assert(thumb.w == THUMB_SIZE && thumb.h == THUMB_SIZE);
@@ -602,7 +654,7 @@ static void test_list_logic(void)
 	assert(list_hit_row(r0.x + 1, r0.y + r0.h, 0, 24) == -1);  /* gap */
 	assert(list_hit_row(r0.x + 1, last.y + 1, 0, 24) == 3);
 	assert(list_hit_row(r0.x + 1, last.y + 1, 0, 3) == -1);
-	assert(list_hit_row(r0.x + 1, 5, 0, 24) == -1);            /* header */
+	assert(list_hit_row(r0.x + 1, 5, 0, 24) == -1);            /* tabs */
 	assert(list_hit_row(r0.x + 1, 230, 0, 24) == -1);          /* bar */
 	assert(list_hit_row(2, r0.y + 1, 0, 24) == -1);            /* margin */
 
@@ -611,7 +663,7 @@ static void test_list_logic(void)
 	ui_rect notice = list_notice_rect();
 	ui_rect button = list_action_rect(100, false);
 	ui_rect centred = list_action_rect(100, true);
-	assert(notice.y == BAR_H + SP_4);
+	assert(notice.y == list_top() + SP_4);
 	assert(button.y == notice.y + notice.h + SP_4);
 	assert(button.h == TOUCH_MIN && button.w == 100 + 2 * SP_3);
 	assert(button.x == SP_2);
@@ -701,9 +753,9 @@ static void test_list_drag(void)
 	ui_rect r0 = list_row_rect(0);
 	assert(list_hit_row(r0.x + 1, r0.y + 1, 7 * LIST_PITCH, 24) == 7);
 	assert(list_hit_row(r0.x + 1, r0.y + 1, 10, 24) == 0);
-	/* Scrolled 20 px: row 0's top part is under the header. */
-	assert(list_hit_row(r0.x + 1, BAR_H - 1, 20, 24) == -1);
-	assert(list_hit_row(r0.x + 1, BAR_H, 20, 24) == 0);
+	/* Scrolled 20 px: row 0's top part is under the tab bar. */
+	assert(list_hit_row(r0.x + 1, list_top() - 1, 20, 24) == -1);
+	assert(list_hit_row(r0.x + 1, list_top(), 20, 24) == 0);
 	/* A fifth row peeking in at the bottom is hit; the bar is not. */
 	assert(list_hit_row(r0.x + 1, SCREEN_H - BAR_H - 1, 20, 24) == 4);
 	assert(list_hit_row(r0.x + 1, SCREEN_H - BAR_H, 20, 24) == -1);
@@ -728,7 +780,7 @@ static void test_list_drag(void)
 	assert(from == 5 && to == 8);
 	list_full_rows(20, 24, &from, &to);
 	assert(from == 1 && to == 3);
-	list_full_rows(SP_1, 24, &from, &to);       /* row 0 touches the header */
+	list_full_rows(SP_1, 24, &from, &to);       /* row 0 touches the tabs */
 	assert(from == 0 && to == 3);
 	list_full_rows(SP_1 + 1, 24, &from, &to);   /* now it is cut */
 	assert(from == 1 && to == 3);
@@ -740,18 +792,18 @@ static void test_list_drag(void)
 		assert(to - from + 1 >= RESULTS_PER_PAGE - 1);
 		for (int i = from; i <= to; i++) {
 			ui_rect r = list_row_at(i, s);
-			assert(r.y >= BAR_H && r.y + r.h <= SCREEN_H - BAR_H);
+			assert(r.y >= list_top() && r.y + r.h <= SCREEN_H - BAR_H);
 		}
 		ui_rect before = list_row_at(from - 1, s);
 		ui_rect after = list_row_at(to + 1, s);
-		assert(from == 0 || before.y < BAR_H);
+		assert(from == 0 || before.y < list_top());
 		assert(after.y + after.h > SCREEN_H - BAR_H);
 	}
 
 	/* Whether the focused row is whole: when it is not (cut or dragged
 	 * out of view), the first button press only brings it back. */
 	assert(list_row_whole(2, 20, 24));
-	assert(!list_row_whole(0, 20, 24));          /* cut by the header */
+	assert(!list_row_whole(0, 20, 24));          /* cut by the tabs */
 	assert(!list_row_whole(4, 20, 24));          /* peeking in */
 	assert(!list_row_whole(12, 5 * LIST_PITCH, 24));
 	assert(list_row_whole(8, 5 * LIST_PITCH, 24));
@@ -796,7 +848,11 @@ static void test_list_drag(void)
 	/* 5.11: the indicator against the right edge, between the bars. */
 	ui_rect track = list_scroll_track();
 	assert(track.x + track.w == SCREEN_BOTTOM_W && track.w == SCROLL_W);
-	assert(track.y == BAR_H && track.y + track.h == SCREEN_H - BAR_H);
+	assert(track.y == list_top() && track.y + track.h == SCREEN_H - BAR_H);
+	/* Drags only start inside the list area, never on the tab bar. */
+	assert(!list_area_contains(10, TAB_H - 1));
+	assert(list_area_contains(10, TAB_H));
+	assert(!list_area_contains(10, SCREEN_H - BAR_H));
 	/* Clear of the rows, pressed ones included. */
 	assert(r0.x + r0.w + PRESS_SHIFT < track.x);
 	/* Thumb: visible share of the list, top and bottom at the ends. */
@@ -814,8 +870,354 @@ static void test_list_drag(void)
 	assert(list_scroll_thumb(1000000, 24).y == bottom.y);
 }
 
+static void test_tabs(void)
+{
+	/* 5.12: four tabs across the top, at least the minimum touch target
+	 * high, together exactly as wide as the screen. */
+	ui_rect bar = tabs_bar_rect();
+	assert(bar.x == 0 && bar.y == 0 && bar.w == SCREEN_BOTTOM_W);
+	assert(bar.h == TAB_H && TAB_H >= TOUCH_MIN);
+	int x = 0;
+	for (int t = 0; t < TAB_COUNT; t++) {
+		ui_rect r = tabs_tab_rect(t);
+		assert(r.x == x && r.y == 0 && r.h == TAB_H);
+		assert(r.w >= TOUCH_MIN && r.w >= ICON_S + 2 * SP_3);
+		x += r.w;
+		/* Hit testing matches what is drawn, edges included. */
+		assert(tabs_hit(r.x, r.y) == t);
+		assert(tabs_hit(r.x + r.w - 1, r.y + r.h - 1) == t);
+	}
+	assert(x == SCREEN_BOTTOM_W);
+	/* Outside the bar: nothing. */
+	assert(tabs_hit(10, TAB_H) == -1 && tabs_hit(10, 230) == -1);
+	assert(tabs_hit(-1, 5) == -1 && tabs_hit(SCREEN_BOTTOM_W, 5) == -1);
+	/* Active and pressed: only the bottom edge rises, 2 and 4 px. */
+	assert(TAB_LIFT_PRESSED > TAB_LIFT_ACTIVE && TAB_LIFT_ACTIVE > 0);
+	for (int t = 0; t < TAB_COUNT; t++) {
+		ui_rect full = tabs_tab_rect(t);
+		ui_rect rest = tabs_tab_face(t, TAB_FACE_REST);
+		ui_rect on = tabs_tab_face(t, TAB_FACE_ACTIVE);
+		ui_rect down = tabs_tab_face(t, TAB_FACE_PRESSED);
+		assert(rest.x == full.x && rest.y == full.y && rest.w == full.w &&
+		       rest.h == full.h);
+		assert(on.x == full.x && on.y == full.y && on.w == full.w);
+		assert(down.x == full.x && down.y == full.y && down.w == full.w);
+		assert(on.h == full.h - TAB_LIFT_ACTIVE);
+		assert(down.h == full.h - TAB_LIFT_PRESSED);
+		assert(down.h >= ICON_S + 2 * SP_1);
+	}
+	/* The last tab ends at the screen's edge. */
+	assert(tabs_tab_rect(TAB_SETTINGS).x + tabs_tab_rect(TAB_SETTINGS).w ==
+	       SCREEN_BOTTOM_W);
+
+	/* Stepping stops at both ends (no wrap, like the lists). */
+	assert(tabs_step(TAB_HOME, 1) == TAB_SEARCH);
+	assert(tabs_step(TAB_SEARCH, -1) == TAB_HOME);
+	assert(tabs_step(TAB_HOME, -1) == -1);
+	assert(tabs_step(TAB_SETTINGS, 1) == -1);
+	assert(tabs_step(TAB_PLAYER, 0) == -1);
+	assert(tabs_step(-1, 1) == -1 && tabs_step(TAB_COUNT, -1) == -1);
+
+	/* L/R and ZL/ZR always switch tabs; both ways at once cancel out. */
+	assert(tabs_key_delta(false, true, false, false) == 1);
+	assert(tabs_key_delta(true, false, false, false) == -1);
+	assert(tabs_key_delta(false, false, false, true) == 1);
+	assert(tabs_key_delta(false, false, true, false) == -1);
+	assert(tabs_key_delta(true, true, false, false) == 0);
+	assert(tabs_key_delta(true, false, false, true) == 0);
+	assert(tabs_key_delta(false, false, false, false) == 0);
+}
+
+static void test_settings_layout(void)
+{
+	ui_rect hints = settings_hints_rect();
+	assert(hints.y + hints.h == SCREEN_H && hints.h == BAR_H);
+	int ring = FOCUS_GAP + FOCUS_W;
+	int below = ring > SHADOW_OFF ? ring : SHADOW_OFF;
+	for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
+		ui_rect r = settings_item_rect(i);
+		/* Full content width, 32 px high (4.4, 5.2). */
+		assert(r.x == SP_2 && r.w == SCREEN_BOTTOM_W - 2 * SP_2);
+		assert(r.h == TOUCH_MIN);
+		assert(r.x + r.w + PRESS_SHIFT <= SCREEN_BOTTOM_W);
+		if (i == 0)
+			assert(r.y == TAB_H + SP_4);
+		else {
+			ui_rect prev = settings_item_rect(i - 1);
+			/* Focus borders and shadows stay SP_1 apart at least. */
+			assert((r.y - ring) - (prev.y + prev.h + below) >= SP_1);
+		}
+		assert(settings_hit_test(r.x, r.y) == (settings_item)i);
+		assert(settings_hit_test(r.x + r.w - 1, r.y + r.h - 1) ==
+		       (settings_item)i);
+	}
+	ui_rect last = settings_item_rect(SETTINGS_ITEM_COUNT - 1);
+	assert(last.y + last.h + below + PRESS_SHIFT <= hints.y);
+	/* The tab bar, the gaps and the bars are not buttons. */
+	assert(settings_hit_test(10, 10) == SETTINGS_ITEM_NONE);
+	assert(settings_hit_test(10, TAB_H + SP_4 - 1) == SETTINGS_ITEM_NONE);
+	assert(settings_hit_test(10, 230) == SETTINGS_ITEM_NONE);
+
+	/* Focus stops at the ends; anything else falls back to the first. */
+	assert(settings_focus_move(SETTINGS_ITEM_LANGUAGE, 1) ==
+	       SETTINGS_ITEM_RECONNECT);
+	assert(settings_focus_move(SETTINGS_ITEM_PAIR, 1) == SETTINGS_ITEM_PAIR);
+	assert(settings_focus_move(SETTINGS_ITEM_LANGUAGE, -1) ==
+	       SETTINGS_ITEM_LANGUAGE);
+	assert(settings_focus_move(SETTINGS_ITEM_NONE, 1) ==
+	       SETTINGS_ITEM_RECONNECT);
+}
+
+static void test_player_layout(void)
+{
+	/* 5.2: a 48 px primary between two 40 px secondaries, centred,
+	 * SP_4 apart, under the tab bar and over the bars. */
+	ui_rect prev = player_control_rect(PLAYER_CONTROL_PREV);
+	ui_rect play = player_control_rect(PLAYER_CONTROL_PLAY);
+	ui_rect next = player_control_rect(PLAYER_CONTROL_NEXT);
+	assert(play.w == BTN_PLAY && play.h == BTN_PLAY);
+	assert(prev.w == BTN_SKIP && next.h == BTN_SKIP);
+	assert(play.x * 2 + play.w == SCREEN_BOTTOM_W);
+	assert(play.x - (prev.x + prev.w) == SP_4);
+	assert(next.x - (play.x + play.w) == SP_4);
+	assert(prev.y + prev.h / 2 == play.y + play.h / 2);
+	assert(play.y > TAB_H + SP_4);
+	assert(player_hit_test(play.x, play.y) == PLAYER_CONTROL_PLAY);
+	assert(player_hit_test(prev.x + 1, prev.y + 1) == PLAYER_CONTROL_PREV);
+	assert(player_hit_test(next.x + next.w - 1, next.y + 1) ==
+	       PLAYER_CONTROL_NEXT);
+	assert(player_hit_test(prev.x + prev.w + 1, prev.y + 1) ==
+	       PLAYER_CONTROL_NONE);
+	assert(player_hit_test(10, 10) == PLAYER_CONTROL_NONE);
+
+	/* 5.4, 5.5: the bars, below the controls and their shadow, clear of
+	 * each other and of the button bar, the handle included. */
+	ui_rect progress = player_progress_rect();
+	ui_rect volume = player_volume_rect(40);
+	assert(progress.h == PROGRESS_H && volume.h == VOLUME_H);
+	assert(progress.x == SP_2 && progress.w == SCREEN_BOTTOM_W - 2 * SP_2);
+	assert(play.y + play.h + SHADOW_OFF < player_times_cy() - SP_2);
+	int handle_top = progress.y + progress.h / 2 - HANDLE_H / 2;
+	assert(handle_top > player_times_cy());
+	assert(volume.y > handle_top + HANDLE_H);
+	assert(volume.x == SP_2 + 40 + SP_2);
+	assert(volume.x + volume.w == SCREEN_BOTTOM_W - SP_2);
+	assert(volume.y + volume.h + SP_2 <= player_hints_rect().y);
+	ui_rect notice = player_notice_rect();
+	assert(notice.y == TAB_H + SP_4);
+	assert(notice.y + notice.h + SHADOW_OFF < player_hints_rect().y);
+
+	/* Fractions. */
+	assert(player_permille(0, 0) == 0);
+	assert(player_permille(30, 60) == 500);
+	assert(player_permille(90, 60) == 1000);
+	assert(player_permille(4000000000u, 4000000000u) == 1000);
+	assert(player_permille(1, 3) == 333);
+	assert(player_fill_px(300, 500) == 150);
+	assert(player_fill_px(300, 0) == 0 && player_fill_px(300, -5) == 0);
+	assert(player_fill_px(300, 1000) == 300 && player_fill_px(300, 2000) == 300);
+	assert(player_fill_px(0, 500) == 0);
+}
+
+static void test_player_shared_helpers(void)
+{
+	char text[16];
+	player_format_time(0, text, sizeof(text));
+	assert(strcmp(text, "0:00") == 0);
+	player_format_time(84, text, sizeof(text));
+	assert(strcmp(text, "1:24") == 0);
+	player_format_time(3601, text, sizeof(text));
+	assert(strcmp(text, "60:01") == 0);
+
+	assert(player_progress_permille(true, 0, 0) == 1000);
+	assert(player_progress_permille(false, 30, 60) == 500);
+	assert(player_progress_permille(false, 5, 0) == 0);
+
+	/* The download follows every tick, else once a second. */
+	player_download_sample sample = { 0, 0 };
+	player_sample_download(&sample, true, 10);
+	assert(sample.shown == 10);
+	for (int i = 1; i < PLAYER_DOWNLOAD_FRAMES; i++) {
+		player_sample_download(&sample, false, 20 + i);
+		assert(sample.shown == 10);
+	}
+	player_sample_download(&sample, false, 99);
+	assert(sample.shown == 99);
+}
+
+static bool overlaps(ui_rect a, ui_rect b)
+{
+	return a.x < b.x + b.w && b.x < a.x + a.w &&
+	       a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+static bool on_top_screen(ui_rect r, int margin)
+{
+	return r.x >= margin && r.y >= margin &&
+	       r.x + r.w <= SCREEN_TOP_W - margin &&
+	       r.y + r.h <= SCREEN_H - margin;
+}
+
+static void test_now_layout(void)
+{
+	/* The system font's line feed is 30: t_titulo 23, t_cuerpo 15,
+	 * t_meta 14 (ui_line_height). Also try a taller font. */
+	static const int heights[][3] = { { 23, 15, 14 }, { 27, 18, 16 } };
+	for (size_t k = 0; k < sizeof(heights) / sizeof(heights[0]); k++) {
+		int title_h = heights[k][0], body_h = heights[k][1];
+		int meta_h = heights[k][2];
+
+		/* 7.5: 160x160 cover, e3 from the top and left edges, its 3 px
+		 * shadow included on screen. */
+		ui_rect art = now_art_rect();
+		assert(art.x == SP_3 && art.y == SP_3);
+		assert(art.w == ART_SIZE && art.h == ART_SIZE);
+		ui_rect shadow = ui_rect_offset(art, ART_SHADOW_OFF,
+		                                ART_SHADOW_OFF);
+		assert(on_top_screen(art, SP_3) && on_top_screen(shadow, SP_3));
+
+		/* The text column: right of the cover and its shadow, up to
+		 * e3 from the right edge. */
+		ui_rect text = { now_text_x(), SP_3, now_text_w(),
+		                 now_album_cy(title_h, body_h) + body_h / 2 + 1 -
+		                 SP_3 };
+		assert(text.x == SP_3 + ART_SIZE + SP_4);
+		assert(text.x + text.w == SCREEN_TOP_W - SP_3);
+		assert(!overlaps(text, shadow) && on_top_screen(text, SP_3));
+		int title_bottom = now_title_cy(title_h) + (title_h + 1) / 2;
+		int artist_top = now_artist_cy(title_h, body_h) - body_h / 2;
+		assert(artist_top - title_bottom >= SP_1 - 1);
+		assert(now_album_cy(title_h, body_h) -
+		       now_artist_cy(title_h, body_h) == body_h);
+		assert(text.y + text.h <= art.y + art.h);
+
+		/* Times e4 under the cover, the bar below with its handle
+		 * clear of their line, everything inside e3. */
+		int times_top = now_times_cy(meta_h) - meta_h / 2;
+		assert(times_top == art.y + art.h + SP_4);
+		assert(times_top > shadow.y + shadow.h);
+		ui_rect bar = now_progress_rect(meta_h);
+		assert(bar.h == PROGRESS_H);
+		assert(bar.x == SP_3 && bar.x + bar.w == SCREEN_TOP_W - SP_3);
+		ui_rect handle = { bar.x, bar.y + bar.h / 2 - HANDLE_H / 2,
+		                   HANDLE_W, HANDLE_H };
+		assert(handle.y >= times_top + meta_h);
+		assert(on_top_screen(handle, SP_3) && on_top_screen(bar, SP_3));
+	}
+
+	/* The big cover: centred, e3 above and below. */
+	ui_rect big = now_big_art_rect();
+	assert(big.w == ART_BIG && big.h == ART_BIG);
+	assert(big.x == 92 && big.y == SP_3);
+	assert(big.x * 2 + big.w == SCREEN_TOP_W);
+	assert(big.y + big.h == SCREEN_H - SP_3);
+	ui_rect big_shadow = ui_rect_offset(big, ART_SHADOW_OFF, ART_SHADOW_OFF);
+	assert(on_top_screen(big_shadow, 0));
+}
+
+static void test_list_bubbles(void)
+{
+	/* 5.9: centred SP_2 above the button bar; a second bubble stacks
+	 * above, clear of the first one's shadow and under the tab bar. */
+	ui_rect first = list_bubble_rect(100.0f);
+	assert(first.h == BUBBLE_H && first.w == 100 + 2 * SP_3);
+	assert(first.y + first.h + SP_2 == SCREEN_H - BAR_H);
+	assert(first.x * 2 + first.w == SCREEN_BOTTOM_W);
+	ui_rect same = list_bubble_slot_rect(100.0f, 0);
+	assert(same.x == first.x && same.y == first.y && same.w == first.w);
+	ui_rect second = list_bubble_slot_rect(60.0f, 1);
+	assert(second.y + second.h + SHADOW_OFF + SP_2 == first.y);
+	assert(!overlaps(ui_rect_offset(second, SHADOW_OFF, SHADOW_OFF), first));
+	assert(second.y > TAB_H);
+}
+
+static void test_spinner(void)
+{
+	/* A 44 px ring of 8 blocks centred on the top screen: whole pixels,
+	 * inside the screen, no two blocks touching, the centre empty. */
+	int cx = SCREEN_TOP_W / 2, cy = SCREEN_H / 2;
+	assert(SPINNER_SIZE == 44);
+	ui_rect box = { cx - SPINNER_SIZE / 2, cy - SPINNER_SIZE / 2,
+	                SPINNER_SIZE, SPINNER_SIZE };
+	assert(box.x * 2 + box.w == SCREEN_TOP_W);
+	assert(box.y * 2 + box.h == SCREEN_H);
+	ui_rect centre = { box.x + SPINNER_CELL + SPINNER_GAP,
+	                   box.y + SPINNER_CELL + SPINNER_GAP, SPINNER_CELL,
+	                   SPINNER_CELL };
+	for (int i = 0; i < SPINNER_CELLS; i++) {
+		ui_rect a = spinner_cell_rect(cx, cy, i);
+		assert(a.w == SPINNER_CELL && a.h == SPINNER_CELL);
+		assert(a.x >= box.x && a.y >= box.y);
+		assert(a.x + a.w <= box.x + box.w && a.y + a.h <= box.y + box.h);
+		assert(!overlaps(a, centre));
+		for (int j = i + 1; j < SPINNER_CELLS; j++)
+			assert(!overlaps(a, spinner_cell_rect(cx, cy, j)));
+		/* Clockwise: each block is a grid step from the previous. */
+		ui_rect b = spinner_cell_rect(cx, cy, i + 1);
+		int dx = b.x - a.x, dy = b.y - a.y;
+		int pitch = SPINNER_CELL + SPINNER_GAP;
+		assert((dx == 0) != (dy == 0));
+		assert(dx == 0 || dx == pitch || dx == -pitch);
+		assert(dy == 0 || dy == pitch || dy == -pitch);
+	}
+	/* The backdrop: SPINNER_PAD px around the ring, centred, translucent. */
+	ui_rect back = spinner_backdrop_rect(cx, cy);
+	assert(back.w == SPINNER_SIZE + 2 * SPINNER_PAD && back.h == back.w);
+	assert(back.x == box.x - SPINNER_PAD && back.y == box.y - SPINNER_PAD);
+	assert(back.x * 2 + back.w == SCREEN_TOP_W);
+	assert(back.y * 2 + back.h == SCREEN_H);
+	assert((SCRIM_COLOR >> 24) == SCRIM_ALPHA);
+	assert(SCRIM_ALPHA > 0 && SCRIM_ALPHA < 0xFF);
+	assert((SCRIM_COLOR & 0x00FFFFFFu) == (SCRIM_RGB & 0x00FFFFFFu));
+	/* The top-left block, then right along the top. */
+	assert(spinner_cell_rect(cx, cy, 0).x == box.x);
+	assert(spinner_cell_rect(cx, cy, 1).y == box.y);
+	assert(spinner_lit(0) == 0 && spinner_lit(9) == 1 &&
+	       spinner_lit(-1) == SPINNER_CELLS - 1);
+
+	/* Only while a track loads or plays with nothing downloaded. */
+	assert(top_shows_spinner(PLAYER_PHASE_LOADING, 0));
+	assert(top_shows_spinner(PLAYER_PHASE_PLAYING, 0));
+	assert(!top_shows_spinner(PLAYER_PHASE_LOADING, 1));
+	assert(!top_shows_spinner(PLAYER_PHASE_PLAYING, 100));
+	assert(!top_shows_spinner(PLAYER_PHASE_IDLE, 0));
+	assert(!top_shows_spinner(PLAYER_PHASE_FINISHED, 0));
+	assert(!top_shows_spinner(PLAYER_PHASE_FAILED, 0));
+}
+
+static void test_top_mode(void)
+{
+	static const player_phase phases[] = {
+		PLAYER_PHASE_IDLE, PLAYER_PHASE_LOADING, PLAYER_PHASE_PLAYING,
+		PLAYER_PHASE_FINISHED, PLAYER_PHASE_FAILED
+	};
+	for (int tab = 0; tab < TAB_COUNT; tab++)
+		for (size_t i = 0; i < sizeof(phases) / sizeof(phases[0]); i++) {
+			player_phase phase = phases[i];
+			bool music = phase == PLAYER_PHASE_LOADING ||
+			             phase == PLAYER_PHASE_PLAYING ||
+			             phase == PLAYER_PHASE_FINISHED;
+			assert(top_music_on(phase) == music);
+			top_mode mode = top_mode_for((app_tab)tab, phase);
+			if (!music)
+				assert(mode == TOP_LOGO);
+			else if (tab == TAB_PLAYER)
+				assert(mode == TOP_ART_BIG);
+			else
+				assert(mode == TOP_NOW_CARD);
+		}
+}
+
 int main(void)
 {
+	test_tabs();
+	test_settings_layout();
+	test_player_layout();
+	test_player_shared_helpers();
+	test_now_layout();
+	test_list_bubbles();
+	test_spinner();
+	test_top_mode();
 	test_list_drag();
 	test_art_url();
 	test_thumb_queue();
@@ -831,9 +1233,10 @@ int main(void)
 	test_image_fit();
 	test_image_morton_offset();
 	test_image_to_texture();
+	test_image_pow2();
+	test_image_copy_to_texture();
 	test_search_path_encoding();
 	test_queue_boundaries();
-	test_playback_cancel_transitions();
 	test_language_tables();
 	test_language_switching();
 	return 0;

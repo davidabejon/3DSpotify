@@ -11,29 +11,19 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_NO_VALID_RESPONSE] = "No se recibio una respuesta valida.",
 	[STR_CHECK_SD_SPACE] = "Comprueba el espacio disponible en la tarjeta SD.",
 	[STR_APP_CLOSING] = "La aplicacion se esta cerrando.",
-	[STR_LABEL_ARTIST] = "Artista",
 	[STR_LABEL_CODE] = "Codigo",
 
 	/* Botones. */
 	[STR_KEYS_LANGUAGE] = "SELECT: English",
-	[STR_KEYS_CANCEL_EXIT] = "B: cancelar   START: salir",
-	[STR_KEYS_RESULTS_EXIT] = "B: resultados   START: salir",
 	[STR_KEYS_EXIT] = "START: salir",
-	[STR_KEYS_PLAYER] = "A: pausa  Izq/Der: pista  Arr/Ab: vol.",
 	[STR_KEYS_STARTUP_RETRY] = "A: reintentar   Y: emparejar",
 
 	/* Vista de inicio. */
-	[STR_HOME_TITLE] = "Inicio",
 	[STR_HOME_SEARCH] = "Buscar canciones",
 	[STR_HOME_LAST_SEARCH] = "Ultima busqueda",
 	[STR_HINT_SEARCH] = "Buscar",
-	[STR_HINT_RECONNECT] = "Reconectar",
-	[STR_HINT_PAIR] = "Emparejar",
 
 	/* Vista de resultados. */
-	[STR_RESULTS_HEADER] = "Resultados",
-	[STR_RESULTS_RANGE_FMT] = "%d-%d de %d",
-	[STR_RESULTS_QUERY_FMT] = "Resultados: \"%s\"",
 	[STR_RESULTS_SEARCHING] = "Buscando...",
 	[STR_RESULTS_NEW_SEARCH] = "Buscar otra cosa",
 	[STR_RESULTS_RETRY] = "Reintentar",
@@ -41,6 +31,13 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_BACK] = "Volver",
 	[STR_HINT_CANCEL] = "Cancelar",
 	[STR_HINT_RETRY] = "Reintentar",
+	[STR_HINT_PAUSE] = "Pausa",
+	[STR_HINT_CHOOSE] = "Elegir",
+
+	/* Pestana de ajustes. */
+	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",
+	[STR_SETTINGS_RECONNECT] = "Volver a conectar",
+	[STR_SETTINGS_PAIR] = "Emparejar otra cuenta",
 
 	/* Inicio de sesion. */
 	[STR_LOGIN_TITLE] = "3DSpotify - iniciando sesion directa",
@@ -96,27 +93,26 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_SEARCH_HINT] = "Nombre de cancion o artista",
 	[STR_SEARCH_CANCELLING] = "Cancelando al terminar la solicitud...",
 	[STR_SEARCH_FAILED_TITLE] = "La busqueda fallo",
-	[STR_SEARCH_HTTP_401] = "La sesion fue rechazada. Pulsa B y luego X para reconectar.",
+	[STR_SEARCH_HTTP_401] = "La sesion fue rechazada. Vuelve a conectar desde Ajustes.",
 	[STR_SEARCH_HTTP_403] = "Spotify no permite esta operacion para la cuenta o pista.",
 	[STR_SEARCH_HTTP_429] = "Se alcanzo el limite de solicitudes; espera antes de reintentar.",
 	[STR_SEARCH_CHECK_WIFI] = "Comprueba el Wi-Fi y vuelve a intentarlo.",
 	[STR_ERR_SEARCH_LOAD] = "No se pudieron cargar los resultados.",
 	[STR_ERR_SEARCH_THREAD] = "No se pudo iniciar la tarea de busqueda.",
 	[STR_RESULTS_EMPTY] = "No se encontraron canciones.",
+	[STR_RESULTS_IDLE] = "Todavia no has buscado nada.",
 
 	/* Reproduccion. */
-	[STR_PLAYER_TITLE] = "Reproduccion local",
-	[STR_PLAYER_QUEUE_FMT] = "Pista %d/%d de la cola",
-	[STR_PLAYER_STATUS_FMT] = "%02u:%02u/%02d:%02d Desc:%u%% Vol:%u%%",
 	[STR_PLAYER_ART_LOADING] = "Cargando caratula...",
-	[STR_PLAYER_ART_DOWNLOADING] = "Descargando y preparando la caratula...",
-	[STR_PLAYER_ART_WAITING] = "Esperando a que termine la solicitud...",
 	[STR_PLAYER_AUDIO_PREPARING] = "Preparando la salida de audio...",
 	[STR_PLAYER_AUDIO_KEY] = "Obteniendo la clave de audio...",
 	[STR_PLAYER_DOWNLOAD_CANCELLING] = "Cancelando la descarga...",
 	[STR_PLAYER_FAILED_TITLE] = "No se pudo reproducir la pista",
 	[STR_PLAYER_INTERRUPTED] = "La reproduccion se interrumpio.",
 	[STR_PLAYER_FINISHED_TITLE] = "Pista terminada",
+	[STR_PLAYER_IDLE] = "Todavia no suena nada.",
+	[STR_PLAYER_POSITION_FMT] = "%d de %d",
+	[STR_PLAYER_VOLUME] = "Volumen",
 	[STR_ERR_NO_REFRESH_CREDENTIAL] = "No hay una credencial para renovar OAuth.",
 	[STR_ERR_NO_ACCESS_TOKEN] = "Spotify no devolvio un access token.",
 	[STR_ERR_SAVE_RENEWED_OAUTH] = "No se pudo guardar la credencial OAuth renovada.",

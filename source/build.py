@@ -32,6 +32,9 @@ STB_VORBIS_SHA256 = "4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e
 # Icon, banner and makerom settings for the installable app, kept in assets/
 # at the repository root.
 ASSETS = ROOT.parent / "assets"
+# Files the app reads at run time as romfs:/ (the logo), packed into both the
+# .3dsx and the .cia of spotify3ds.
+ROMFS = ROOT.parent / "romfs"
 APP_TITLE = "3DSpotify"
 APP_DESCRIPTION = "Native Spotify client for Nintendo 3DS"
 APP_PUBLISHER = "David Abejon"
@@ -182,18 +185,45 @@ def make_smdh(bannertool: Path, out: Path) -> Path:
     return smdh
 
 
+def require_romfs(romfs: Path) -> Path:
+    if not romfs.is_dir():
+        raise SystemExit(f"The romfs directory is missing: {romfs}. Create it "
+                         "at the repository root with gfx/logo.png inside.")
+    return romfs.resolve()
+
+
+def pack_command(packer: Path, elf: Path, dest: Path,
+                 smdh: Path | None, romfs: Path | None) -> list[str]:
+    command = [str(packer), str(elf), str(dest)]
+    if smdh is not None:
+        command.append(f"--smdh={smdh}")
+    if romfs is not None:
+        command.append(f"--romfs={romfs}")
+    return command
+
+
+def makerom_command(makerom: Path, elf: Path, smdh: Path, banner: Path,
+                    dest: Path, romfs: Path) -> list[str]:
+    # The RSF reads the romfs root from $(APP_ROMFS): an absolute path, so
+    # it does not depend on the working directory. Forward slashes keep
+    # makerom's YAML parser away from Windows backslashes.
+    return [str(makerom), "-f", "cia", "-o", str(dest),
+            "-target", "t", "-exefslogo",
+            "-elf", str(elf), "-rsf", str(ASSETS / "template.rsf"),
+            "-icon", str(smdh), "-banner", str(banner),
+            f"-DAPP_ROMFS={romfs.as_posix()}"]
+
+
 def make_cia(sdk: Path, bannertool: Path, elf: Path, smdh: Path,
-             out: Path, dest: Path) -> Path:
+             out: Path, dest: Path, romfs: Path) -> Path:
     makerom = require_tool(sdk / "tools" / "bin", "makerom")
     audio = banner_audio(ASSETS / "banner.wav", out / "banner.wav")
     banner = out / "banner.bnr"
     subprocess.run([str(bannertool), "makebanner",
                     "-i", str(ASSETS / "banner.png"), "-a", str(audio),
                     "-o", str(banner)], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run([str(makerom), "-f", "cia", "-o", str(dest),
-                    "-target", "t", "-exefslogo",
-                    "-elf", str(elf), "-rsf", str(ASSETS / "template.rsf"),
-                    "-icon", str(smdh), "-banner", str(banner)], check=True)
+    subprocess.run(makerom_command(makerom, elf, smdh, banner, dest, romfs),
+                   check=True)
     return dest
 
 
@@ -220,6 +250,8 @@ def main():
     app = args.app
     if args.cia and app != "spotify3ds":
         raise SystemExit("--cia is only supported for spotify3ds")
+    # Checked before compiling, so a missing romfs fails fast.
+    romfs = require_romfs(ROMFS) if app == "spotify3ds" else None
     srcdirs, defines, mbed, extra_sources = APPS[app]
     sources = []
     for directory in srcdirs:
@@ -271,17 +303,15 @@ def main():
 
     dest = ROOT / "dist" / "3ds" / app / f"{app}.3dsx"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    pack = [str(packer), str(elf), str(dest)]
     bannertool = smdh = None
     if app == "spotify3ds":
         bannertool = require_tool(sdk / "tools" / "bin", "bannertool")
         smdh = make_smdh(bannertool, out)
-        pack.append(f"--smdh={smdh}")
-    subprocess.run(pack, check=True)
+    subprocess.run(pack_command(packer, elf, dest, smdh, romfs), check=True)
     print(f"\nBuilt {dest}  ({dest.stat().st_size:,} bytes)")
     if args.cia:
         cia = make_cia(sdk, bannertool, elf, smdh, out,
-                       dest.with_suffix(".cia"))
+                       dest.with_suffix(".cia"), romfs)
         print(f"Built {cia}  ({cia.stat().st_size:,} bytes)")
         print("Copy it to the SD card and install it with FBI or a similar "
               "CIA installer.")

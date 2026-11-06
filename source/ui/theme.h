@@ -45,6 +45,13 @@
 #define COL_BTN_X      THEME_RGB(0x3F, 0xA2, 0xFF)
 #define COL_BTN_Y      THEME_RGB(0x39, 0xD9, 0x7A)
 
+/* La única transparencia (excepción de §2.7): el velo gris tras el spinner
+ * de descarga, que deja ver ligeramente lo de detrás. No es un COL_: los
+ * colores del tema siguen siendo opacos. */
+#define SCRIM_RGB   THEME_RGB(0x40, 0x40, 0x40)
+#define SCRIM_ALPHA 0xB0u
+#define SCRIM_COLOR (((uint32_t)SCRIM_RGB & 0x00FFFFFFu) | (SCRIM_ALPHA << 24))
+
 /* Espaciado y forma (px) */
 enum {
 	SP_1 = 4, SP_2 = 8, SP_3 = 12, SP_4 = 16, SP_6 = 24,
@@ -56,8 +63,9 @@ enum {
 	FOCUS_W = 2, FOCUS_GAP = 1,
 	TOUCH_MIN = 32,
 	BAR_H = 24,
-	ROW_H = 43,
-	THUMB_SIZE = 35,
+	TAB_H = 32,
+	ROW_H = 41,
+	THUMB_SIZE = 33,
 	ART_SIZE = 160,
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,
@@ -95,6 +103,14 @@ enum {
 	SCROLL_W = 4,         /* §5.11 indicador de desplazamiento (e1) */
 	SCROLL_MIN_H = 16,    /* §5.11 alto mínimo del tirador (e4) */
 	DRAG_START = 8,       /* §6.9 un toque pasa a arrastre (e2) */
+	HANDLE_W = 6,         /* §5.4 tirador de 6×14 px */
+	HANDLE_H = 14,
+	ART_BIG = 216,        /* carátula grande de la pantalla superior: 240 - 2·e3 */
+	SPINNER_CELL = 12,    /* spinner: bloques de 12 px (como la barra de §5.7) */
+	SPINNER_GAP = 4,      /* spinner: separación e1; anillo de 3·12 + 2·4 = 44 px */
+	SPINNER_PAD = 8,      /* spinner: velo e2 alrededor; 44 + 2·8 = 60 px */
+	TAB_LIFT_ACTIVE = 2,  /* §5.12 pestaña activa: el borde inferior sube 2 px */
+	TAB_LIFT_PRESSED = 4, /* §5.12 pestaña pulsada: sube 4 px */
 };
 
 #endif

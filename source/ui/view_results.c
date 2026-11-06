@@ -4,7 +4,7 @@
 #include "icons.h"
 #include "list_logic.h"
 #include "press_logic.h"
-#include "text_fit.h"
+#include "tabbar.h"
 #include "thumbs.h"
 #include "theme.h"
 
@@ -14,21 +14,16 @@
 #include <string.h>
 
 #define MAX_TRACKS 24
-#define QUERY_SIZE 96
-#define ERROR_SIZE 192
-/* Fitted text: at most the source plus "...". */
-#define FIELD_SIZE 136
 
 #define STATIC_GLYPHS 1024
 #define ROW_GLYPHS    3072
-#define DETAIL_GLYPHS 640
-#define RANGE_GLYPHS  32
-#define SCRATCH_GLYPHS FIELD_SIZE
+#define SCRATCH_GLYPHS UI_FIELD_SIZE
 
 /* Control ids for touch tracking: rows are their track index. */
 #define CONTROL_BUTTON 1000
 
 typedef enum {
+	MODE_IDLE,
 	MODE_SEARCHING,
 	MODE_LIST,
 	MODE_EMPTY,
@@ -43,44 +38,38 @@ static const u32 glyph_colors[GLYPH_COUNT] = {
 };
 
 /* Content. */
-static results_mode mode = MODE_SEARCHING;
-static char query[QUERY_SIZE];
+static results_mode mode = MODE_IDLE;
 static const sp_track *tracks;
 static int count;
 static int selected;
 static int first;       /* first visible row: scroll / LIST_PITCH */
 static int scroll;      /* px; whole rows except while dragging */
-static char error_detail[ERROR_SIZE];
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
 /* Bumped whenever a thumbnail arrives, so the list repaints. */
 static int thumbs_serial;
+/* Whether the thumbnails may download now (STYLES.md 9: not while the
+ * audio downloads), and whether thumbs.c holds this list. */
+static bool thumbs_allowed = true;
+static bool thumbs_synced;
 
 /* Parsed text. `stale`: content or language changed. */
-static C2D_TextBuf static_buf, row_buf, detail_buf, range_buf, scratch_buf;
+static C2D_TextBuf static_buf, row_buf, scratch_buf;
 static bool stale = true;
 static lang_id parsed_lang = LANG_COUNT;
-static int parsed_first = -1;
-static int parsed_selected = -1;
 
-static C2D_Text query_title_text;   /* top: Results: "query" */
-static C2D_Text header_text;        /* bottom header */
-static C2D_Text status_text;        /* top, while searching */
+static C2D_Text status_text;        /* the waiting bubble */
 static C2D_Text empty_text;
 static C2D_Text button_text;        /* empty: new search; error: retry */
 static C2D_Text notice_title_text;
 static C2D_Text notice_body_text;
-static C2D_Text error_detail_text;
 static C2D_Text bubble_text;
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_play, hint_back, hint_search, hint_cancel, hint_retry;
-static C2D_Text range_text;
 static C2D_Text row_title[MAX_TRACKS];
 static C2D_Text row_artist[MAX_TRACKS];
 static C2D_Text row_duration[MAX_TRACKS];
 static float row_duration_width[MAX_TRACKS];
-static C2D_Text detail_title, detail_artist, detail_album, detail_duration;
-static bool detail_has_album;
 
 /* Interaction (STYLES.md 6). */
 static press_state press_row;
@@ -117,11 +106,8 @@ bool view_results_init(void)
 {
 	static_buf = C2D_TextBufNew(STATIC_GLYPHS);
 	row_buf = C2D_TextBufNew(ROW_GLYPHS);
-	detail_buf = C2D_TextBufNew(DETAIL_GLYPHS);
-	range_buf = C2D_TextBufNew(RANGE_GLYPHS);
 	scratch_buf = C2D_TextBufNew(SCRATCH_GLYPHS);
-	if (!static_buf || !row_buf || !detail_buf || !range_buf ||
-	    !scratch_buf) {
+	if (!static_buf || !row_buf || !scratch_buf) {
 		view_results_exit();
 		return false;
 	}
@@ -131,7 +117,7 @@ bool view_results_init(void)
 void view_results_exit(void)
 {
 	C2D_TextBuf *bufs[] = {
-		&static_buf, &row_buf, &detail_buf, &range_buf, &scratch_buf
+		&static_buf, &row_buf, &scratch_buf
 	};
 	for (size_t i = 0; i < sizeof(bufs) / sizeof(bufs[0]); i++) {
 		if (*bufs[i])
@@ -158,18 +144,52 @@ static void reset_interaction(void)
 	drawn_valid = false;
 }
 
-static void set_query(const char *text)
+/* Gives thumbs.c this list when allowed; until then nothing it holds is
+ * drawn. */
+static void sync_thumbs(void)
 {
-	snprintf(query, sizeof(query), "%s", text ? text : "");
+	thumbs_synced = false;
+	if (!thumbs_allowed || mode != MODE_LIST)
+		return;
+	thumbs_set_tracks(tracks, count);
+	thumbs_set_window(first);
+	thumbs_synced = true;
 }
 
-void view_results_searching(const char *text)
+void view_results_allow_thumbs(bool allow)
 {
-	set_query(text);
+	if (allow == thumbs_allowed)
+		return;
+	thumbs_allowed = allow;
+	/* Stopped, what was fetched stays usable; nothing new arrives. */
+	if (allow)
+		sync_thumbs();
+	else
+		thumbs_stop();
+}
+
+void view_results_idle(void)
+{
+	mode = MODE_IDLE;
+	tracks = NULL;
+	count = selected = first = scroll = 0;
+	cancelling = false;
+	thumbs_synced = false;
+	reset_interaction();
+}
+
+void view_results_enter(void)
+{
+	reset_interaction();
+}
+
+void view_results_searching(void)
+{
 	mode = MODE_SEARCHING;
 	tracks = NULL;
 	count = selected = first = scroll = 0;
 	cancelling = false;
+	thumbs_synced = false;
 	reset_interaction();
 }
 
@@ -181,10 +201,8 @@ void view_results_cancelling(void)
 	}
 }
 
-void view_results_show(const char *text, const sp_track *list, int n,
-                       int focus)
+void view_results_show(const sp_track *list, int n, int focus)
 {
-	set_query(text);
 	tracks = list;
 	count = n < 0 ? 0 : n > MAX_TRACKS ? MAX_TRACKS : n;
 	mode = count > 0 ? MODE_LIST : MODE_EMPTY;
@@ -193,24 +211,30 @@ void view_results_show(const char *text, const sp_track *list, int n,
 	scroll = first * LIST_PITCH;
 	reset_interaction();
 	/* Covers: visible rows first (STYLES.md 9). */
-	thumbs_set_tracks(list, count);
-	thumbs_set_window(first);
+	sync_thumbs();
 }
 
-void view_results_error(const char *text, const char *error, str_id help)
+void view_results_error(str_id help)
 {
-	set_query(text);
 	mode = MODE_ERROR;
 	tracks = NULL;
 	count = selected = first = scroll = 0;
-	snprintf(error_detail, sizeof(error_detail), "%s", error ? error : "");
 	advice = help;
+	thumbs_synced = false;
 	reset_interaction();
 }
 
 int view_results_selected(void)
 {
 	return selected;
+}
+
+static void focus_row(int index);
+
+void view_results_focus(int index)
+{
+	if (mode == MODE_LIST && index >= 0 && index < count)
+		focus_row(index);
 }
 
 /* --- Text -------------------------------------------------------------- */
@@ -221,22 +245,11 @@ static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 	C2D_TextOptimize(text);
 }
 
-static float measure(const char *string, void *ctx)
-{
-	float scale = *(const float *)ctx;
-	C2D_Text text;
-	C2D_TextBufClear(scratch_buf);
-	C2D_TextParse(&text, scratch_buf, string);
-	return ui_text_width(&text, scale);
-}
-
 /* Parses `string` cut with "..." to `width` px at `scale` (3.3). */
 static void parse_fitted(C2D_Text *text, C2D_TextBuf buf, const char *string,
                          float scale, int width)
 {
-	char fitted[FIELD_SIZE];
-	text_fit(string, (float)width, measure, &scale, fitted, sizeof(fitted));
-	parse(text, buf, fitted);
+	ui_parse_fitted(text, buf, scratch_buf, string, scale, width);
 }
 
 static const char *track_name(const sp_track *t)
@@ -256,33 +269,21 @@ static int row_text_width(void)
 	return row.x + row.w - SP_2 - list_text_x(row);
 }
 
-/* The top screen's content width. */
-static int top_width(void)
-{
-	return SCREEN_TOP_W - 2 * SP_3;
-}
-
 static void parse_static(void)
 {
 	C2D_TextBufClear(static_buf);
-	char line[QUERY_SIZE + 32];
-	snprintf(line, sizeof(line), tr(STR_RESULTS_QUERY_FMT), query);
-	parse_fitted(&query_title_text, static_buf, line, TXT_CABEZA,
-	             top_width());
-	parse(&header_text, static_buf,
-	      tr(mode == MODE_SEARCHING ? STR_RESULTS_SEARCHING
-	                                : STR_RESULTS_HEADER));
 	parse(&status_text, static_buf,
 	      tr(cancelling ? STR_SEARCH_CANCELLING : STR_RESULTS_SEARCHING));
-	parse(&empty_text, static_buf, tr(STR_RESULTS_EMPTY));
+	parse(&empty_text, static_buf,
+	      tr(mode == MODE_IDLE ? STR_RESULTS_IDLE : STR_RESULTS_EMPTY));
 	parse(&button_text, static_buf,
 	      tr(mode == MODE_ERROR ? STR_RESULTS_RETRY
-	                            : STR_RESULTS_NEW_SEARCH));
+	         : mode == MODE_IDLE ? STR_HOME_SEARCH
+	                             : STR_RESULTS_NEW_SEARCH));
 	ui_rect notice = list_notice_rect();
 	parse_fitted(&notice_title_text, static_buf, tr(STR_SEARCH_FAILED_TITLE),
 	             TXT_CABEZA, notice.w - 2 * SP_3 - ICON_S - SP_1);
 	parse(&notice_body_text, static_buf, tr(advice));
-	parse(&error_detail_text, static_buf, error_detail);
 	parse(&bubble_text, static_buf, tr(STR_LANG_NAME));
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		parse(&letter_text[i], static_buf, glyph_letters[i]);
@@ -312,59 +313,13 @@ static void parse_rows(void)
 	}
 }
 
-static void parse_range(void)
-{
-	C2D_TextBufClear(range_buf);
-	int from, to;
-	list_range(first, count, RESULTS_PER_PAGE, &from, &to);
-	char range[32];
-	snprintf(range, sizeof(range), tr(STR_RESULTS_RANGE_FMT), from, to,
-	         count);
-	parse(&range_text, range_buf, range);
-}
-
-/* Inside the detail panel on the top screen. */
-static int detail_width(void)
-{
-	return top_width() - 2 * SP_3;
-}
-
-static void parse_detail(void)
-{
-	C2D_TextBufClear(detail_buf);
-	detail_has_album = false;
-	if (mode != MODE_LIST)
-		return;
-	const sp_track *t = &tracks[selected];
-	parse_fitted(&detail_title, detail_buf, track_name(t), TXT_CABEZA,
-	             detail_width());
-	parse_fitted(&detail_artist, detail_buf, track_artist(t), TXT_CUERPO,
-	             detail_width());
-	detail_has_album = t->album[0] != '\0';
-	if (detail_has_album)
-		parse_fitted(&detail_album, detail_buf, t->album, TXT_CUERPO,
-		             detail_width());
-	char duration[16];
-	list_format_duration(t->duration_ms, duration, sizeof(duration));
-	parse(&detail_duration, detail_buf, duration);
-}
-
 static void ensure_parsed(void)
 {
 	if (stale || parsed_lang != lang_get()) {
 		parse_static();
 		parse_rows();
 		parsed_lang = lang_get();
-		parsed_first = parsed_selected = -1;
 		stale = false;
-	}
-	if (parsed_first != first) {
-		parse_range();
-		parsed_first = first;
-	}
-	if (parsed_selected != selected) {
-		parse_detail();
-		parsed_selected = selected;
 	}
 }
 
@@ -474,7 +429,7 @@ static void move_focus(int delta)
 
 static bool has_button(void)
 {
-	return mode == MODE_EMPTY || mode == MODE_ERROR;
+	return mode == MODE_IDLE || mode == MODE_EMPTY || mode == MODE_ERROR;
 }
 
 static results_action button_action(void)
@@ -486,7 +441,7 @@ static results_action button_action(void)
 static ui_rect button_rect(void)
 {
 	return list_action_rect(ui_text_width(&button_text, TXT_CUERPO),
-	                        mode == MODE_EMPTY);
+	                        mode == MODE_EMPTY || mode == MODE_IDLE);
 }
 
 static void release_keys(u32 up)
@@ -520,7 +475,11 @@ static bool handle_touch(u32 down, u32 held, u32 up)
 			touchPosition pos;
 			hidTouchRead(&pos);
 			if (down & KEY_TOUCH) {
-				list_drag_begin(&drag, pos.py, scroll);
+				/* Only from the list itself: the tab bar keeps its own
+				 * touches. */
+				if (list_area_contains(pos.px, pos.py) &&
+				    !tabbar_touching())
+					list_drag_begin(&drag, pos.py, scroll);
 			} else if (list_drag_update(&drag, pos.py)) {
 				/* A drag is not a tap: the row returns to rest without
 				 * acting (6.4, 6.9). */
@@ -614,7 +573,7 @@ results_action view_results_update(u32 down)
 		return RESULTS_ACTION_NONE;
 
 	if (mode == MODE_LIST &&
-	    (down & (KEY_UP | KEY_DOWN | KEY_L | KEY_R | KEY_A)) &&
+	    (down & (KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_A)) &&
 	    !list_row_whole(selected, scroll, count)) {
 		/* 6.6: with the focus dragged out of view, the first button press
 		 * only brings the list back to it, on whole rows. A still shows
@@ -630,9 +589,10 @@ results_action view_results_update(u32 down)
 			move_focus(-1);
 		else if (down & KEY_DOWN)
 			move_focus(1);
-		else if (down & KEY_L)
+		/* Left/right page; L/R are the tab bar's. */
+		else if (down & KEY_LEFT)
 			move_focus(-RESULTS_PER_PAGE);
-		else if (down & KEY_R)
+		else if (down & KEY_RIGHT)
 			move_focus(RESULTS_PER_PAGE);
 	}
 
@@ -670,27 +630,9 @@ bool view_results_dirty(void)
  * nothing moves when the image arrives. `index` < 0: a skeleton row. */
 static void draw_thumb(ui_rect row, int index)
 {
-	ui_rect thumb = list_thumb_rect(row);
-	ui_fill(thumb, COL_TINTA);
-	ui_rect inside = ui_rect_inset(thumb, OUTLINE_W);
 	C2D_Image image;
-	if (index >= 0 && thumbs_image(index, &image)) {
-		/* Fitted into the square, centred on whole pixels. */
-		int w = image.subtex->width, h = image.subtex->height;
-		int longest = w > h ? w : h;
-		float scale = (float)inside.w / (float)longest;
-		int shown_w = ui_px_ceil(w * scale), shown_h = ui_px_ceil(h * scale);
-		if (shown_w < inside.w || shown_h < inside.h)
-			ui_fill(inside, COL_CAPA_ALTA);
-		C2D_DrawImageAt(image, inside.x + (inside.w - shown_w) / 2,
-		                inside.y + (inside.h - shown_h) / 2, 0.0f, NULL,
-		                scale, scale);
-		return;
-	}
-	ui_fill(inside, COL_CAPA_ALTA);
-	C2D_Image note = icon_image(ICON_NOTE);
-	ui_icon(&note, thumb.x + (thumb.w - ICON_S) / 2,
-	        thumb.y + (thumb.h - ICON_S) / 2, COL_TEXTO_2);
+	bool shown = index >= 0 && thumbs_synced && thumbs_image(index, &image);
+	ui_art(list_thumb_rect(row), shown ? &image : NULL);
 }
 
 /* 5.3. `index` < 0 draws an empty skeleton row (searching). */
@@ -734,19 +676,6 @@ static void draw_row(ui_rect row, int index, const results_look *look)
 	ui_text(&row_duration[index], duration_x, title_cy, TXT_META, meta_ink);
 }
 
-static void draw_header(void)
-{
-	ui_rect header = list_header_rect();
-	ui_panel(header);
-	int cy = header.y + header.h / 2;
-	ui_text(&header_text, SP_2, cy, TXT_CABEZA, COL_TEXTO);
-	if (mode == MODE_LIST || mode == MODE_EMPTY) {
-		int w = ui_px_ceil(ui_text_width(&range_text, TXT_META));
-		ui_text(&range_text, header.x + header.w - SP_2 - w, cy, TXT_META,
-		        COL_TEXTO_2);
-	}
-}
-
 static void draw_bar(const results_look *look)
 {
 	ui_hint hints[3];
@@ -754,6 +683,9 @@ static void draw_bar(const results_look *look)
 	const C2D_Text *a_label = NULL;
 	switch (mode) {
 	case MODE_SEARCHING:
+		break;
+	case MODE_IDLE:
+		a_label = &hint_search;
 		break;
 	case MODE_LIST:
 		a_label = &hint_play;
@@ -810,6 +742,7 @@ void view_results_draw_bottom(void)
 		}
 		break;
 	}
+	case MODE_IDLE:
 	case MODE_EMPTY: {
 		/* A single message: centred (3.3). */
 		ui_rect notice = list_notice_rect();
@@ -831,67 +764,27 @@ void view_results_draw_bottom(void)
 		          NULL);
 	}
 
-	/* Bars after the rows: nudged and dragged rows slide under them. */
-	draw_header();
+	/* The bar after the rows: nudged and dragged rows slide under it, and
+	 * under the tab bar, drawn by the caller. */
 	draw_bar(&look);
 
+	/* While searching, the waiting bubble (5.9 with the indicator of 5.7)
+	 * sits over the skeleton rows; the language bubble, if it shows too,
+	 * stacks above it. */
+	int slot = 0;
+	if (look.mode == MODE_SEARCHING) {
+		ui_bubble_loading(list_bubble_rect(
+			ui_bubble_loading_content_width(&status_text)),
+			look.loader_step, &status_text);
+		slot = 1;
+	}
 	if (look.bubble) {
 		C2D_Image globe = icon_image(ICON_LANGUAGE);
-		ui_bubble(list_bubble_rect(ui_bubble_content_width(&bubble_text)),
+		ui_bubble(list_bubble_slot_rect(ui_bubble_content_width(&bubble_text),
+		                                slot),
 		          &globe, &bubble_text);
 	}
 
 	drawn = look;
 	drawn_valid = true;
-}
-
-static void draw_detail(int y)
-{
-	int line = ui_line_height(TXT_CUERPO);
-	int title_line = ui_line_height(TXT_CABEZA);
-	int lines = detail_has_album ? 3 : 2;
-	ui_rect panel = { SP_3, y, top_width(),
-	                  2 * SP_3 + title_line + lines * (line + SP_1) };
-	ui_panel(panel);
-	int x = panel.x + SP_3;
-	int cy = panel.y + SP_3 + title_line / 2;
-	ui_text(&detail_title, x, cy, TXT_CABEZA, COL_TEXTO);
-	cy += title_line / 2 + SP_1 + line / 2;
-	ui_text(&detail_artist, x, cy, TXT_CUERPO, COL_TEXTO_2);
-	if (detail_has_album) {
-		cy += line + SP_1;
-		ui_text(&detail_album, x, cy, TXT_CUERPO, COL_TEXTO_2);
-	}
-	cy += line + SP_1;
-	ui_text(&detail_duration, x, cy, TXT_CUERPO, COL_TEXTO_2);
-}
-
-void view_results_draw_top(void)
-{
-	ensure_parsed();
-	int title_line = ui_line_height(TXT_CABEZA);
-	ui_text(&query_title_text, SP_3, SP_3 + title_line / 2, TXT_CABEZA,
-	        COL_TEXTO);
-	int below = SP_3 + title_line + SP_2;
-
-	switch (mode) {
-	case MODE_SEARCHING: {
-		/* A waiting screen: indicator and status, centred (7.2). */
-		int cy = SCREEN_H / 2;
-		ui_loader(SCREEN_TOP_W / 2, cy, loader_frames / LOADER_STEP);
-		ui_text_centered(&status_text, SCREEN_TOP_W / 2,
-		                 cy + LOADER_BAR_H + SP_4, TXT_CUERPO, COL_TEXTO);
-		break;
-	}
-	case MODE_LIST:
-		draw_detail(below);
-		break;
-	case MODE_ERROR:
-		/* The technical detail, for reporting the problem. */
-		ui_text_wrapped(&error_detail_text, SP_3, below, TXT_CUERPO,
-		                COL_TEXTO_2, top_width());
-		break;
-	case MODE_EMPTY:
-		break;
-	}
 }
