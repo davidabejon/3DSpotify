@@ -16,6 +16,9 @@
  * enough for the console to wake from a closed lid and rejoin Wi-Fi. */
 #define DOWNLOAD_MAX_FAILED_PASSES 8
 
+/* Times one stall may ask storage-resolve for fresh CDN URLs. */
+#define DOWNLOAD_MAX_REFRESHES 3
+
 static inline bool http_status_is_redirect(int status)
 {
 	return status == 301 || status == 302 || status == 303 ||

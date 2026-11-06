@@ -438,8 +438,18 @@ static int stream_once(const char *url, size_t offset,
 		const char *loc = find_header(hbuf, "location:");
 		tls_close(c);
 		if (!loc || !http_redirect_url(url, loc, next, nextlen)) {
-			snprintf(err, errlen, "CDN answered %d without a usable "
-			         "location", status);
+			/* Where it pointed, minus any signature, for the log. */
+			char where[64] = "none";
+			if (loc) {
+				while (*loc == ' ')
+					loc++;
+				size_t n = strcspn(loc, "?\r\n");
+				if (n >= sizeof(where))
+					n = sizeof(where) - 1;
+				memcpy(where, loc, n);
+				where[n] = '\0';
+			}
+			snprintf(err, errlen, "CDN answered %d to %s", status, where);
 			return -1;
 		}
 		return 1;

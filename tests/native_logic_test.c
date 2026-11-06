@@ -7,6 +7,7 @@
 #include "list_logic.h"
 #include "now_layout.h"
 #include "player_logic.h"
+#include "power_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
 #include "spinner_logic.h"
@@ -1223,12 +1224,10 @@ static void test_http_redirects(void)
 	assert(!http_status_is_redirect(304));
 	assert(!http_status_is_redirect(403));
 
-	assert(http_redirect_url(from, " https://edge.example/a?b=1
-Via: x",
+	assert(http_redirect_url(from, " https://edge.example/a?b=1\r\nVia: x",
 	                         out, sizeof(out)));
 	assert(strcmp(out, "https://edge.example/a?b=1") == 0);
-	assert(http_redirect_url(from, "//edge.example/a  
-", out,
+	assert(http_redirect_url(from, "//edge.example/a  \r\n", out,
 	                         sizeof(out)));
 	assert(strcmp(out, "https://edge.example/a") == 0);
 	assert(http_redirect_url(from, "/audio/def?sig=2", out, sizeof(out)));
@@ -1240,9 +1239,27 @@ Via: x",
 	assert(!http_redirect_url(from, "http://edge.example/a", out,
 	                          sizeof(out)));
 	assert(!http_redirect_url(from, "relative/path", out, sizeof(out)));
-	assert(!http_redirect_url(from, "  
-", out, sizeof(out)));
+	assert(!http_redirect_url(from, "  \r\n", out, sizeof(out)));
 	assert(!http_redirect_url(from, "https://edge.example/a", out, 10));
+}
+
+static void test_power_policy(void)
+{
+	assert(power_keep_awake(PLAYER_PHASE_LOADING, false, true));
+	assert(power_keep_awake(PLAYER_PHASE_PLAYING, false, true));
+	assert(!power_keep_awake(PLAYER_PHASE_PLAYING, true, true));
+	assert(!power_keep_awake(PLAYER_PHASE_IDLE, false, true));
+	assert(!power_keep_awake(PLAYER_PHASE_FINISHED, false, true));
+	assert(!power_keep_awake(PLAYER_PHASE_FAILED, false, true));
+	/* Speakers go mute under a shut lid: no headphones, normal sleep. */
+	assert(!power_keep_awake(PLAYER_PHASE_PLAYING, false, false));
+	assert(!power_keep_awake(PLAYER_PHASE_LOADING, false, false));
+
+	assert(power_screens_lit(true, true));
+	assert(power_screens_lit(true, false));
+	assert(!power_screens_lit(false, true));
+	/* Music over with the lid shut: lit again before sleeping. */
+	assert(power_screens_lit(false, false));
 }
 
 static void test_download_retry_delay(void)
@@ -1289,6 +1306,7 @@ int main(void)
 	test_search_path_encoding();
 	test_http_redirects();
 	test_download_retry_delay();
+	test_power_policy();
 	test_queue_boundaries();
 	test_language_tables();
 	test_language_switching();
