@@ -3,7 +3,8 @@
 const char *const lang_strings_en[STR_COUNT] = {
 	/* Generic. */
 	[STR_ERROR] = "Error",
-	[STR_NONE] = "(none)",
+	[STR_APP_NAME] = "3DSpotify",
+	[STR_LANG_NAME] = "English",
 	[STR_UNTITLED] = "(untitled)",
 	[STR_UNKNOWN_ARTIST] = "(unknown artist)",
 	[STR_NO_VALID_RESPONSE] = "No valid response was received.",
@@ -14,8 +15,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_LABEL_DURATION] = "Duration",
 	[STR_LABEL_QUEUE] = "Queue",
 	[STR_LABEL_QUERY] = "Query",
-	[STR_LABEL_PREVIOUS_QUERY] = "Previous query",
-	[STR_LABEL_SERVER] = "Server",
 	[STR_LABEL_CODE] = "Code",
 
 	/* Button hints. */
@@ -33,9 +32,14 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_KEYS_SELECTION_SEARCH] = "Y: new search",
 	[STR_KEYS_SELECTION_SESSION] = "X: session   START: exit",
 	[STR_KEYS_STARTUP_RETRY] = "A: retry   Y: pair",
-	[STR_KEYS_SESSION_SEARCH] = "A: search songs",
-	[STR_KEYS_SESSION_RECONNECT] = "X: reconnect",
-	[STR_KEYS_SESSION_PAIR] = "Y: pair another account",
+
+	/* Home view. */
+	[STR_HOME_TITLE] = "Home",
+	[STR_HOME_SEARCH] = "Search songs",
+	[STR_HOME_LAST_SEARCH] = "Last search",
+	[STR_HINT_SEARCH] = "Search",
+	[STR_HINT_RECONNECT] = "Reconnect",
+	[STR_HINT_PAIR] = "Pair",
 
 	/* Session start-up. */
 	[STR_LOGIN_TITLE] = "3DSpotify - direct sign-in",
@@ -54,7 +58,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_CHECK_WIFI_CONNECTED] = "Make sure the console's Wi-Fi is connected.",
 	[STR_PS_ENTROPY] = "Could not enable the console's entropy source.",
 	[STR_SESSION_FAILED_TITLE] = "Could not start the session",
-	[STR_SESSION_READY_TITLE] = "Spotify session ready",
 
 	/* Start-up error categories. */
 	[STR_CAT_NO_NETWORK] = "No network service",

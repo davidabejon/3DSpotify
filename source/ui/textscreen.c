@@ -263,6 +263,6 @@ void textscreen_draw(void)
 			scale_x = USABLE_WIDTH / row_width[row];
 		C2D_DrawText(&row_text[row], C2D_WithColor, MARGIN_X,
 		             MARGIN_Y + row * line_height, 0.0f, scale_x, scale,
-		             row == 0 ? UI_COLOR_ACCENT : UI_COLOR_TEXT);
+		             COL_TEXTO); /* on the background: STYLES.md 2.6 */
 	}
 }

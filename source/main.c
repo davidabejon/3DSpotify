@@ -9,6 +9,7 @@
 #include "ap3ds.h"
 #include "artwork.h"
 #include "cfg3ds.h"
+#include "icons.h"
 #include "lang.h"
 #include "login5.h"
 #include "pair3ds.h"
@@ -18,6 +19,7 @@
 #include "track.h"
 #include "tls3ds.h"
 #include "ui.h"
+#include "view_home.h"
 #include "worker_priority.h"
 #include "stb_vorbis.h"
 
@@ -82,6 +84,9 @@ static sp_track playback_queue[SEARCH_LIMIT];
 static int playback_queue_count;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
+/* Which view owns the screens: the home view, or the text screen (bottom)
+ * and the artwork (top). Set by show_home, cleared by leave_home. */
+static bool home_active;
 
 static void frame(void);
 
@@ -114,12 +119,17 @@ static void language_init(void)
 
 /* SELECT switches the language on any menu screen and remembers the choice.
  * Returns true when the caller has to redraw its screen. */
+static void switch_language(void)
+{
+	lang_set(lang_next(lang_get()));
+	cfg_set("language", lang_code(lang_get()));
+}
+
 static bool language_toggled(u32 down)
 {
 	if (!(down & KEY_SELECT))
 		return false;
-	lang_set(lang_next(lang_get()));
-	cfg_set("language", lang_code(lang_get()));
+	switch_language();
 	return true;
 }
 
@@ -753,21 +763,35 @@ cleanup:
  *
  * Both screens are drawn together. Until the F0 spike confirms on hardware
  * that a target left out of a frame keeps its last image, skipping one is
- * not worth the risk; the top screen costs a rectangle and a quad. */
+ * not worth the risk; the top screen costs a rectangle and a quad.
+ *
+ * While the home view is active it draws both screens; the artwork's own
+ * changes are ignored then, and switching views always repaints. */
 static void frame(void)
 {
+	static bool home_drawn;
 	artwork_poll(&cover_art);
 	bool restored = ui_take_restored();
-	if (!restored && !artwork_dirty(&cover_art) && !textscreen_dirty()) {
+	bool changed = home_active
+	               ? view_home_dirty()
+	               : artwork_dirty(&cover_art) || textscreen_dirty();
+	if (!restored && home_active == home_drawn && !changed) {
 		gspWaitForVBlank();
 		return;
 	}
 	ui_begin();
 	ui_scene(GFX_TOP);
-	artwork_draw(&cover_art);
+	if (home_active)
+		view_home_draw_top();
+	else
+		artwork_draw(&cover_art);
 	ui_scene(GFX_BOTTOM);
-	textscreen_draw();
+	if (home_active)
+		view_home_draw_bottom();
+	else
+		textscreen_draw();
 	ui_end();
+	home_drawn = home_active;
 }
 
 static void show_progress(const char *message)
@@ -865,15 +889,20 @@ static search_result search_tracks(const spotify_session *session,
 	return search.result == 0 ? SEARCH_REQUEST_OK : SEARCH_REQUEST_ERROR;
 }
 
+/* Only a confirmed query replaces `query`: cancelling the keyboard keeps the
+ * last search for the home view's repeat chip. */
 static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 {
+	char typed[SEARCH_QUERY_SIZE] = {0};
 	SwkbdState keyboard;
 	swkbdInit(&keyboard, SWKBD_TYPE_WESTERN, 1, SEARCH_QUERY_SIZE - 1);
 	swkbdSetValidation(&keyboard, SWKBD_NOTEMPTY_NOTBLANK,
 	                   SWKBD_FILTER_PROFANITY, -1);
 	swkbdSetHintText(&keyboard, tr(STR_SEARCH_HINT));
-	bool confirmed = swkbdInputText(&keyboard, query, SEARCH_QUERY_SIZE) ==
+	bool confirmed = swkbdInputText(&keyboard, typed, sizeof(typed)) ==
 	                 SWKBD_BUTTON_CONFIRM;
+	if (confirmed)
+		memcpy(query, typed, sizeof(typed));
 	/* The keyboard applet takes over both screens. */
 	artwork_invalidate(&cover_art);
 	textscreen_invalidate();
@@ -959,12 +988,14 @@ static void show_selection(int selected)
 	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
+/* `repeat`: run `query` straight away instead of asking for one first. */
 static bool search_flow(spotify_session *session,
-                        char query[SEARCH_QUERY_SIZE])
+                        char query[SEARCH_QUERY_SIZE], bool repeat)
 {
 	for (;;) {
-		if (!ask_search_query(query))
+		if (!repeat && !ask_search_query(query))
 			return true;
+		repeat = false;
 		if (!query[0])
 			continue;
 		search_result result = search_tracks(session, query);
@@ -1367,18 +1398,18 @@ static void show_error(const startup_error *error)
 	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
-static void show_session_ready(const spotify_session *session, const char *query)
+static void show_home(const char *query)
 {
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_SESSION_READY_TITLE));
-	textscreen_printf("%s: %s\n\n", tr(STR_LABEL_SERVER), session->host);
-	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_SEARCH));
-	textscreen_printf("%s: %.40s\n\n", tr(STR_LABEL_PREVIOUS_QUERY),
-	                  query[0] ? query : tr(STR_NONE));
-	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_RECONNECT));
-	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_PAIR));
-	textscreen_printf("%s\n", tr(STR_KEYS_EXIT));
-	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	view_home_enter(query);
+	home_active = true;
+}
+
+/* Hands the screens back to the text screen and the artwork. */
+static void leave_home(void)
+{
+	home_active = false;
+	textscreen_invalidate();
+	artwork_invalidate(&cover_art);
 }
 
 int main(int argc, char **argv)
@@ -1390,7 +1421,11 @@ int main(int argc, char **argv)
 		gfxExit();
 		return 1;
 	}
-	if (!textscreen_init()) {
+	/* Without icons the views still work, just without them. */
+	icons_init();
+	if (!textscreen_init() || !view_home_init()) {
+		icons_exit();
+		textscreen_exit();
 		ui_exit();
 		gfxExit();
 		return 1;
@@ -1440,29 +1475,31 @@ int main(int argc, char **argv)
 		textscreen_printf("%s\n", tr(STR_LOGIN_CONNECTING));
 		frame();
 		if (start_session(force_pair, &error, &session)) {
-			show_session_ready(&session, query);
+			show_home(query);
 			for (;;) {
 				hidScanInput();
 				u32 down = hidKeysDown();
 				if (down & KEY_START)
 					goto done;
-				if (down & KEY_A) {
-					if (!search_flow(&session, query))
+				home_action action = view_home_update(down);
+				if (action == HOME_ACTION_SEARCH ||
+				    action == HOME_ACTION_REPEAT) {
+					leave_home();
+					if (!search_flow(&session, query,
+					                 action == HOME_ACTION_REPEAT))
 						goto done;
-					show_session_ready(&session, query);
+					show_home(query);
 				}
-				if (down & KEY_X) {
+				if (action == HOME_ACTION_RECONNECT ||
+				    action == HOME_ACTION_PAIR) {
+					leave_home();
 					secure_clear(&session, sizeof(session));
-					force_pair = false;
+					force_pair = action == HOME_ACTION_PAIR;
 					break;
 				}
-				if (down & KEY_Y) {
-					secure_clear(&session, sizeof(session));
-					force_pair = true;
-					break;
-				}
-				if (language_toggled(down))
-					show_session_ready(&session, query);
+				/* SELECT: the view shows the new language by itself. */
+				if (action == HOME_ACTION_LANGUAGE)
+					switch_language();
 				frame();
 				if (!aptMainLoop())
 					goto done;
@@ -1516,6 +1553,8 @@ done:
 	if (soc_ready)
 		socExit();
 	free(soc_buffer);
+	view_home_exit();
+	icons_exit();
 	textscreen_exit();
 	ui_exit();
 	gfxExit();

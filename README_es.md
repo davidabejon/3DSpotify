@@ -67,8 +67,12 @@ emparejar si hace falta y comprueba la conexión al access point y a la sesión
 de biblioteca. Si no hay una credencial guardada, sigue el código de
 emparejamiento que aparece en la consola desde otro dispositivo y autoriza la
 cuenta en Spotify. El refresh token se guarda en la SD para los siguientes
-arranques. En la pantalla de sesión, A abre la búsqueda, X vuelve a conectar,
-Y permite emparejar otra cuenta y START sale. En resultados, arriba/abajo
+arranques. En la pantalla de inicio, toca «Buscar canciones» o pulsa A para
+abrir el teclado. Debajo aparece tu última búsqueda como un botón que la
+repite: tócalo, o llega a él con arriba/abajo y pulsa A. Un toque actúa al
+levantar el lápiz dentro del botón; si lo deslizas fuera, se cancela. X vuelve
+a conectar, Y permite emparejar otra cuenta, SELECT cambia el idioma y START
+sale. En resultados, arriba/abajo
 desplaza la lista, A selecciona, B vuelve y Y inicia otra consulta. B cancela
 una búsqueda pendiente cuando termine la petición de red activa.
 

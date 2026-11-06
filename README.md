@@ -68,9 +68,12 @@ The target starts a direct session: it refreshes the stored credential, offers
 pairing when needed, and checks the access-point and library-session
 connections. If no credential is stored, follow the pairing code shown on the
 console from another device and authorize the account with Spotify. The refresh
-token is saved to the SD card for later launches. On the session screen, A
-opens search, X reconnects, Y pairs another account, and START exits. Use
-up/down to move through results, A to select, B to return, and Y to enter
+token is saved to the SD card for later launches. On the home screen, tap
+"Search songs" or press A to open the keyboard. Your last search appears
+below it as a button that runs it again: tap it, or move to it with up/down
+and press A. A tap acts when you lift the stylus inside the button; sliding
+off cancels it. X reconnects, Y pairs another account, SELECT switches the
+language, and START exits. Use up/down to move through results, A to select, B to return, and Y to enter
 another query. B cancels a pending search after the current network request
 finishes.
 

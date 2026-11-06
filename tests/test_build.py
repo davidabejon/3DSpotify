@@ -114,6 +114,92 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("0x18", artwork)
         self.assertNotIn("static s32 background_priority", app)
 
+    def test_home_view_replaces_session_text_screen(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("view_home.c", "view_home.h", "home_logic.h",
+                     "text_fit.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        self.assertNotIn("show_session_ready", app)
+        self.assertIn("view_home_init()", app)
+        self.assertLess(app.index("view_home_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        # Pure logic stays free of 3DS headers for the host tests.
+        for name in ("home_logic.h", "text_fit.h", "theme.h", "layout.h",
+                     "press_logic.h"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("#include <3ds", source)
+            self.assertNotIn("#include <citro", source)
+        # The home view joins the on-demand render: a frame only when dirty.
+        frame = app[app.index("static void frame(void)"):
+                    app.index("static void show_progress(")]
+        self.assertIn("view_home_dirty()", frame)
+        self.assertIn("view_home_draw_bottom()", frame)
+        # The repeat button runs the last query without the keyboard, and a
+        # cancelled keyboard does not wipe it.
+        self.assertIn("action == HOME_ACTION_REPEAT", app)
+        ask = app[app.index("static bool ask_search_query("):
+                  app.index("static void show_search_error(")]
+        self.assertIn("if (confirmed)", ask)
+
+    def test_ui_follows_style_guide(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("theme.h", "draw.c", "draw.h", "layout.h",
+                     "press_logic.h", "icons.c", "icons.h",
+                     "icons_data.c", "icons_data.h", "gen_icons.py"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        # Every colour is opaque: no alpha in the theme (2, 2.7).
+        theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
+        self.assertNotIn("THEME_RGBA", theme)
+        for line in theme.splitlines():
+            if line.startswith("#define COL_"):
+                self.assertIn("THEME_RGB(", line)
+        # Every colour comes from theme.h (docs/STYLES.md 1.5).
+        for path in [build.ROOT / "main.c", *ui_dir.glob("*.c")]:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("C2D_Color32", source, path.name)
+            self.assertNotIn("UI_COLOR_", source, path.name)
+        # The redesigned views: no loose colours, sizes or text scales.
+        for name in ("view_home.c", "draw.c"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
+            # 0.0f is the depth argument of the C2D calls.
+            self.assertIsNone(re.search(r"\b0\.(?!0f)\d+f\b", source), name)
+        # Flat and square (1.2, 4.3): solid rectangles only, through the
+        # draw.c helpers; no circles, triangles, gradients or blending.
+        draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
+        self.assertIn("ui_rect ui_bevel_rect(", draw)
+        self.assertIn("void ui_panel(", draw)
+        self.assertIn("void ui_button(", draw)
+        home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
+        for source, name in ((draw, "draw.c"), (home, "view_home.c")):
+            for call in ("C2D_DrawCircle", "C2D_DrawTriangle",
+                         "C2D_DrawRectangle(", "C2D_DrawEllipse",
+                         "color_fade", "color_mix"):
+                self.assertNotIn(call, source, name)
+        self.assertNotIn("C2D_DrawRect", home)
+        # Icons: crisp at whole pixels (5.10).
+        icons = (ui_dir / "icons.c").read_text(encoding="utf-8")
+        self.assertIn("GPU_NEAREST, GPU_NEAREST", icons)
+        # Both screens share the background gradient (7.1).
+        ui = (ui_dir / "ui.c").read_text(encoding="utf-8")
+        self.assertIn("COL_FONDO_SUP, COL_FONDO_SUP", ui)
+        # Touch acts on release; physical buttons show the pressed state.
+        self.assertIn("TOUCH_ACTIVATE", home)
+        self.assertIn("press_shown(pending_press)", home)
+        # Icons are generated C arrays that match their generator.
+        spec = importlib.util.spec_from_file_location(
+            "gen_icons", ui_dir / "gen_icons.py")
+        gen_icons = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen_icons)
+        self.assertTrue(gen_icons.is_current(),
+                        "run source/ui/gen_icons.py")
+        self.assertIn("icons_init();", app)
+        self.assertLess(app.index("icons_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(

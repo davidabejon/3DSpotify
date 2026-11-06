@@ -11,7 +11,8 @@
  * "\x1b[2J" (clear). Any other escape sequence is skipped.
  *
  * Rows are spread over the screen by how many are in use, so short screens
- * get larger text; row 0 is drawn as a title. */
+ * get larger text. All rows use `texto`, the colour allowed on the
+ * background (docs/STYLES.md 2.6). */
 #ifndef TEXTSCREEN_H
 #define TEXTSCREEN_H
 

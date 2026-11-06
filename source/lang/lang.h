@@ -3,9 +3,13 @@
  * The tables live in lang_en.c and lang_es.c, indexed by str_id. Entries that
  * end in _FMT are printf formats: every language must use the same conversion
  * specifiers in the same order (tests/native_logic_test.c checks this).
- * Entries that start with STR_KEYS_ are button hints and must fit one line of
- * the 40-column bottom-screen console. The 3DS console font is ASCII only, so
- * Spanish text is written without accents.
+ * Entries that start with STR_KEYS_ are button hints for the text screens and
+ * must fit one line of the 40-column grid. STR_HINT_ entries label one
+ * action each in the button bar of the redesigned views (docs/STYLES.md
+ * 5.6), next to the button's glyph; there the limit is the width in pixels.
+ * Capitals only start a sentence (STYLES.md 3.3).
+ * The tables stay ASCII (no accents in Spanish) until that restriction is
+ * lifted on purpose; citro2d itself could draw them.
  *
  * This module has no 3DS dependencies so the host tests can link it.
  */
@@ -23,7 +27,8 @@ typedef enum {
 typedef enum {
 	/* Generic. STR_ERROR is first so a zeroed startup_error reads "Error". */
 	STR_ERROR,
-	STR_NONE,
+	STR_APP_NAME,
+	STR_LANG_NAME, /* the language's own name, for the SELECT bubble */
 	STR_UNTITLED,
 	STR_UNKNOWN_ARTIST,
 	STR_NO_VALID_RESPONSE,
@@ -34,11 +39,9 @@ typedef enum {
 	STR_LABEL_DURATION,
 	STR_LABEL_QUEUE,
 	STR_LABEL_QUERY,
-	STR_LABEL_PREVIOUS_QUERY,
-	STR_LABEL_SERVER,
 	STR_LABEL_CODE,
 
-	/* Button hints (one console line each). */
+	/* Button hints (one text-screen line each). */
 	STR_KEYS_LANGUAGE,
 	STR_KEYS_CANCEL_EXIT,
 	STR_KEYS_RESULTS_EXIT,
@@ -52,10 +55,15 @@ typedef enum {
 	STR_KEYS_SELECTION_PLAY,
 	STR_KEYS_SELECTION_SEARCH,
 	STR_KEYS_SELECTION_SESSION,
-	STR_KEYS_STARTUP_RETRY,
-	STR_KEYS_SESSION_SEARCH,
-	STR_KEYS_SESSION_RECONNECT,
-	STR_KEYS_SESSION_PAIR,
+	STR_KEYS_STARTUP_RETRY, /* the last STR_KEYS_ entry */
+
+	/* Home view. */
+	STR_HOME_TITLE,
+	STR_HOME_SEARCH,
+	STR_HOME_LAST_SEARCH,
+	STR_HINT_SEARCH,
+	STR_HINT_RECONNECT,
+	STR_HINT_PAIR,
 
 	/* Session start-up. */
 	STR_LOGIN_TITLE,
@@ -74,7 +82,6 @@ typedef enum {
 	STR_CHECK_WIFI_CONNECTED,
 	STR_PS_ENTROPY,
 	STR_SESSION_FAILED_TITLE,
-	STR_SESSION_READY_TITLE,
 
 	/* Start-up error categories. */
 	STR_CAT_NO_NETWORK,

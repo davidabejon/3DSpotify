@@ -4,7 +4,8 @@
 const char *const lang_strings_es[STR_COUNT] = {
 	/* Generico. */
 	[STR_ERROR] = "Error",
-	[STR_NONE] = "(ninguna)",
+	[STR_APP_NAME] = "3DSpotify",
+	[STR_LANG_NAME] = "Espanol",
 	[STR_UNTITLED] = "(sin titulo)",
 	[STR_UNKNOWN_ARTIST] = "(artista desconocido)",
 	[STR_NO_VALID_RESPONSE] = "No se recibio una respuesta valida.",
@@ -15,8 +16,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_LABEL_DURATION] = "Duracion",
 	[STR_LABEL_QUEUE] = "Cola",
 	[STR_LABEL_QUERY] = "Consulta",
-	[STR_LABEL_PREVIOUS_QUERY] = "Consulta anterior",
-	[STR_LABEL_SERVER] = "Servidor",
 	[STR_LABEL_CODE] = "Codigo",
 
 	/* Botones. */
@@ -34,9 +33,14 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_KEYS_SELECTION_SEARCH] = "Y: nueva busqueda",
 	[STR_KEYS_SELECTION_SESSION] = "X: sesion   START: salir",
 	[STR_KEYS_STARTUP_RETRY] = "A: reintentar   Y: emparejar",
-	[STR_KEYS_SESSION_SEARCH] = "A: buscar canciones",
-	[STR_KEYS_SESSION_RECONNECT] = "X: volver a conectar",
-	[STR_KEYS_SESSION_PAIR] = "Y: emparejar otra cuenta",
+
+	/* Vista de inicio. */
+	[STR_HOME_TITLE] = "Inicio",
+	[STR_HOME_SEARCH] = "Buscar canciones",
+	[STR_HOME_LAST_SEARCH] = "Ultima busqueda",
+	[STR_HINT_SEARCH] = "Buscar",
+	[STR_HINT_RECONNECT] = "Reconectar",
+	[STR_HINT_PAIR] = "Emparejar",
 
 	/* Inicio de sesion. */
 	[STR_LOGIN_TITLE] = "3DSpotify - iniciando sesion directa",
@@ -55,7 +59,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_CHECK_WIFI_CONNECTED] = "Comprueba que el Wi-Fi de la consola esta conectado.",
 	[STR_PS_ENTROPY] = "No se pudo habilitar la fuente de aleatoriedad de la consola.",
 	[STR_SESSION_FAILED_TITLE] = "No se pudo iniciar la sesion",
-	[STR_SESSION_READY_TITLE] = "Sesion Spotify lista",
 
 	/* Categorias de error al iniciar. */
 	[STR_CAT_NO_NETWORK] = "No hay servicio de red",
