@@ -70,8 +70,8 @@ void view_results_focus(int index);
 /* Switching to the tab: no press or drag carries over. */
 void view_results_enter(void);
 /* Whether the thumbnails may download (STYLES.md 9): not while the audio
- * downloads. Disallowing stops and joins the worker; what it fetched stays
- * on screen. */
+ * downloads. Disallowing asks the worker to stop without waiting for it
+ * (thumbs_stop); what it fetched stays on screen. */
 void view_results_allow_thumbs(bool allow);
 
 /* Once per frame, after hidScanInput, with that frame's new key presses.

@@ -67,6 +67,16 @@ int  tls_write(tls_conn *c, const void *buf, size_t len);   /* writes all of it 
 int  tls_read(tls_conn *c, void *buf, size_t len);          /* 0 = closed */
 void tls_close(tls_conn *c);
 
+/* Cuts every network wait short while `on` (TLS here, and the access
+ * point's in ap3ds.c): polls run in slices of TLS_ABORT_SLICE_MS and fail
+ * once it is set, so a worker in the middle of a request returns within a
+ * slice instead of after its whole timeout. For leaving the session, so its
+ * workers can be joined quickly; set it back to false afterwards. DNS is
+ * not cut: its thread uses the sockets and must end on its own. */
+#define TLS_ABORT_SLICE_MS 100
+void tls_set_abort(bool on);
+bool tls_aborting(void);
+
 /* Renders an mbedTLS error as text; in the shipping build, as a bare number. */
 void tls_strerror(int code, char *out, size_t outlen);
 

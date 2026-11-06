@@ -242,13 +242,13 @@ static ap_session *open_playback_ap(spotify_session *session, char *error,
  * The audio engine. It is not a screen any more: player_play starts a
  * track, player_pump keeps the DSP fed once per frame from the main loop
  * whichever tab is showing, and the Playing tab (view_player.h) only reads
- * player_snapshot. Starting a track still blocks for its network steps
- * (access point, audio key), showing each stage, as it did before the
- * tabs; once it plays, nothing blocks. */
+ * player_snapshot. A track's network steps (token, access point, audio
+ * key) run in a preparation thread that player_pump polls, so the input
+ * and the screens keep answering while they take their time. Only a
+ * session going away waits for them. */
 
 /* Everything one track holds; zeroed between tracks. */
 typedef struct {
-	download_job job;
 	ndspWaveBuf waves[PLAYER_WAVE_BUFFERS];
 	bool wave_submitted[PLAYER_WAVE_BUFFERS];
 	uint8_t *input;
@@ -269,6 +269,8 @@ typedef struct {
 	int decoded_samples;
 	int decoded_offset;
 	stb_vorbis_info info;
+	/* This track's preparation thread has been started. */
+	bool preparing;
 } player_stream;
 
 typedef struct {
@@ -284,6 +286,33 @@ typedef struct {
 } player_engine;
 
 static player_engine player;
+
+/* A track's network steps, off the main thread: everything that may wait
+ * on the network before the first byte of audio. One at a time: a skipped
+ * track's preparation is left to finish ("abandoned") and reaped, and the
+ * next one only starts after it, so two never touch the session at once. */
+typedef struct {
+	spotify_session *session;
+	sp_track track;          /* a copy: the queue may change meanwhile */
+	track_stream stream;     /* out, taken by the player when it is used */
+	char error[256];
+	int rc;                  /* 0, AP_KEY_REFUSED or -1 */
+	volatile str_id stage;   /* what it is doing, for the Playing tab */
+	volatile bool done;
+	bool abandoned;          /* main thread: nobody wants the result */
+	Thread thread;
+} prepare_job;
+static prepare_job prep;
+#define PREPARE_STACK (64 * 1024)
+
+/* The current track's audio download. Not part of player_stream: its
+ * worker holds this address, and a skipped track's download is left to
+ * notice `stop` ("abandoned") and reaped later rather than waited for.
+ * The next track only starts preparing once it is gone, so there is never
+ * more than one, nor two audio buffers at once. */
+static download_job dl;
+static bool dl_abandoned;
+
 /* The queue came from the results on screen, so the list follows it. */
 static bool queue_from_results;
 
@@ -307,35 +336,102 @@ static void player_stage(str_id stage)
 	frame();
 }
 
-static void download_stop_join(download_job *job)
+/* Joins the download (it has returned, or never started) and frees its
+ * buffer. */
+static void download_reap(void)
 {
-	if (!job->thread)
-		return;
-	job->stop = true;
-	/* Waiting on the request in flight: the tab says so. */
-	if (!job->done)
-		player.phase = PLAYER_PHASE_LOADING;
-	while (!job->done && aptMainLoop())
+	__sync_synchronize();
+	if (dl.thread) {
+		threadJoin(dl.thread, U64_MAX);
+		threadFree(dl.thread);
+	}
+	if (dl.stream.data)
+		secure_clear(dl.stream.data, dl.stream.len);
+	track_stream_free(&dl.stream);
+	secure_clear(&dl, sizeof(dl));
+	dl_abandoned = false;
+}
+
+/* The session is going away: the download must be over. */
+static void download_wait(void)
+{
+	dl.stop = true;
+	while (dl.thread && !dl.done && aptMainLoop())
 		player_stage(STR_PLAYER_DOWNLOAD_CANCELLING);
-	threadJoin(job->thread, U64_MAX);
-	threadFree(job->thread);
-	job->thread = NULL;
+	download_reap();
+}
+
+static void prepare_worker(void *arg)
+{
+	prepare_job *job = arg;
+	job->stage = STR_AP_AUTHENTICATING;
+	ap_session *ap = open_playback_ap(job->session, job->error,
+	                                  sizeof(job->error));
+	if (!ap) {
+		job->rc = -1;
+	} else {
+		job->stage = STR_PLAYER_AUDIO_KEY;
+		job->rc = track_stream_begin_cached(job->session->host,
+		                                    job->session->library_token,
+		                                    ap, &job->track, NULL,
+		                                    &job->stream, job->error,
+		                                    sizeof(job->error));
+		ap_close(ap);
+	}
+	__sync_synchronize();
+	job->done = true;
+}
+
+/* Joins a finished preparation (it costs nothing then) and frees whatever
+ * of its result nobody took. */
+static void prepare_reap(void)
+{
+	__sync_synchronize();
+	threadJoin(prep.thread, U64_MAX);
+	threadFree(prep.thread);
+	track_stream_free(&prep.stream);
+	secure_clear(&prep, sizeof(prep));
+}
+
+/* The session is going away: the preparation must be over before it is
+ * cleared. The only place that waits for it. */
+static void prepare_wait(void)
+{
+	while (prep.thread && !prep.done && aptMainLoop())
+		player_stage(STR_PLAYER_DOWNLOAD_CANCELLING);
+	if (prep.thread)
+		prepare_reap();
 }
 
 /* Frees what the current track holds, in this order, and forgets it. */
 static void player_release(void)
 {
 	player_stream *s = &player.s;
-	download_stop_join(&s->job);
+	/* A preparation still on the network is not waited for: it is left
+	 * to finish and reaped by player_pump. */
+	if (prep.thread) {
+		if (prep.done)
+			prepare_reap();
+		else
+			prep.abandoned = true;
+	}
+	/* Same for the download: asked to stop, it is reaped by player_pump
+	 * once its request in flight lets it notice. An abandoned one is not
+	 * this track's. */
+	if (!dl_abandoned) {
+		if (dl.thread && !dl.done) {
+			dl.stop = true;
+			dl_abandoned = true;
+		} else {
+			download_reap();
+		}
+	}
 	if (s->decoder)
 		stb_vorbis_close(s->decoder);
 	if (s->ndsp_ready) {
 		ndspChnWaveBufClear(0);
 		ndspExit();
 	}
-	if (s->job.stream.data)
-		secure_clear(s->job.stream.data, s->job.stream.len);
-	track_stream_free(&s->job.stream);
 	if (s->input) {
 		secure_clear(s->input, PLAYER_INPUT_CAPACITY);
 		free(s->input);
@@ -385,14 +481,51 @@ static void player_play(spotify_session *session, int index)
 		view_results_focus(index);
 }
 
-/* The network steps of a track, once its cover is in. */
+/* Starts the track's preparation thread. Not while a skipped track's is
+ * still running, nor a skipped track's download, nor while the thumbnails
+ * finish their last request (they must not compete with the preparation,
+ * STYLES.md 9): it waits, a frame at a time, without blocking. */
+static void player_start_prepare(void)
+{
+	player.stage = STR_PLAYER_AUDIO_PREPARING;
+	if (prep.thread || dl.thread || thumbs_stopping())
+		return;
+	memset(&prep, 0, sizeof(prep));
+	prep.session = player.session;
+	prep.track = playback_queue[player.index];
+	prep.stage = STR_PLAYER_AUDIO_PREPARING;
+	prep.thread = threadCreate(prepare_worker, &prep, PREPARE_STACK,
+	                           background_priority(), -2, false);
+	if (!prep.thread) {
+		player_fail(tr(STR_ERR_DOWNLOAD_THREAD));
+		return;
+	}
+	player.s.preparing = true;
+}
+
+/* Once the preparation has finished, takes its stream and sets the audio up.
+ * Nothing here waits on the network. */
 static void player_begin_audio(void)
 {
 	player_stream *s = &player.s;
-	const sp_track *selected = &playback_queue[player.index];
-	char error[256] = {0};
+	char error[256];
+	/* `done` was seen: the worker's writes before it are visible. */
+	__sync_synchronize();
+	int rc = prep.rc;
+	snprintf(error, sizeof(error), "%s", prep.error);
+	/* The stream is the player's from here: player_release frees it. */
+	dl.stream = prep.stream;
+	memset(&prep.stream, 0, sizeof(prep.stream));
+	prepare_reap();
+	if (rc != 0) {
+		if (rc == AP_KEY_REFUSED)
+			snprintf(error, sizeof(error), "%s", tr(STR_ERR_KEY_REFUSED));
+		else if (!error[0])
+			snprintf(error, sizeof(error), "%s", tr(STR_ERR_AP_SESSION));
+		player_fail(error);
+		return;
+	}
 
-	player_stage(STR_PLAYER_AUDIO_PREPARING);
 	if (R_FAILED(ndspInit())) {
 		player_fail(tr(STR_ERR_NDSP));
 		return;
@@ -413,30 +546,11 @@ static void player_begin_audio(void)
 		s->waves[i].status = NDSP_WBUF_DONE;
 	}
 
-	player_stage(STR_AP_AUTHENTICATING);
-	ap_session *ap = open_playback_ap(player.session, error, sizeof(error));
-	if (!ap) {
-		player_fail(error);
-		return;
-	}
-
-	player_stage(STR_PLAYER_AUDIO_KEY);
-	int rc = track_stream_begin_cached(player.session->host,
-	                                   player.session->library_token,
-	                                   ap, selected, NULL, &s->job.stream,
-	                                   error, sizeof(error));
-	ap_close(ap);
-	if (rc != 0) {
-		if (rc == AP_KEY_REFUSED)
-			snprintf(error, sizeof(error), "%s", tr(STR_ERR_KEY_REFUSED));
-		player_fail(error);
-		return;
-	}
 	s->source_pos = SPOTIFY_OGG_HEADER;
 
-	s->job.thread = threadCreate(download_worker, &s->job, 32 * 1024,
-	                             background_priority(), -2, false);
-	if (!s->job.thread) {
+	dl.thread = threadCreate(download_worker, &dl, 32 * 1024,
+	                         background_priority(), -2, false);
+	if (!dl.thread) {
 		player_fail(tr(STR_ERR_DOWNLOAD_THREAD));
 		return;
 	}
@@ -511,13 +625,13 @@ static pump_step pump_once(void)
 	}
 
 	__sync_synchronize();
-	size_t available = s->job.stream.downloaded;
-	if (s->job.stream.data && available > s->source_pos &&
+	size_t available = dl.stream.downloaded;
+	if (dl.stream.data && available > s->source_pos &&
 	    s->input_len < PLAYER_INPUT_CAPACITY) {
 		size_t copy = available - s->source_pos;
 		if (copy > PLAYER_INPUT_CAPACITY - s->input_len)
 			copy = PLAYER_INPUT_CAPACITY - s->input_len;
-		memcpy(s->input + s->input_len, s->job.stream.data + s->source_pos,
+		memcpy(s->input + s->input_len, dl.stream.data + s->source_pos,
 		       copy);
 		s->input_len += copy;
 		s->source_pos += copy;
@@ -609,13 +723,13 @@ static pump_step pump_once(void)
 	}
 
 	__sync_synchronize();
-	available = s->job.stream.downloaded;
-	bool no_more_data = s->job.done && s->source_pos >= available &&
+	available = dl.stream.downloaded;
+	bool no_more_data = dl.done && s->source_pos >= available &&
 	                    (!s->decoder_open || decoder_needs_more);
 	if (no_more_data && !s->eof) {
-		if (s->job.stream.dl_failed) {
+		if (dl.stream.dl_failed) {
 			snprintf(error, sizeof(error), tr(STR_ERR_DOWNLOAD_FAILED_FMT),
-			         s->job.stream.dl_err);
+			         dl.stream.dl_err);
 			return pump_end(false, error);
 		}
 		if (!s->decoder_open)
@@ -653,9 +767,22 @@ static pump_step pump_once(void)
  * VBlank only comes once the DSP has its cushion. */
 static void player_pump(void)
 {
+	/* A skipped track's preparation or download that has finished: nobody
+	 * wants it. */
+	if (prep.thread && prep.abandoned && prep.done)
+		prepare_reap();
+	if (dl_abandoned && dl.done)
+		download_reap();
 	if (player.phase == PLAYER_PHASE_LOADING) {
-		if (!artwork_pending(&cover_art))
-			player_begin_audio();
+		if (artwork_pending(&cover_art))
+			return;
+		if (!player.s.preparing) {
+			player_start_prepare();
+		} else if (!prep.abandoned) {
+			player.stage = prep.stage;
+			if (prep.done)
+				player_begin_audio();
+		}
 		return;
 	}
 	if (player.phase != PLAYER_PHASE_PLAYING)
@@ -698,17 +825,19 @@ static void player_hold(bool hold)
 static void player_stop(void)
 {
 	player_release();
+	prepare_wait();
+	download_wait();
 	player.phase = PLAYER_PHASE_IDLE;
 	player.error[0] = '\0';
 }
 
-/* The audio download, or the network steps before it, are running: the
- * thumbnails wait (STYLES.md 9). */
-static bool player_downloading(void)
+/* The track's network steps are running (token, access point, audio key):
+ * the thumbnails wait (STYLES.md 9). During the audio download itself they
+ * go on: a 64 px cover is a few KB next to megabytes of audio, and the
+ * list would otherwise stay empty for the whole download. */
+static bool player_preparing(void)
 {
-	if (player.phase == PLAYER_PHASE_LOADING)
-		return true;
-	return player.phase == PLAYER_PHASE_PLAYING && !player.s.job.done;
+	return player.phase == PLAYER_PHASE_LOADING;
 }
 
 static unsigned player_elapsed(void)
@@ -738,11 +867,12 @@ static unsigned player_elapsed(void)
 static player_info player_snapshot(void)
 {
 	const sp_track *track = player_track();
-	player_stream *s = &player.s;
-	unsigned percent = s->job.stream.total
-	                   ? (unsigned)(s->job.stream.downloaded * 100 /
-	                                s->job.stream.total) : 0;
-	if ((s->job.done && s->job.stream.dl_done) ||
+	/* An abandoned download is the skipped track's, not this one's. */
+	const download_job *job = dl_abandoned ? NULL : &dl;
+	unsigned percent = job && job->stream.total
+	                   ? (unsigned)(job->stream.downloaded * 100 /
+	                                job->stream.total) : 0;
+	if ((job && job->done && job->stream.dl_done) ||
 	    player.phase == PLAYER_PHASE_FINISHED)
 		percent = 100;
 	unsigned duration = track && track->duration_ms > 0
@@ -1020,8 +1150,8 @@ static void prepare_queue(void)
  * the list follows it. */
 static void play_from_results(spotify_session *session, int index)
 {
-	/* The thumbnails must not compete with the audio download
-	 * (STYLES.md 9); they resume, kept, once it is done. */
+	/* The thumbnails must not compete with the track's preparation
+	 * (STYLES.md 9); they resume, kept, once its download starts. */
 	view_results_allow_thumbs(false);
 	prepare_queue();
 	queue_from_results = true;
@@ -1077,10 +1207,9 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		search_poll();
-		/* Not stopped on leaving the tab: joining the worker would block
-		 * this thread, and the audio with it, for a whole request. It
-		 * only fetches the rows on screen and the next ones anyway. */
-		view_results_allow_thumbs(!player_downloading());
+		/* Not stopped on leaving the tab: it only fetches the rows on
+		 * screen and the next ones anyway. */
+		view_results_allow_thumbs(!player_preparing());
 
 		int next = tabbar_update(down, held, up);
 		if (next >= 0) {
@@ -1193,9 +1322,15 @@ static tabs_exit run_tabs(spotify_session *session)
 /* Leaving the tabs: no audio, search or thumbnails survive the session. */
 static void stop_tabs(void)
 {
+	/* Every worker's network wait fails within TLS_ABORT_SLICE_MS, so the
+	 * joins below take a moment, not a whole connection's timeout. */
+	tls_set_abort(true);
 	player_stop();
 	search_stop();
-	thumbs_stop();
+	/* Waits: after this the session, TLS and sockets may go away, and a
+	 * thumbnail request still in flight would use them freed. */
+	thumbs_wait();
+	tls_set_abort(false);
 	active_view = VIEW_TEXT;
 }
 

@@ -64,23 +64,57 @@ static void artwork_worker(void *arg)
 	artwork->done = true;
 }
 
-void artwork_request(artwork_state *artwork, const char *url)
+/* Joins a worker that has returned (free then) and drops its result. */
+static void drop_finished_worker(artwork_state *artwork)
 {
-	artwork_close(artwork);
-	artwork->dirty = true;
+	__sync_synchronize();
+	threadJoin(artwork->thread, U64_MAX);
+	threadFree(artwork->thread);
+	artwork->thread = NULL;
+	free(artwork->worker_texels);
+	artwork->worker_texels = NULL;
+	artwork->worker_width = artwork->worker_height = 0;
+	artwork->done = false;
+}
+
+static void start_fetch(artwork_state *artwork, const char *url)
+{
 	if (!art_url_allowed(url) || strlen(url) >= sizeof(artwork->url))
 		return;
-
 	snprintf(artwork->url, sizeof(artwork->url), "%s", url);
+	artwork->done = false;
 	artwork->thread = threadCreate(artwork_worker, artwork, 32 * 1024,
 	                               background_priority(), -2, false);
 	if (!artwork->thread)
 		artwork->url[0] = '\0';
 }
 
+void artwork_request(artwork_state *artwork, const char *url)
+{
+	if (!url)
+		url = "";
+	/* The old cover goes now, whatever the worker is doing. */
+	if (artwork->has_texture) {
+		C3D_TexDelete(&artwork->tex);
+		artwork->has_texture = false;
+	}
+	artwork->dirty = true;
+	artwork->has_next = false;
+	if (artwork->thread && !artwork->done) {
+		/* Joining would block the main thread, and the input with it,
+		 * for the whole download: the request waits its turn. */
+		snprintf(artwork->next_url, sizeof(artwork->next_url), "%s", url);
+		artwork->has_next = true;
+		return;
+	}
+	if (artwork->thread)
+		drop_finished_worker(artwork);
+	start_fetch(artwork, url);
+}
+
 bool artwork_pending(const artwork_state *artwork)
 {
-	return artwork->thread && !artwork->done;
+	return (artwork->thread && !artwork->done) || artwork->has_next;
 }
 
 static void upload(artwork_state *artwork)
@@ -107,6 +141,13 @@ void artwork_poll(artwork_state *artwork)
 {
 	if (!artwork->thread || !artwork->done)
 		return;
+	if (artwork->has_next) {
+		/* A newer request was waiting for this download to end. */
+		drop_finished_worker(artwork);
+		artwork->has_next = false;
+		start_fetch(artwork, artwork->next_url);
+		return;
+	}
 
 	__sync_synchronize();
 	threadJoin(artwork->thread, U64_MAX);

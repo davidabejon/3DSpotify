@@ -1,5 +1,7 @@
 #include "cfg3ds.h"
 
+#include <3ds.h>
+
 #include <dirent.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,6 +16,11 @@
 #define CFG_VAL_MAX 512
 
 static char path[320];
+/* The file is read and rewritten whole, through one fixed temp file: the
+ * main thread (the language) and the player's preparation thread (a renewed
+ * refresh token) must not do it at once. 1 is LightLock_Init's unlocked
+ * value, so the lock works before anything has run. */
+static LightLock file_lock = 1;
 
 void cfg_set_path(const char *argv0)
 {
@@ -77,7 +84,7 @@ void cfg_dir(char *out, size_t outlen)
 		out[0] = '\0';
 }
 
-bool cfg_get(const char *key, char *out, size_t outlen)
+static bool get_unlocked(const char *key, char *out, size_t outlen)
 {
 	FILE *f = fopen(cfg_path(), "r");
 	if (!f)
@@ -109,7 +116,7 @@ bool cfg_get(const char *key, char *out, size_t outlen)
  * that is interrupted -- a closed lid, a yanked card, a full filesystem --
  * would then leave no usable token at all and force the user to pair again.
  * The temp-file-plus-rename is the step that cannot half-happen. */
-bool cfg_set(const char *key, const char *value)
+static bool set_unlocked(const char *key, const char *value)
 {
 	if (!key || !value || !value[0])
 		return false;
@@ -172,6 +179,22 @@ bool cfg_set(const char *key, const char *value)
 	return true;
 }
 
+bool cfg_get(const char *key, char *out, size_t outlen)
+{
+	LightLock_Lock(&file_lock);
+	bool found = get_unlocked(key, out, outlen);
+	LightLock_Unlock(&file_lock);
+	return found;
+}
+
+bool cfg_set(const char *key, const char *value)
+{
+	LightLock_Lock(&file_lock);
+	bool ok = set_unlocked(key, value);
+	LightLock_Unlock(&file_lock);
+	return ok;
+}
+
 bool cfg_load_refresh_token(char *out, size_t outlen)
 {
 	return cfg_get("refresh_token", out, outlen);
@@ -200,5 +223,8 @@ bool cfg_save_profile_art(const char *url)
 
 bool cfg_clear(void)
 {
-	return remove(cfg_path()) == 0;
+	LightLock_Lock(&file_lock);
+	bool ok = remove(cfg_path()) == 0;
+	LightLock_Unlock(&file_lock);
+	return ok;
 }

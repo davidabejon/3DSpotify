@@ -38,9 +38,15 @@ typedef struct {
 	Tex3DS_SubTexture subtex;
 	bool has_texture;
 	bool dirty;
+	/* A request made while the worker was still busy: it starts once the
+	 * worker returns, so requesting never waits for a download. */
+	char next_url[128];
+	bool has_next;
 } artwork_state;
 
-/* Drops the current image and starts loading `url` (i.scdn.co only). */
+/* Drops the current image and starts loading `url` (i.scdn.co only). It
+ * never waits: with a download still running, `url` is queued and starts
+ * from artwork_poll once that one has returned (its result is dropped). */
 void artwork_request(artwork_state *artwork, const char *url);
 bool artwork_pending(const artwork_state *artwork);
 /* Uploads a finished download. Call once per frame on the main thread. */

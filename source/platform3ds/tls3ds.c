@@ -242,10 +242,40 @@ static int remaining_ms(TickCounter *t, int timeout_ms)
 	return left > 0 ? (int)left : 0;
 }
 
+static volatile bool aborting;
+
+void tls_set_abort(bool on)
+{
+	aborting = on;
+	__sync_synchronize();
+}
+
+bool tls_aborting(void)
+{
+	return aborting;
+}
+
+/* poll() in slices, so tls_set_abort can cut the wait short: -1 then. */
+static int poll_abortable(const char *host, const char *stage,
+                          struct pollfd *p, int timeout_ms)
+{
+	TickCounter t;
+	osTickCounterStart(&t);
+	for (;;) {
+		if (aborting)
+			return -1;
+		int left = remaining_ms(&t, timeout_ms);
+		int slice = left < TLS_ABORT_SLICE_MS ? left : TLS_ABORT_SLICE_MS;
+		int n = trace_poll(host, stage, p, slice);
+		if (n != 0 || left <= TLS_ABORT_SLICE_MS)
+			return n;
+	}
+}
+
 static int wait_io(tls_conn *c, short events)
 {
 	struct pollfd p = { .fd = c->fd, .events = events };
-	int n = trace_poll(c->host, "tls", &p, c->timeout_ms);
+	int n = poll_abortable(c->host, "tls", &p, c->timeout_ms);
 	if (n == 0)
 		return MBEDTLS_ERR_SSL_TIMEOUT;
 	if (n < 0)
@@ -277,7 +307,7 @@ static int bio_send(void *ctx, const unsigned char *buf, size_t len)
 		if (left == 0)
 			return MBEDTLS_ERR_SSL_TIMEOUT;
 		struct pollfd p = { .fd = c->fd, .events = POLLOUT };
-		int rc = trace_poll(c->host, "tls-send", &p, left);
+		int rc = poll_abortable(c->host, "tls-send", &p, left);
 		if (rc == 0 || remaining_ms(&deadline, c->timeout_ms) == 0)
 			return MBEDTLS_ERR_SSL_TIMEOUT;
 		if (rc < 0 || (p.revents & (POLLERR | POLLHUP | POLLNVAL)))
@@ -390,6 +420,11 @@ static int dial(const char *host, u16 port, int timeout_ms,
 			goto fail;
 		}
 		for (;;) {
+			if (aborting) {
+				snprintf(err, errlen, "cancelled connecting to %s:%u",
+				         host, port);
+				goto fail;
+			}
 			left = remaining_ms(&t, timeout_ms);
 			if (left == 0) {
 				snprintf(err, errlen, "TCP timeout for %s:%u", host, port);

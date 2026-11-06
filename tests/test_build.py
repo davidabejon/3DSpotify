@@ -353,7 +353,8 @@ class BuildTests(unittest.TestCase):
                         play.index("player_play(session, index);"))
         loop = app[app.index("static tabs_exit run_tabs("):
                    app.index("static void stop_tabs(")]
-        self.assertIn("view_results_allow_thumbs(!player_downloading());",
+        # Paused while the track prepares, not for the whole download.
+        self.assertIn("view_results_allow_thumbs(!player_preparing());",
                       loop)
         # Joining a worker blocks the decoder: the track pauses meanwhile.
         stop_search = app[app.index("static void search_stop(void)"):
@@ -361,7 +362,7 @@ class BuildTests(unittest.TestCase):
         self.assertLess(stop_search.index("player_hold(true);"),
                         stop_search.index("search_join();"))
         stop = app[app.index("static void stop_tabs("):]
-        self.assertIn("thumbs_stop();", stop[:stop.index("\n}\n")])
+        self.assertIn("thumbs_wait();", stop[:stop.index("\n}\n")])
         results_src = (ui_dir / "view_results.c").read_text(encoding="utf-8")
         allow = results_src[results_src.index(
             "void view_results_allow_thumbs("):]
@@ -463,14 +464,19 @@ class BuildTests(unittest.TestCase):
         self.assertIn("next >= 0 && next < count", logic)
         cleanup = app[app.index("static void player_release(void)"):
                       app.index("static void player_fail(")]
+        # The download is stopped (or abandoned) before the decoder and the
+        # DSP go; its buffer is freed when the worker is reaped.
         cleanup_steps = [
-            "download_stop_join(&s->job);",
+            "dl.stop = true;",
             "stb_vorbis_close(s->decoder);",
             "ndspChnWaveBufClear(0);",
-            "track_stream_free(&s->job.stream);",
         ]
         offsets = [cleanup.index(step) for step in cleanup_steps]
         self.assertEqual(offsets, sorted(offsets))
+        reap = app[app.index("static void download_reap(void)"):
+                   app.index("static void download_wait(void)")]
+        self.assertLess(reap.index("threadJoin(dl.thread"),
+                        reap.index("track_stream_free(&dl.stream);"))
 
     def test_playing_tab_keeps_audio_running_and_redraws_sparingly(self):
         ui_dir = build.ROOT / "ui"
@@ -689,6 +695,90 @@ class BuildTests(unittest.TestCase):
         for gone in ("query_title_text", "range_text", "detail_title",
                      "error_detail_text", "header_text"):
             self.assertNotIn(gone, results)
+
+    def test_loading_a_track_never_blocks_the_main_thread(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        # The network steps run in the preparation thread, polled per frame.
+        worker = app[app.index("static void prepare_worker("):
+                     app.index("static void prepare_reap(")]
+        self.assertIn("open_playback_ap(job->session", worker)
+        self.assertIn("track_stream_begin_cached(", worker)
+        self.assertEqual(app.count("open_playback_ap("), 2)  # def + worker
+        self.assertEqual(app.count("track_stream_begin_cached("), 1)
+        self.assertIn("threadCreate(prepare_worker, &prep, PREPARE_STACK,", app)
+        pump = app[app.index("static void player_pump(void)"):
+                   app.index("static void player_toggle(void)")]
+        self.assertIn("player_begin_audio();", pump)
+        self.assertIn("if (prep.done)", pump)
+        begin = app[app.index("static void player_begin_audio(void)"):
+                    app.index("static int free_wave_index(")]
+        self.assertNotIn("player_stage(", begin)
+        # A skipped track's preparation is abandoned, not waited for; only
+        # a session going away waits.
+        release = app[app.index("static void player_release(void)"):
+                      app.index("static void player_fail(")]
+        self.assertIn("prep.abandoned = true;", release)
+        # The same for a download: skipping never waits for its request.
+        self.assertIn("dl_abandoned = true;", release)
+        self.assertNotIn("download_wait(", release)
+        self.assertNotIn("download_stop_join", app)
+        self.assertIn("if (dl_abandoned && dl.done)\n\t\tdownload_reap();",
+                      pump)
+        # The next track only prepares once the old download is gone.
+        start = app[app.index("static void player_start_prepare(void)"):
+                    app.index("static void player_begin_audio(void)")]
+        self.assertIn("if (prep.thread || dl.thread || thumbs_stopping())",
+                      start)
+        stop = app[app.index("static void player_stop(void)"):
+                   app.index("static bool player_preparing(void)")]
+        self.assertIn("prepare_wait();", stop)
+        self.assertIn("download_wait();", stop)
+        # Neither the thumbnails nor the cover join a busy worker.
+        thumbs = (ui_dir / "thumbs.c").read_text(encoding="utf-8")
+        stop_fn = thumbs[thumbs.index("void thumbs_stop(void)"):
+                         thumbs.index("bool thumbs_stopping(void)")]
+        self.assertNotIn("threadJoin", stop_fn)
+        artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
+        request = artwork[artwork.index("void artwork_request("):
+                          artwork.index("bool artwork_pending(")]
+        self.assertNotIn("artwork_close(", request)
+        self.assertIn("artwork->has_next = true;", request)
+        # Leaving the tabs waits for every worker that may hold a socket,
+        # before the app frees TLS and the sockets: one left running would
+        # use them freed (it crashed the console on START).
+        tabs_stop = app[app.index("static void stop_tabs(void)"):
+                        app.index("static void show_pair_screen(")]
+        for wait in ("player_stop();", "search_stop();", "thumbs_wait();"):
+            self.assertIn(wait, tabs_stop)
+        self.assertNotIn("thumbs_stop();", tabs_stop)
+        # ... and those joins are quick: every network wait is cut short.
+        self.assertLess(tabs_stop.index("tls_set_abort(true);"),
+                        tabs_stop.index("player_stop();"))
+        self.assertLess(tabs_stop.index("thumbs_wait();"),
+                        tabs_stop.index("tls_set_abort(false);"))
+        platform = build.ROOT / "platform3ds"
+        tls = (platform / "tls3ds.c").read_text(encoding="utf-8")
+        wait_tls = tls[tls.index("static int wait_io(tls_conn *c"):
+                       tls.index("static int bio_send(")]
+        self.assertIn("poll_abortable(", wait_tls)
+        self.assertIn('poll_abortable(c->host, "tls-send"', tls)
+        ap = (platform / "ap3ds.c").read_text(encoding="utf-8")
+        self.assertEqual(ap.count("poll(&p, 1, timeout_ms)"), 0)
+        self.assertIn("if (tls_aborting())", ap)
+        done = app.index("done:")
+        for step in ("stop_tabs();", "artwork_close(&cover_art);"):
+            self.assertLess(app.index(step, done),
+                            app.index("tls_global_exit();", done))
+            self.assertLess(app.index(step, done),
+                            app.index("socExit();", done))
+        wait_fn = thumbs[thumbs.index("void thumbs_wait(void)"):
+                         thumbs.index("void thumbs_exit(void)")]
+        self.assertIn("threadJoin(worker, U64_MAX);", wait_fn)
+        # Two threads may write the config file: it is locked.
+        cfg = (build.ROOT / "platform3ds" / "cfg3ds.c").read_text(
+            encoding="utf-8")
+        self.assertEqual(cfg.count("LightLock_Lock(&file_lock);"), 3)
 
     def test_gitignore_keeps_romfs(self):
         ignore = (build.ROOT.parent / ".gitignore").read_text(encoding="utf-8")
