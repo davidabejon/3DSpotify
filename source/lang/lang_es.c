@@ -12,9 +12,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_CHECK_SD_SPACE] = "Comprueba el espacio disponible en la tarjeta SD.",
 	[STR_APP_CLOSING] = "La aplicacion se esta cerrando.",
 	[STR_LABEL_ARTIST] = "Artista",
-	[STR_LABEL_ALBUM] = "Album",
-	[STR_LABEL_DURATION] = "Duracion",
-	[STR_LABEL_QUEUE] = "Cola",
 	[STR_LABEL_CODE] = "Codigo",
 
 	/* Botones. */
@@ -23,9 +20,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_KEYS_RESULTS_EXIT] = "B: resultados   START: salir",
 	[STR_KEYS_EXIT] = "START: salir",
 	[STR_KEYS_PLAYER] = "A: pausa  Izq/Der: pista  Arr/Ab: vol.",
-	[STR_KEYS_SELECTION_PLAY] = "A: reproducir   B: resultados",
-	[STR_KEYS_SELECTION_SEARCH] = "Y: nueva busqueda",
-	[STR_KEYS_SELECTION_SESSION] = "X: sesion   START: salir",
 	[STR_KEYS_STARTUP_RETRY] = "A: reintentar   Y: emparejar",
 
 	/* Vista de inicio. */
@@ -43,7 +37,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_RESULTS_SEARCHING] = "Buscando...",
 	[STR_RESULTS_NEW_SEARCH] = "Buscar otra cosa",
 	[STR_RESULTS_RETRY] = "Reintentar",
-	[STR_HINT_CHOOSE] = "Elegir",
+	[STR_HINT_PLAY] = "Reproducir",
 	[STR_HINT_BACK] = "Volver",
 	[STR_HINT_CANCEL] = "Cancelar",
 	[STR_HINT_RETRY] = "Reintentar",
@@ -109,7 +103,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_ERR_SEARCH_LOAD] = "No se pudieron cargar los resultados.",
 	[STR_ERR_SEARCH_THREAD] = "No se pudo iniciar la tarea de busqueda.",
 	[STR_RESULTS_EMPTY] = "No se encontraron canciones.",
-	[STR_SELECTION_TITLE] = "Cancion seleccionada",
 
 	/* Reproduccion. */
 	[STR_PLAYER_TITLE] = "Reproduccion local",

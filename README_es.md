@@ -76,12 +76,14 @@ sale.
 
 Los resultados muestran cuatro canciones a la vez; la pantalla superior
 muestra los datos de la marcada. Arriba/abajo recorre la lista y L/R salta de
-cuatro en cuatro. Toca una canción para marcarla y tócala otra vez para
-abrirla, o pulsa A. B vuelve e Y inicia otra consulta. Si la búsqueda falla, A
+cuatro en cuatro, o arrastra la lista con el lápiz; la barra del borde
+derecho indica por dónde vas. Toca una canción para marcarla y tócala otra
+vez para reproducirla, o pulsa A. B vuelve e Y inicia otra consulta. Si la búsqueda falla, A
 (o el botón de la pantalla) la repite. B cancela una búsqueda pendiente cuando
 termine la petición de red activa.
 
-A en la pantalla de selección inicia la reproducción local. Durante la
+La canción elegida se reproduce localmente al momento, con el resto de
+resultados como cola. Durante la
 reproducción, la pantalla superior muestra la carátula (o un fondo neutro si
 no está disponible); la inferior muestra la pista y el progreso. A
 pausa/reanuda, izquierda/derecha cambia de pista, arriba/abajo ajusta el

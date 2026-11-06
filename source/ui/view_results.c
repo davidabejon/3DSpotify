@@ -5,6 +5,7 @@
 #include "list_logic.h"
 #include "press_logic.h"
 #include "text_fit.h"
+#include "thumbs.h"
 #include "theme.h"
 
 #include <citro2d.h>
@@ -47,10 +48,13 @@ static char query[QUERY_SIZE];
 static const sp_track *tracks;
 static int count;
 static int selected;
-static int first;
+static int first;       /* first visible row: scroll / LIST_PITCH */
+static int scroll;      /* px; whole rows except while dragging */
 static char error_detail[ERROR_SIZE];
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
+/* Bumped whenever a thumbnail arrives, so the list repaints. */
+static int thumbs_serial;
 
 /* Parsed text. `stale`: content or language changed. */
 static C2D_TextBuf static_buf, row_buf, detail_buf, range_buf, scratch_buf;
@@ -69,7 +73,7 @@ static C2D_Text notice_body_text;
 static C2D_Text error_detail_text;
 static C2D_Text bubble_text;
 static C2D_Text letter_text[GLYPH_COUNT];
-static C2D_Text hint_choose, hint_back, hint_search, hint_cancel, hint_retry;
+static C2D_Text hint_play, hint_back, hint_search, hint_cancel, hint_retry;
 static C2D_Text range_text;
 static C2D_Text row_title[MAX_TRACKS];
 static C2D_Text row_artist[MAX_TRACKS];
@@ -84,6 +88,7 @@ static int press_row_index = -1;
 static press_state press_button;
 static press_state press_glyph[GLYPH_COUNT];
 static touch_track touch = { -1 };
+static list_drag drag;
 static int edge_frames;
 static int edge_dir;
 static int bubble_frames = -1;
@@ -93,7 +98,7 @@ static const press_state *pending_press;
 
 typedef struct {
 	results_mode mode;
-	int selected, first;
+	int selected, first, scroll;
 	int pressed_row;      /* -1: none */
 	bool button;
 	bool glyph[GLYPH_COUNT];
@@ -101,6 +106,7 @@ typedef struct {
 	bool bubble;
 	int loader_step;
 	bool cancelling;
+	int thumbs;
 } results_look;
 static results_look drawn;
 static bool drawn_valid;
@@ -142,6 +148,7 @@ static void reset_interaction(void)
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_reset(&press_glyph[i]);
 	touch.target = -1;
+	drag.down = drag.dragging = false;
 	edge_frames = 0;
 	bubble_frames = -1;
 	loader_frames = 0;
@@ -161,7 +168,7 @@ void view_results_searching(const char *text)
 	set_query(text);
 	mode = MODE_SEARCHING;
 	tracks = NULL;
-	count = selected = first = 0;
+	count = selected = first = scroll = 0;
 	cancelling = false;
 	reset_interaction();
 }
@@ -183,7 +190,11 @@ void view_results_show(const char *text, const sp_track *list, int n,
 	mode = count > 0 ? MODE_LIST : MODE_EMPTY;
 	selected = list_clamp(focus, count);
 	first = list_scroll(0, selected, count, RESULTS_PER_PAGE);
+	scroll = first * LIST_PITCH;
 	reset_interaction();
+	/* Covers: visible rows first (STYLES.md 9). */
+	thumbs_set_tracks(list, count);
+	thumbs_set_window(first);
 }
 
 void view_results_error(const char *text, const char *error, str_id help)
@@ -191,7 +202,7 @@ void view_results_error(const char *text, const char *error, str_id help)
 	set_query(text);
 	mode = MODE_ERROR;
 	tracks = NULL;
-	count = selected = first = 0;
+	count = selected = first = scroll = 0;
 	snprintf(error_detail, sizeof(error_detail), "%s", error ? error : "");
 	advice = help;
 	reset_interaction();
@@ -275,7 +286,7 @@ static void parse_static(void)
 	parse(&bubble_text, static_buf, tr(STR_LANG_NAME));
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		parse(&letter_text[i], static_buf, glyph_letters[i]);
-	parse(&hint_choose, static_buf, tr(STR_HINT_CHOOSE));
+	parse(&hint_play, static_buf, tr(STR_HINT_PLAY));
 	parse(&hint_back, static_buf, tr(STR_HINT_BACK));
 	parse(&hint_search, static_buf, tr(STR_HINT_SEARCH));
 	parse(&hint_cancel, static_buf, tr(STR_HINT_CANCEL));
@@ -365,6 +376,7 @@ static results_look current_look(void)
 		.mode = mode,
 		.selected = selected,
 		.first = first,
+		.scroll = scroll,
 		.pressed_row = press_down(&press_row) ? press_row_index : -1,
 		.button = press_down(&press_button),
 		.edge = edge_frames > 0 ? edge_dir * EDGE_SHIFT : 0,
@@ -372,6 +384,7 @@ static results_look current_look(void)
 		.loader_step = mode == MODE_SEARCHING
 		               ? loader_frames / LOADER_STEP : 0,
 		.cancelling = cancelling,
+		.thumbs = thumbs_serial,
 	};
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		look.glyph[i] = press_down(&press_glyph[i]);
@@ -381,10 +394,11 @@ static results_look current_look(void)
 static bool same_look(const results_look *a, const results_look *b)
 {
 	if (a->mode != b->mode || a->selected != b->selected ||
-	    a->first != b->first || a->pressed_row != b->pressed_row ||
+	    a->first != b->first || a->scroll != b->scroll ||
+	    a->pressed_row != b->pressed_row ||
 	    a->button != b->button || a->edge != b->edge ||
 	    a->bubble != b->bubble || a->loader_step != b->loader_step ||
-	    a->cancelling != b->cancelling)
+	    a->cancelling != b->cancelling || a->thumbs != b->thumbs)
 		return false;
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		if (a->glyph[i] != b->glyph[i])
@@ -416,10 +430,32 @@ static void queue(results_action action, const press_state *press)
 	pending_press = press;
 }
 
+/* The buttons: focus `index` and bring the list to whole rows with it in
+ * view (6.6), even when a drag left it cut. */
 static void focus_row(int index)
 {
 	selected = list_clamp(index, count);
-	first = list_scroll(first, selected, count, RESULTS_PER_PAGE);
+	first = list_align(scroll, selected, count);
+	scroll = first * LIST_PITCH;
+	thumbs_set_window(first);
+}
+
+/* 6.9: the list follows the stylus pixel for pixel. */
+static void drag_to(int y)
+{
+	scroll = list_drag_scroll(&drag, y, count);
+	int now_first = scroll / LIST_PITCH;
+	if (now_first != first) {
+		first = now_first;
+		thumbs_set_window(first);
+	}
+}
+
+/* 6.9: on lifting the stylus the list stays where it is, rows cut or not,
+ * and the focus stays on its row even if that is now out of view. */
+static void drag_end(void)
+{
+	drag.down = drag.dragging = false;
 }
 
 /* 6.6: the focus moves in the same frame; at an end, the focused row
@@ -428,12 +464,12 @@ static void move_focus(int delta)
 {
 	bool bumped;
 	int next = list_move(selected, delta, count, &bumped);
+	/* Whole rows again, bumped or not. */
+	focus_row(next);
 	if (bumped) {
 		edge_dir = delta < 0 ? -1 : 1;
 		edge_frames = ANIM_EDGE;
-		return;
 	}
-	focus_row(next);
 }
 
 static bool has_button(void)
@@ -472,11 +508,36 @@ static void release_keys(u32 up)
 static bool handle_touch(u32 down, u32 held, u32 up)
 {
 	int hit = -1;
+	if (mode == MODE_LIST) {
+		if (up & KEY_TOUCH) {
+			bool was_drag = drag.dragging;
+			drag.down = false;
+			if (was_drag) {
+				drag_end();
+				return true;
+			}
+		} else if (held & KEY_TOUCH) {
+			touchPosition pos;
+			hidTouchRead(&pos);
+			if (down & KEY_TOUCH) {
+				list_drag_begin(&drag, pos.py, scroll);
+			} else if (list_drag_update(&drag, pos.py)) {
+				/* A drag is not a tap: the row returns to rest without
+				 * acting (6.4, 6.9). */
+				if (touch.target >= 0) {
+					press_cancel(&press_row);
+					touch.target = -1;
+				}
+				drag_to(pos.py);
+				return true;
+			}
+		}
+	}
 	if (held & KEY_TOUCH) {
 		touchPosition pos;
 		hidTouchRead(&pos);
 		if (mode == MODE_LIST)
-			hit = list_hit_row(pos.px, pos.py, first, count);
+			hit = list_hit_row(pos.px, pos.py, scroll, count);
 		else if (has_button() &&
 		         ui_rect_contains(button_rect(), pos.px, pos.py))
 			hit = CONTROL_BUTTON;
@@ -504,7 +565,7 @@ static bool handle_touch(u32 down, u32 held, u32 up)
 		else if (control == selected)
 			queue(RESULTS_ACTION_OPEN, press);  /* tap the focused row */
 		else
-			focus_row(control);                 /* tap another: focus */
+			selected = control;  /* tap another: focus, list stays put */
 		break;
 	case TOUCH_NONE:
 		break;
@@ -529,6 +590,9 @@ results_action view_results_update(u32 down)
 	ensure_parsed();
 	tick();
 	release_keys(up);
+	/* Uploads happen here, on the main thread, never while drawing. */
+	if (thumbs_poll())
+		thumbs_serial++;
 
 	if (pending != RESULTS_ACTION_NONE) {
 		if (!press_shown(pending_press))
@@ -548,6 +612,18 @@ results_action view_results_update(u32 down)
 
 	if (handle_touch(down, held, up) || pending != RESULTS_ACTION_NONE)
 		return RESULTS_ACTION_NONE;
+
+	if (mode == MODE_LIST &&
+	    (down & (KEY_UP | KEY_DOWN | KEY_L | KEY_R | KEY_A)) &&
+	    !list_row_whole(selected, scroll, count)) {
+		/* 6.6: with the focus dragged out of view, the first button press
+		 * only brings the list back to it, on whole rows. A still shows
+		 * its glyph pressed, but plays nothing it cannot see. */
+		focus_row(selected);
+		if (down & KEY_A)
+			press_begin(&press_glyph[GLYPH_A]);
+		return RESULTS_ACTION_NONE;
+	}
 
 	if (mode == MODE_LIST) {
 		if (down & KEY_UP)
@@ -589,20 +665,37 @@ bool view_results_dirty(void)
 
 /* --- Drawing ----------------------------------------------------------- */
 
-static void draw_thumb_placeholder(ui_rect row)
+/* 5.3: the cover inside a 1 px `tinta` outline, or, while it loads or when
+ * there is none, `capa_alta` with the note icon. Same size either way, so
+ * nothing moves when the image arrives. `index` < 0: a skeleton row. */
+static void draw_thumb(ui_rect row, int index)
 {
 	ui_rect thumb = list_thumb_rect(row);
 	ui_fill(thumb, COL_TINTA);
-	ui_fill(ui_rect_inset(thumb, OUTLINE_W), COL_CAPA_ALTA);
+	ui_rect inside = ui_rect_inset(thumb, OUTLINE_W);
+	C2D_Image image;
+	if (index >= 0 && thumbs_image(index, &image)) {
+		/* Fitted into the square, centred on whole pixels. */
+		int w = image.subtex->width, h = image.subtex->height;
+		int longest = w > h ? w : h;
+		float scale = (float)inside.w / (float)longest;
+		int shown_w = ui_px_ceil(w * scale), shown_h = ui_px_ceil(h * scale);
+		if (shown_w < inside.w || shown_h < inside.h)
+			ui_fill(inside, COL_CAPA_ALTA);
+		C2D_DrawImageAt(image, inside.x + (inside.w - shown_w) / 2,
+		                inside.y + (inside.h - shown_h) / 2, 0.0f, NULL,
+		                scale, scale);
+		return;
+	}
+	ui_fill(inside, COL_CAPA_ALTA);
 	C2D_Image note = icon_image(ICON_NOTE);
 	ui_icon(&note, thumb.x + (thumb.w - ICON_S) / 2,
 	        thumb.y + (thumb.h - ICON_S) / 2, COL_TEXTO_2);
 }
 
 /* 5.3. `index` < 0 draws an empty skeleton row (searching). */
-static void draw_row(int slot, int index, const results_look *look)
+static void draw_row(ui_rect row, int index, const results_look *look)
 {
-	ui_rect row = list_row_rect(slot);
 	bool focused = index >= 0 && index == look->selected;
 	bool pressed = index >= 0 && index == look->pressed_row;
 	if (focused)
@@ -627,7 +720,7 @@ static void draw_row(int slot, int index, const results_look *look)
 	} else {
 		ui_panel(row);
 	}
-	draw_thumb_placeholder(row);
+	draw_thumb(row, index);
 	if (index < 0)
 		return;
 
@@ -663,7 +756,7 @@ static void draw_bar(const results_look *look)
 	case MODE_SEARCHING:
 		break;
 	case MODE_LIST:
-		a_label = &hint_choose;
+		a_label = &hint_play;
 		break;
 	case MODE_EMPTY:
 		a_label = &hint_search;
@@ -697,17 +790,26 @@ void view_results_draw_bottom(void)
 	case MODE_SEARCHING:
 		/* Skeleton rows: the layout the results will fill. */
 		for (int slot = 0; slot < RESULTS_PER_PAGE; slot++)
-			draw_row(slot, -1, &look);
+			draw_row(list_row_rect(slot), -1, &look);
 		break;
-	case MODE_LIST:
-		/* The focused row last, so its nudge draws over its neighbours. */
-		for (int slot = 0; slot < RESULTS_PER_PAGE; slot++) {
-			int index = first + slot;
-			if (index < count && index != selected)
-				draw_row(slot, index, &look);
+	case MODE_LIST: {
+		/* Mid-drag one more row peeks in at the bottom. The focused row
+		 * goes last, so its nudge draws over its neighbours. */
+		int last = first + RESULTS_PER_PAGE;
+		if (last > count - 1)
+			last = count - 1;
+		for (int index = first; index <= last; index++)
+			if (index != selected)
+				draw_row(list_row_at(index, scroll), index, &look);
+		if (selected >= first && selected <= last)
+			draw_row(list_row_at(selected, scroll), selected, &look);
+		/* 5.11: only when the list does not fit. */
+		if (count > RESULTS_PER_PAGE) {
+			ui_fill(list_scroll_track(), COL_CAPA);
+			ui_fill(list_scroll_thumb(scroll, count), COL_CLOROFILA);
 		}
-		draw_row(selected - first, selected, &look);
 		break;
+	}
 	case MODE_EMPTY: {
 		/* A single message: centred (3.3). */
 		ui_rect notice = list_notice_rect();
@@ -729,7 +831,7 @@ void view_results_draw_bottom(void)
 		          NULL);
 	}
 
-	/* Bars after the rows: a nudged bottom row slides under them. */
+	/* Bars after the rows: nudged and dragged rows slide under them. */
 	draw_header();
 	draw_bar(&look);
 

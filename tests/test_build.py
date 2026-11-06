@@ -241,6 +241,93 @@ class BuildTests(unittest.TestCase):
         self.assertIn("case RESULTS_ACTION_RETRY:", app)
         self.assertIn("search_error_advice(search.error)", app)
 
+    def test_result_thumbnails_follow_style_guide(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("thumbs.c", "thumbs.h", "thumb_queue.h", "art_url.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        for name in ("thumb_queue.h", "art_url.h"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("#include <3ds", source)
+            self.assertNotIn("#include <citro", source)
+        thumbs = (ui_dir / "thumbs.c").read_text(encoding="utf-8")
+        artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
+        # One allow-list for every cover download.
+        self.assertIn("art_url_allowed(", artwork)
+        self.assertNotIn("static bool artwork_url_allowed", artwork)
+        self.assertIn("art_url_path(url)", thumbs)
+        # STYLES.md 9: one keep-alive session, below the decoder's priority.
+        self.assertIn("http_session_open(ART_HOST)", thumbs)
+        self.assertIn("http_session_request(", thumbs)
+        self.assertNotIn("http_get_url(", thumbs)
+        self.assertIn("background_priority()", thumbs)
+        # A fixed pool made once, filled on the main thread; nothing
+        # allocated per thumbnail; no citro3d in the worker.
+        self.assertNotIn("malloc", thumbs)
+        self.assertNotIn("calloc", thumbs)
+        worker = thumbs[thumbs.index("static bool fetch("):
+                        thumbs.index("/* --- Main thread")]
+        for call in ("C3D_", "C2D_", "linearAlloc"):
+            self.assertNotIn(call, worker)
+        self.assertIn("C3D_TexInit(", thumbs[:thumbs.index("static bool fetch(")])
+        # stb_image is still implemented once, in artwork.c.
+        self.assertNotIn("STB_IMAGE_IMPLEMENTATION", thumbs)
+        # Cancelled and joined before playback and on leaving the results.
+        self.assertIn("threadJoin(worker", thumbs)
+        flow = app[app.index("static flow_step results_flow("):
+                   app.index("static void show_pair_screen(")]
+        self.assertLess(flow.index("thumbs_stop();"),
+                        flow.index("play_flow(session, &selected)"))
+        search = flow[flow.index("static bool search_flow("):]
+        self.assertLess(search.index("results_flow(session, query, result)"),
+                        search.index("thumbs_stop();"))
+        self.assertIn("thumbs_init();", app)
+        self.assertLess(app.index("thumbs_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        # The view: uploads on update, a fixed-size slot either way.
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("thumbs_poll()", results)
+        self.assertIn("thumbs_image(index, &image)", results)
+        self.assertIn("thumbs_set_window(first)", results)
+
+    def test_results_play_directly_and_scroll_by_touch(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        lang_dir = build.ROOT / "lang"
+        # No selection screen: the list opens the player.
+        self.assertNotIn("show_selection", app)
+        self.assertNotIn("selection_flow", app)
+        for table in ("lang.h", "lang_en.c", "lang_es.c"):
+            source = (lang_dir / table).read_text(encoding="utf-8")
+            self.assertNotIn("STR_SELECTION_TITLE", source)
+            self.assertNotIn("STR_KEYS_SELECTION_", source)
+        play = app[app.index("static flow_step play_flow("):
+                   app.index("static flow_step results_flow(")]
+        self.assertIn("playback(session, playback_queue", play)
+        self.assertIn("*selected = queue_index;", play)
+        self.assertNotIn("hidKeysDown", play)
+        # Dragging (6.9) and the scroll indicator (5.11).
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("list_drag_begin(&drag", results)
+        self.assertIn("list_drag_update(&drag", results)
+        self.assertIn("press_cancel(&press_row)", results)
+        # A drag may leave rows cut; the buttons align to whole rows.
+        self.assertIn("list_align(scroll, selected, count)", results)
+        # The focus survives a drag (6.9), and the first button press with
+        # it out of view only brings the list back to it (6.6).
+        drag_end = results[results.index("static void drag_end(void)"):]
+        drag_end = drag_end[:drag_end.index("\n}\n")]
+        for change in ("list_snap", "scroll =", "selected ="):
+            self.assertNotIn(change, drag_end)
+        self.assertIn("!list_row_whole(selected, scroll, count)", results)
+        self.assertNotIn("list_keep_visible", results)
+        self.assertIn("list_scroll_thumb(scroll, count)", results)
+        self.assertIn("list_hit_row(pos.px, pos.py, scroll, count)", results)
+        style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
+            encoding="utf-8")
+        self.assertIn("### 5.11 Indicador de desplazamiento", style)
+        self.assertIn("### 6.9 Arrastre en listas", style)
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(

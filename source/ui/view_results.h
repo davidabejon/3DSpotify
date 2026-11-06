@@ -1,14 +1,16 @@
 /* The results view (docs/STYLES.md 5.3 and 7.4): the search in progress,
  * the list of tracks, no results, or the error, all in one view.
  *
- * Bottom screen: 4 rows of ROW_H with a thumbnail square (the image itself
- * arrives in F4; until then the placeholder of 5.3), scrolled just enough to
- * keep the focused row visible. Top screen: the query and the focused
+ * Bottom screen: 4 rows of ROW_H with the cover thumbnail (thumbs.h; the
+ * placeholder of 5.3 until it arrives), scrolled just enough to keep the
+ * focused row visible. Top screen: the query and the focused
  * track's details, or the loading indicator while searching.
  *
  * Input follows STYLES.md 6: pressed states for at least ANIM_PRESS_MIN
  * frames, touch acts on lifting the stylus (tapping a row focuses it,
- * tapping the focused row opens it), A/B/Y invert their glyph, and the
+ * tapping the focused row plays it), dragging scrolls the list (6.9) next
+ * to a scroll indicator against the right edge (5.11), A/B/Y invert their
+ * glyph, and the
  * actions that leave the view are returned once the pressed state has been
  * seen. Text is parsed when the content, the scroll position or the
  * language changes, never per frame. Main thread only. */
@@ -24,7 +26,7 @@
 
 typedef enum {
 	RESULTS_ACTION_NONE,
-	/* A or a tap on the focused row: open view_results_selected(). */
+	/* A or a tap on the focused row: play view_results_selected(). */
 	RESULTS_ACTION_OPEN,
 	/* B: back to the home view. */
 	RESULTS_ACTION_BACK,

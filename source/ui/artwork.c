@@ -1,5 +1,6 @@
 #include "artwork.h"
 
+#include "art_url.h"
 #include "http3ds.h"
 #include "image_util.h"
 #include "ui.h"
@@ -23,21 +24,6 @@
 #define ART_BORDER 4.0f
 
 #define TEXEL_BYTES ((size_t)ARTWORK_TEX_SIZE * ARTWORK_TEX_SIZE * 4)
-
-static bool artwork_url_allowed(const char *url)
-{
-	static const char prefix[] = "https://i.scdn.co/";
-	const size_t prefix_len = sizeof(prefix) - 1;
-	if (!url || strncmp(url, prefix, prefix_len) != 0 ||
-	    url[prefix_len] == '\0')
-		return false;
-
-	for (const unsigned char *p = (const unsigned char *)url + prefix_len;
-	     *p; p++)
-		if (*p <= 0x20 || *p > 0x7e || *p == '\\' || *p == '#')
-			return false;
-	return true;
-}
 
 /* Pure CPU work only: no citro3d and no linearAlloc off the main thread. */
 static void artwork_worker(void *arg)
@@ -81,7 +67,7 @@ void artwork_request(artwork_state *artwork, const char *url)
 {
 	artwork_close(artwork);
 	artwork->dirty = true;
-	if (!artwork_url_allowed(url) || strlen(url) >= sizeof(artwork->url))
+	if (!art_url_allowed(url) || strlen(url) >= sizeof(artwork->url))
 		return;
 
 	snprintf(artwork->url, sizeof(artwork->url), "%s", url);

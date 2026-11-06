@@ -1,12 +1,17 @@
-/* Layout, scrolling and hit testing of the results view (docs/STYLES.md
- * 5.3, 6.6 and 7.4). Pure C with no 3DS headers, tested in
+/* Layout, scrolling, dragging and hit testing of the results view
+ * (docs/STYLES.md 5.3, 5.11, 6.6, 6.9 and 7.4). Pure C with no 3DS headers, tested in
  * tests/native_logic_test.c. Whole pixels throughout.
  *
  * Bottom screen, 320 x 240:
  *   header    0..24   panel: title on the left, "1-4 of 24" on the right
- *   rows     28..216  4 rows of ROW_H, SP_1 apart (and SP_1 under the
- *                     header): exactly the 192 px between the bars
+ *   rows     28..212  4 rows of ROW_H, SP_1 apart, with SP_1 under the
+ *                     header and SP_1 over the button bar: exactly the
+ *                     192 px between the bars
+ *   scroll  316..320  the scroll indicator, against the right edge
  *   hints   216..240  button bar
+ * `scroll` is the pixel offset of the list and the first (possibly cut)
+ * visible row is scroll / LIST_PITCH. A drag may leave rows cut at either
+ * end; the buttons bring the list back to whole rows (6.6, 6.9).
  * The empty and error states put a message, or a notice, and one button
  * in the same space. */
 #ifndef LIST_LOGIC_H
@@ -21,6 +26,8 @@
 
 /* Rows on screen; also how far L/R jump (7.4: RESULTS_PER_PAGE). */
 #define RESULTS_PER_PAGE 4
+/* From one row to the next. */
+#define LIST_PITCH (ROW_H + SP_1)
 
 /* Clamps `selected` into 0..count-1 (0 for an empty list). */
 static inline int list_clamp(int selected, int count)
@@ -110,16 +117,147 @@ static inline int list_text_x(ui_rect row)
 	return row.x + SP_1 + THUMB_SIZE + SP_2;
 }
 
-/* The track under (x, y), or -1: rows only, not the gaps between them. */
-static inline int list_hit_row(int x, int y, int first, int count)
+/* The furthest the list scrolls: its last row at the bottom. */
+static inline int list_max_scroll(int count)
 {
-	for (int slot = 0; slot < RESULTS_PER_PAGE; slot++) {
-		if (first + slot >= count)
-			break;
-		if (ui_rect_contains(list_row_rect(slot), x, y))
-			return first + slot;
+	return count > RESULTS_PER_PAGE
+	       ? (count - RESULTS_PER_PAGE) * LIST_PITCH : 0;
+}
+
+/* Row `index` of the list scrolled by `scroll` px. It may lie partly or
+ * wholly outside the list area; the bars are drawn over it. */
+static inline ui_rect list_row_at(int index, int scroll)
+{
+	ui_rect r = list_row_rect(0);
+	r.y += index * LIST_PITCH - scroll;
+	return r;
+}
+
+/* The track under (x, y), or -1: inside the list area, rows only, not the
+ * gaps between them. */
+static inline int list_hit_row(int x, int y, int scroll, int count)
+{
+	if (y < BAR_H || y >= SCREEN_H - BAR_H)
+		return -1;
+	int offset = y - list_row_rect(0).y + scroll;
+	if (offset < 0)
+		return -1;
+	int index = offset / LIST_PITCH;
+	if (index >= count)
+		return -1;
+	return ui_rect_contains(list_row_at(index, scroll), x, y) ? index : -1;
+}
+
+/* The whole row nearest to `scroll`. */
+static inline int list_snap(int scroll, int count)
+{
+	int first = (scroll + LIST_PITCH / 2) / LIST_PITCH;
+	int max_first = list_max_scroll(count) / LIST_PITCH;
+	if (first > max_first)
+		first = max_first;
+	return first < 0 ? 0 : first;
+}
+
+/* The rows wholly inside the list area at `scroll`. With the list resting
+ * on whole rows that is RESULTS_PER_PAGE of them; cut at both ends, one
+ * fewer. */
+static inline void list_full_rows(int scroll, int count, int *from, int *to)
+{
+	int top = BAR_H;
+	int bottom = SCREEN_H - BAR_H;
+	int r0 = list_row_rect(0).y;
+	/* Row i is whole when r0 + i*P - scroll >= top and its bottom edge
+	 * stays above `bottom`. */
+	int low = scroll + top - r0;
+	*from = low <= 0 ? 0 : (low + LIST_PITCH - 1) / LIST_PITCH;
+	*to = (bottom - ROW_H - r0 + scroll) / LIST_PITCH;
+	if (*to > count - 1)
+		*to = count - 1;
+}
+
+/* Whether row `index` is wholly on screen. A drag can leave the focused
+ * row cut or out of view: it keeps the focus anyway (6.9). */
+static inline bool list_row_whole(int index, int scroll, int count)
+{
+	int from, to;
+	list_full_rows(scroll, count, &from, &to);
+	return index >= from && index <= to;
+}
+
+/* The buttons work on whole rows (6.6): from a list left cut by a drag,
+ * the first whole row that shows `selected` with the least movement. */
+static inline int list_align(int scroll, int selected, int count)
+{
+	return list_scroll(list_snap(scroll, count), selected, count,
+	                   RESULTS_PER_PAGE);
+}
+
+/* Dragging the list (6.9): a touch becomes a drag once the stylus has moved
+ * DRAG_START px vertically; from then on the list follows it pixel for
+ * pixel, without passing either end. */
+typedef struct {
+	bool down;          /* the stylus is on the list */
+	bool dragging;      /* ... and has moved far enough */
+	int start_y;
+	int start_scroll;
+} list_drag;
+
+static inline void list_drag_begin(list_drag *d, int y, int scroll)
+{
+	d->down = true;
+	d->dragging = false;
+	d->start_y = y;
+	d->start_scroll = scroll;
+}
+
+/* True once the touch is a drag. */
+static inline bool list_drag_update(list_drag *d, int y)
+{
+	if (d->down && !d->dragging) {
+		int moved = y - d->start_y;
+		if (moved >= DRAG_START || moved <= -DRAG_START)
+			d->dragging = true;
 	}
-	return -1;
+	return d->dragging;
+}
+
+/* The scroll for the stylus at `y`: the list moves with it. */
+static inline int list_drag_scroll(const list_drag *d, int y, int count)
+{
+	int scroll = d->start_scroll - (y - d->start_y);
+	int max = list_max_scroll(count);
+	if (scroll > max)
+		scroll = max;
+	return scroll < 0 ? 0 : scroll;
+}
+
+/* The scroll indicator (5.11): a track against the right edge of the
+ * screen, between the bars, and a thumb sized and placed in proportion to
+ * the visible part of the list. */
+static inline ui_rect list_scroll_track(void)
+{
+	ui_rect r = { SCREEN_BOTTOM_W - SCROLL_W, BAR_H, SCROLL_W,
+	              SCREEN_H - 2 * BAR_H };
+	return r;
+}
+
+static inline ui_rect list_scroll_thumb(int scroll, int count)
+{
+	ui_rect track = list_scroll_track();
+	if (count <= RESULTS_PER_PAGE)
+		return track;
+	int h = track.h * RESULTS_PER_PAGE / count;
+	if (h < SCROLL_MIN_H)
+		h = SCROLL_MIN_H;
+	int max = list_max_scroll(count);
+	if (scroll < 0)
+		scroll = 0;
+	if (scroll > max)
+		scroll = max;
+	int travel = track.h - h;
+	ui_rect r = { track.x, track.y + (travel * scroll + max / 2) / max,
+	              track.w, h };
+	return r;
 }
 
 /* Empty and error states: a block from the top of the list area and a

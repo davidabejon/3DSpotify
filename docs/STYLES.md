@@ -189,19 +189,19 @@ contorno 1 px `tinta`, sin relieve ni sombra.
 ### 5.3 Fila de lista
 
 ```
- ┌──────────────────────────────────────────┐ 44 px
+ ┌──────────────────────────────────────────┐ 43 px
  │ ┌────┐ Título de la canción...     3:42  │  t_cabeza · texto   /  t_meta · texto_2
- │ │ 36 │                                   │
+ │ │ 35 │                                   │
  │ └────┘ Artista                           │  t_cuerpo · texto_2
  └──────────────────────────────────────────┘
-   4 px  miniatura 36×36, texto a e2 (8 px) de ella
+   4 px  miniatura 35×35, texto a e2 (8 px) de ella
 ```
 
 - Reposo: relleno `capa`, contorno 1 px `tinta`, sin relieve, separación 4 px entre filas.
 - En foco: relleno `clorofila`, banda inferior 2 px `musgo`; título, artista y duración en
   `tinta`.
 - Duración alineada a la derecha, nunca recortada.
-- Miniatura de la carátula (`art_small`, 64 px) a 36×36, a 4 px de los bordes izquierdo,
+- Miniatura de la carátula (`art_small`, 64 px) a 35×35, a 4 px de los bordes izquierdo,
   superior e inferior de la fila, con contorno 1 px `tinta`.
 - Mientras carga o si la pista no tiene carátula: cuadrado `capa_alta` del mismo tamaño con
   el icono de nota (16 px) centrado en `texto_2`. El layout de la fila no cambia cuando llega
@@ -264,6 +264,27 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
   aviso, idioma, nota musical.
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 
+### 5.11 Indicador de desplazamiento
+
+```
+ ┌──────────────────────────┐
+ │ Resultados      1-4 de 24│
+ │┌───────────────────────┐▓│  ▓ = tirador `clorofila`
+ ││┌──┐ Canción     3:42  │▓│  ░ = pista `capa`
+ │└───────────────────────┘░│
+ │ ...                     ░│  4 px, pegado al borde derecho
+ │──────────────────────────│
+```
+
+- Franja de 4 px (`e1`) pegada al borde derecho de la pantalla inferior, entre la cabecera y
+  la barra de botones; queda a 4 px del borde derecho de las filas.
+- Pista: relleno plano `capa`. Tirador: relleno plano `clorofila`. Sin contorno, sin relieve.
+- Alto del tirador proporcional a la parte visible de la lista, con un mínimo de 16 px (`e4`);
+  posición proporcional al desplazamiento.
+- Solo cuando la lista no cabe entera en pantalla.
+- Se actualiza en el mismo frame que el desplazamiento, también durante el arrastre (§6.9).
+- No es un control: no responde al toque.
+
 ---
 
 ## 6. Estados e interacción
@@ -323,6 +344,11 @@ Duración:
 - Al intentar pasar del primer o último elemento: la fila en foco se desplaza 3 px en esa
   dirección durante 6 frames y vuelve. La cola no da la vuelta.
 - El desplazamiento de la lista se aplica sin transición.
+- Si un arrastre dejó filas cortadas (§6.9), la pulsación ajusta antes la lista a filas
+  enteras: con botones siempre se ven 4 filas completas.
+- Si además la fila en foco quedó cortada o fuera de la vista, esa primera pulsación (cruceta,
+  L/R o A) solo devuelve la lista a ella: no mueve el foco ni reproduce. A muestra igualmente
+  su glifo pulsado (§6.5).
 
 ### 6.7 Volumen
 
@@ -333,6 +359,24 @@ Duración:
 
 - El icono del botón central cambia en el mismo frame que el estado de audio.
 - El botón central muestra el estado pulsado (§6.3) tanto con A como con toque.
+
+### 6.9 Arrastre en listas
+
+- Un toque sobre la lista pasa a ser un arrastre cuando el lápiz se desplaza 8 px (`e2`) en
+  vertical desde donde tocó.
+- Al empezar el arrastre, la fila tocada vuelve a reposo en ese frame y no ejecuta su acción
+  (§6.4).
+- Durante el arrastre la lista sigue al lápiz píxel a píxel, sin pasar del primer ni del
+  último elemento. Las filas que entran o salen quedan cortadas por la cabecera y la barra de
+  botones; puede asomar una quinta fila.
+- Al levantar el lápiz, la lista se queda donde está, aunque alguna fila quede cortada por
+  la cabecera o la barra de botones.
+- El foco se queda en su fila aunque el arrastre la corte o la saque de la vista. La ficha
+  de la pantalla superior sigue mostrando esa canción.
+- Tocar una fila, cortada o no, la pone en foco sin mover la lista.
+- En cuanto se usa la cruceta, L/R o A, la lista vuelve a filas enteras (4 a la vista) con la
+  fila en foco visible, en el mismo frame y sin transición (§6.6).
+- Sin inercia.
 
 ---
 
@@ -372,23 +416,30 @@ Ambas pantallas: degradado vertical `fondo_sup` → `fondo_inf` a pantalla compl
  SUPERIOR                                  INFERIOR
  ┌────────────────────────────────┐        ┌──────────────────────────┐
  │ Resultados: "consulta"         │        │ Resultados      1-4 de 24│ 24 px
- │ ┌────────────────────────────┐ │        │┌────────────────────────┐│
- │ │ Título de la fila en foco  │ │        ││┌──┐ Canción uno   3:42 ││
- │ │ Artista                    │ │        ││└──┘ Artista            ││ 4 filas
- │ │ Álbum · 3:42               │ │        │└────────────────────────┘│ × 44 px
- │ └────────────────────────────┘ │        │ ...                      │
- │                                │        │──────────────────────────│
- └────────────────────────────────┘        │ [A] Elegir [Y] Buscar [B]│ 24 px
+ │ ┌────────────────────────────┐ │        │┌───────────────────────┐▓│
+ │ │ Título de la fila en foco  │ │        ││┌──┐ Canción uno  3:42 │▓│
+ │ │ Artista                    │ │        ││└──┘ Artista           │░│ 4 filas
+ │ │ Álbum                      │ │        │└───────────────────────┘░│ × 43 px
+ │ │ 3:42                       │ │        │ ...                     ░│
+ │ └────────────────────────────┘ │        │──────────────────────────│
+ └────────────────────────────────┘        │ [A] Reprod. [Y] Buscar [B]│ 24 px
                                            └──────────────────────────┘
 ```
 
-- Inferior: cabecera 24 px, 4 filas de 44 px con miniatura (§5.3) separadas 4 px, barra de
-  botones. Las 4 filas más sus separaciones ocupan exactamente los 192 px entre las barras.
+- Inferior: cabecera 24 px, 4 filas de 43 px con miniatura (§5.3) separadas 4 px, barra de
+  botones. La primera fila queda a 4 px de la cabecera y la última a 4 px de la barra de
+  botones: 4 + 4 × 43 + 3 × 4 + 4 = 192 px, exactamente el espacio entre las barras.
 - Cabecera: panel `capa`; título `t_cabeza` · `texto` a la izquierda y rango visible
   («1-4 de 24») en `t_meta` · `texto_2` a la derecha.
 - Desplazamiento continuo: la lista se mueve lo justo para mantener visible la fila en foco.
   L/R saltan 4 filas. Fijar `RESULTS_PER_PAGE` a 4.
-- Superior: detalle de la fila en foco en panel `capa`.
+- Táctil: tocar una fila la pone en foco; tocar la fila en foco la reproduce; arrastrar
+  desplaza la lista (§6.9).
+- Indicador de desplazamiento (§5.11) a la derecha, cuando hay más de 4 resultados.
+- A, o tocar la fila en foco, abre directamente el reproductor con esa canción y el resto de
+  resultados como cola. No hay pantalla intermedia de canción seleccionada.
+- Superior: detalle de la fila en foco en panel `capa`, una línea por dato (título, artista,
+  álbum, duración).
 - El teclado (`swkbd`) se deja con el aspecto del sistema.
 
 ### 7.5 Reproductor
@@ -519,8 +570,8 @@ enum {
 	FOCUS_W = 2, FOCUS_GAP = 1,
 	TOUCH_MIN = 32,
 	BAR_H = 24,
-	ROW_H = 44,
-	THUMB_SIZE = 36,
+	ROW_H = 43,
+	THUMB_SIZE = 35,
 	ART_SIZE = 160,
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,

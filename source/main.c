@@ -16,6 +16,7 @@
 #include "player_logic.h"
 #include "spclient.h"
 #include "textscreen.h"
+#include "thumbs.h"
 #include "track.h"
 #include "tls3ds.h"
 #include "ui.h"
@@ -958,26 +959,6 @@ static void prepare_queue(void)
 	       (size_t)playback_queue_count * sizeof(playback_queue[0]));
 }
 
-static void show_selection(int selected)
-{
-	const sp_track *track = &playback_queue[selected];
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_SELECTION_TITLE));
-	textscreen_printf("%.42s\n", track->name);
-	textscreen_printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
-	textscreen_printf("%s: %.42s\n", tr(STR_LABEL_ALBUM), track->album);
-	textscreen_printf("%s: %d:%02d\n\n", tr(STR_LABEL_DURATION),
-	                  track->duration_ms / 60000,
-	                  (track->duration_ms / 1000) % 60);
-	textscreen_printf("%s: %d/%d\n", tr(STR_LABEL_QUEUE), selected + 1,
-	                  playback_queue_count);
-	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_PLAY));
-	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_SEARCH));
-	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_SESSION));
-	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
-}
-
-/* `repeat`: run `query` straight away instead of asking for one first. */
 /* Where the search flow goes next. */
 typedef enum {
 	FLOW_EXIT,        /* close the app */
@@ -986,48 +967,25 @@ typedef enum {
 	FLOW_RESULTS      /* back to the results */
 } flow_step;
 
-/* The selection screen and playback of the results from `*selected`.
- * Playback can move through the queue: `*selected` follows it when the
- * player returns to the results. */
-static flow_step selection_flow(spotify_session *session, int *selected)
+/* Plays the results from `*selected`, straight from the list: there is no
+ * selection screen in between. The player moves through the queue with
+ * L/R; `*selected` follows it, so the list comes back focused on the last
+ * track played. */
+static flow_step play_flow(spotify_session *session, int *selected)
 {
 	prepare_queue();
 	int queue_index = *selected;
 	set_view(VIEW_TEXT);
-	show_selection(queue_index);
 	for (;;) {
-		hidScanInput();
-		u32 down = hidKeysDown();
-		if (down & KEY_START)
+		playback_result result = playback(session, playback_queue,
+		                                  playback_queue_count,
+		                                  &queue_index);
+		if (result == PLAYER_EXIT_APP)
 			return FLOW_EXIT;
-		if (down & KEY_X)
-			return FLOW_HOME;
-		if (down & KEY_B)
-			return FLOW_RESULTS;
-		if (down & KEY_Y)
-			return FLOW_NEW_SEARCH;
-		if (language_toggled(down))
-			show_selection(queue_index);
-		if (down & KEY_A) {
-			for (;;) {
-				playback_result result =
-					playback(session, playback_queue,
-					         playback_queue_count, &queue_index);
-				if (result == PLAYER_EXIT_APP)
-					return FLOW_EXIT;
-				if (result == PLAYER_TRACK_CHANGED)
-					continue;
-				if (result == PLAYER_RETURN_RESULTS) {
-					*selected = queue_index;
-					return FLOW_RESULTS;
-				}
-				break;
-			}
-			show_selection(queue_index);
-		}
-		frame();
-		if (!aptMainLoop())
-			return FLOW_EXIT;
+		if (result == PLAYER_TRACK_CHANGED)
+			continue;
+		*selected = queue_index;
+		return FLOW_RESULTS;
 	}
 }
 
@@ -1077,10 +1035,12 @@ static flow_step results_flow(spotify_session *session, const char *query,
 			selected = 0;
 			break;
 		case RESULTS_ACTION_OPEN: {
-			/* Back from the selection or the player with the same (or
-			 * the last played) track focused. */
+			/* Back from the player with the last played track focused. */
 			selected = view_results_selected();
-			flow_step step = selection_flow(session, &selected);
+			/* The thumbnails must not compete with the audio download
+			 * (STYLES.md 9); they resume, kept, back in the list. */
+			thumbs_stop();
+			flow_step step = play_flow(session, &selected);
 			if (step != FLOW_RESULTS)
 				return step;
 			break;
@@ -1108,6 +1068,8 @@ static bool search_flow(spotify_session *session,
 		if (result == SEARCH_REQUEST_EXIT)
 			return false;
 		flow_step step = results_flow(session, query, result);
+		/* Leaving the results: no more thumbnails (STYLES.md 9). */
+		thumbs_stop();
 		if (step == FLOW_EXIT)
 			return false;
 		if (step == FLOW_HOME)
@@ -1385,11 +1347,14 @@ int main(int argc, char **argv)
 		gfxExit();
 		return 1;
 	}
-	/* Without icons the views still work, just without them. */
+	/* Without icons or thumbnails the views still work, just without
+	 * them. */
 	icons_init();
+	thumbs_init();
 	if (!textscreen_init() || !view_home_init() || !view_results_init()) {
 		view_results_exit();
 		view_home_exit();
+		thumbs_exit();
 		icons_exit();
 		textscreen_exit();
 		ui_exit();
@@ -1521,6 +1486,7 @@ done:
 	free(soc_buffer);
 	view_results_exit();
 	view_home_exit();
+	thumbs_exit();
 	icons_exit();
 	textscreen_exit();
 	ui_exit();

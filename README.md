@@ -77,12 +77,15 @@ language, and START exits.
 
 Results show four songs at a time; the top screen shows the details of the
 highlighted one. Use up/down to move through them and L/R to jump four at a
-time. Tap a song to highlight it and tap it again to open it, or press A.
+time, or drag the list with the stylus; the bar on the right edge shows
+where you are. Tap a song to highlight it and tap it again to play it, or
+press A.
 B returns and Y enters another query. If the search fails, A (or the button
 on screen) tries again. B cancels a pending search after the current network
 request finishes.
 
-Press A on the selection screen to play the chosen track locally. During
+The chosen track plays locally straight away, with the rest of the results
+as the queue. During
 playback, the top screen shows album artwork (or a neutral background when it
 is unavailable) and the bottom screen shows track details and progress. A
 pauses/resumes, left/right changes track, up/down adjusts local volume, B

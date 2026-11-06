@@ -11,9 +11,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_CHECK_SD_SPACE] = "Check the free space on the SD card.",
 	[STR_APP_CLOSING] = "The application is closing.",
 	[STR_LABEL_ARTIST] = "Artist",
-	[STR_LABEL_ALBUM] = "Album",
-	[STR_LABEL_DURATION] = "Duration",
-	[STR_LABEL_QUEUE] = "Queue",
 	[STR_LABEL_CODE] = "Code",
 
 	/* Button hints. */
@@ -22,9 +19,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_KEYS_RESULTS_EXIT] = "B: results   START: exit",
 	[STR_KEYS_EXIT] = "START: exit",
 	[STR_KEYS_PLAYER] = "A: pause  L/R: track  Up/Down: volume",
-	[STR_KEYS_SELECTION_PLAY] = "A: play   B: results",
-	[STR_KEYS_SELECTION_SEARCH] = "Y: new search",
-	[STR_KEYS_SELECTION_SESSION] = "X: session   START: exit",
 	[STR_KEYS_STARTUP_RETRY] = "A: retry   Y: pair",
 
 	/* Home view. */
@@ -42,7 +36,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_RESULTS_SEARCHING] = "Searching...",
 	[STR_RESULTS_NEW_SEARCH] = "Search something else",
 	[STR_RESULTS_RETRY] = "Try again",
-	[STR_HINT_CHOOSE] = "Choose",
+	[STR_HINT_PLAY] = "Play",
 	[STR_HINT_BACK] = "Back",
 	[STR_HINT_CANCEL] = "Cancel",
 	[STR_HINT_RETRY] = "Retry",
@@ -108,7 +102,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_ERR_SEARCH_LOAD] = "Could not load the results.",
 	[STR_ERR_SEARCH_THREAD] = "Could not start the search task.",
 	[STR_RESULTS_EMPTY] = "No songs found.",
-	[STR_SELECTION_TITLE] = "Selected song",
 
 	/* Playback. */
 	[STR_PLAYER_TITLE] = "Local playback",

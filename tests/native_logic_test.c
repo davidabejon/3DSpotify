@@ -1,3 +1,4 @@
+#include "art_url.h"
 #include "home_logic.h"
 #include "image_util.h"
 #include "lang.h"
@@ -7,6 +8,7 @@
 #include "press_logic.h"
 #include "search_path.h"
 #include "text_fit.h"
+#include "thumb_queue.h"
 #include "theme.h"
 
 #include <assert.h>
@@ -566,8 +568,8 @@ static void test_list_logic(void)
 	list_range(0, 0, 4, &from, &to);
 	assert(from == 0 && to == 0);
 
-	/* 7.4: four rows of ROW_H, SP_1 apart, fill the 192 px between the
-	 * bars exactly. */
+	/* 7.4: four rows of ROW_H, SP_1 apart and SP_1 from both bars, fill
+	 * the 192 px between them exactly. */
 	ui_rect header = list_header_rect();
 	ui_rect hints = list_hints_rect();
 	assert(header.h == BAR_H && hints.h == BAR_H);
@@ -576,7 +578,10 @@ static void test_list_logic(void)
 		assert(list_row_rect(slot).y ==
 		       list_row_rect(slot - 1).y + ROW_H + SP_1);
 	ui_rect last = list_row_rect(RESULTS_PER_PAGE - 1);
-	assert(last.y + last.h == hints.y);
+	/* The same gap over the button bar as under the header. */
+	assert(last.y + last.h + SP_1 == hints.y);
+	assert(list_row_rect(0).y - (header.y + header.h) ==
+	       hints.y - (last.y + last.h));
 	assert(list_row_rect(0).x == SP_2 &&
 	       list_row_rect(0).w == SCREEN_BOTTOM_W - 2 * SP_2);
 	/* Pressed rows move PRESS_SHIFT right and stay on screen. */
@@ -593,7 +598,7 @@ static void test_list_logic(void)
 	/* Hit testing: rows only, offset by the scroll, not past the end. */
 	ui_rect r0 = list_row_rect(0);
 	assert(list_hit_row(r0.x + 1, r0.y + 1, 0, 24) == 0);
-	assert(list_hit_row(r0.x + 1, r0.y + 1, 7, 24) == 7);
+	assert(list_hit_row(r0.x + 1, r0.y + 1, 7 * LIST_PITCH, 24) == 7);
 	assert(list_hit_row(r0.x + 1, r0.y + r0.h, 0, 24) == -1);  /* gap */
 	assert(list_hit_row(r0.x + 1, last.y + 1, 0, 24) == 3);
 	assert(list_hit_row(r0.x + 1, last.y + 1, 0, 3) == -1);
@@ -626,8 +631,194 @@ static void test_list_logic(void)
 	assert(strcmp(text, "62:05") == 0);
 }
 
+static void test_art_url(void)
+{
+	assert(art_url_allowed("https://i.scdn.co/image/ab67616d00004851"));
+	assert(strcmp(art_url_path("https://i.scdn.co/image/abc"),
+	              "/image/abc") == 0);
+	/* Other hosts, schemes, and anything that could escape the path. */
+	assert(!art_url_allowed("http://i.scdn.co/image/abc"));
+	assert(!art_url_allowed("https://i.scdn.co.evil.com/image/abc"));
+	assert(!art_url_allowed("https://evil.com/i.scdn.co/abc"));
+	assert(!art_url_allowed("https://i.scdn.co/"));
+	assert(!art_url_allowed("https://i.scdn.co/a b"));
+	assert(!art_url_allowed("https://i.scdn.co/a\r\nHost: x"));
+	assert(!art_url_allowed("https://i.scdn.co/a\\b"));
+	assert(!art_url_allowed("https://i.scdn.co/a#b"));
+	assert(!art_url_allowed("https://i.scdn.co/\xc3\xa1"));
+	assert(!art_url_allowed(""));
+	assert(!art_url_allowed(NULL));
+	assert(art_url_path("https://evil.com/x") == NULL);
+}
+
+static void test_thumb_queue(void)
+{
+	thumb_state s[24];
+	for (int i = 0; i < 24; i++)
+		s[i] = THUMB_WAITING;
+	/* Visible rows first, in order. */
+	assert(thumb_pick(s, 24, 0, 4) == 0);
+	s[0] = s[1] = THUMB_READY;
+	s[2] = THUMB_LOADING;
+	s[3] = THUMB_NONE;
+	/* Then the next page. */
+	assert(thumb_pick(s, 24, 0, 4) == 4);
+	for (int i = 4; i < 8; i++)
+		s[i] = THUMB_FAILED;
+	/* Nothing beyond the next page until the list scrolls. */
+	assert(thumb_pick(s, 24, 0, 4) == -1);
+	assert(thumb_pick(s, 24, 5, 4) == 8);
+	/* Scrolling back up picks what was skipped there first. */
+	s[0] = THUMB_WAITING;
+	assert(thumb_pick(s, 24, 0, 4) == 0);
+	/* The window is cut at the end of the list. */
+	assert(thumb_pick(s, 10, 8, 4) == 8);
+	assert(thumb_pick(s, 0, 0, 4) == -1);
+	assert(thumb_pick(s, 24, -3, 4) == 0);
+
+	/* What survives a new list at the same position. */
+	assert(thumb_keep(THUMB_READY, true));
+	assert(thumb_keep(THUMB_NONE, true));
+	assert(thumb_keep(THUMB_DECODED, true));
+	assert(!thumb_keep(THUMB_READY, false));
+	assert(!thumb_keep(THUMB_FAILED, true));   /* try again */
+	assert(!thumb_keep(THUMB_WAITING, true));
+	assert(!thumb_keep(THUMB_LOADING, true));
+}
+
+static void test_list_drag(void)
+{
+	/* Pixel geometry: one row per LIST_PITCH. */
+	assert(LIST_PITCH == ROW_H + SP_1);
+	assert(list_max_scroll(24) == 20 * LIST_PITCH);
+	assert(list_max_scroll(4) == 0 && list_max_scroll(0) == 0);
+	assert(list_row_at(0, 0).y == list_row_rect(0).y);
+	assert(list_row_at(3, 0).y == list_row_rect(3).y);
+	assert(list_row_at(5, 2 * LIST_PITCH).y == list_row_rect(3).y);
+	assert(list_row_at(1, 10).y == list_row_rect(1).y - 10);
+
+	/* Hit testing follows the scroll, rows only, inside the list area. */
+	ui_rect r0 = list_row_rect(0);
+	assert(list_hit_row(r0.x + 1, r0.y + 1, 7 * LIST_PITCH, 24) == 7);
+	assert(list_hit_row(r0.x + 1, r0.y + 1, 10, 24) == 0);
+	/* Scrolled 20 px: row 0's top part is under the header. */
+	assert(list_hit_row(r0.x + 1, BAR_H - 1, 20, 24) == -1);
+	assert(list_hit_row(r0.x + 1, BAR_H, 20, 24) == 0);
+	/* A fifth row peeking in at the bottom is hit; the bar is not. */
+	assert(list_hit_row(r0.x + 1, SCREEN_H - BAR_H - 1, 20, 24) == 4);
+	assert(list_hit_row(r0.x + 1, SCREEN_H - BAR_H, 20, 24) == -1);
+
+	/* Snapping to the nearest whole row, within the ends. */
+	assert(list_snap(0, 24) == 0);
+	/* Halfway or more rounds to the next row, whatever the pitch's
+	 * parity. */
+	assert(list_snap((LIST_PITCH - 1) / 2, 24) == 0);
+	assert(list_snap((LIST_PITCH + 1) / 2, 24) == 1);
+	assert(list_snap(3 * LIST_PITCH + 30, 24) == 4);
+	assert(list_snap(1000000, 24) == 20);
+	assert(list_snap(-30, 24) == 0);
+	assert(list_snap(100, 3) == 0);
+
+	/* Whole rows on screen: 4 when resting on a row, 3 when cut at both
+	 * ends. */
+	int from, to;
+	list_full_rows(0, 24, &from, &to);
+	assert(from == 0 && to == 3);
+	list_full_rows(5 * LIST_PITCH, 24, &from, &to);
+	assert(from == 5 && to == 8);
+	list_full_rows(20, 24, &from, &to);
+	assert(from == 1 && to == 3);
+	list_full_rows(SP_1, 24, &from, &to);       /* row 0 touches the header */
+	assert(from == 0 && to == 3);
+	list_full_rows(SP_1 + 1, 24, &from, &to);   /* now it is cut */
+	assert(from == 1 && to == 3);
+	list_full_rows(0, 2, &from, &to);
+	assert(from == 0 && to == 1);
+	/* Every whole row really is whole, and the next ones are not. */
+	for (int s = 0; s <= list_max_scroll(24); s++) {
+		list_full_rows(s, 24, &from, &to);
+		assert(to - from + 1 >= RESULTS_PER_PAGE - 1);
+		for (int i = from; i <= to; i++) {
+			ui_rect r = list_row_at(i, s);
+			assert(r.y >= BAR_H && r.y + r.h <= SCREEN_H - BAR_H);
+		}
+		ui_rect before = list_row_at(from - 1, s);
+		ui_rect after = list_row_at(to + 1, s);
+		assert(from == 0 || before.y < BAR_H);
+		assert(after.y + after.h > SCREEN_H - BAR_H);
+	}
+
+	/* Whether the focused row is whole: when it is not (cut or dragged
+	 * out of view), the first button press only brings it back. */
+	assert(list_row_whole(2, 20, 24));
+	assert(!list_row_whole(0, 20, 24));          /* cut by the header */
+	assert(!list_row_whole(4, 20, 24));          /* peeking in */
+	assert(!list_row_whole(12, 5 * LIST_PITCH, 24));
+	assert(list_row_whole(8, 5 * LIST_PITCH, 24));
+	assert(list_row_whole(2, 0, 3));
+	assert(!list_row_whole(0, 0, 0));
+	/* Aligning on a hidden focus shows it whole. */
+	for (int s = 0; s <= list_max_scroll(24); s += 7)
+		for (int sel = 0; sel < 24; sel++)
+			assert(list_row_whole(sel, list_align(s, sel, 24) * LIST_PITCH,
+			                      24));
+
+	/* Buttons bring a cut list back to whole rows, moving as little as
+	 * possible while keeping the focus in view (6.6). */
+	assert(list_align(20, 2, 24) == 0);
+	assert(list_align(30, 2, 24) == 1);
+	assert(list_align(30, 5, 24) == 2);
+	assert(list_align(30, 0, 24) == 0);
+	assert(list_align(5 * LIST_PITCH, 6, 24) == 5);
+	assert(list_align(list_max_scroll(24) - 10, 23, 24) == 20);
+
+	/* A touch becomes a drag after DRAG_START px, either way. */
+	list_drag d;
+	list_drag_begin(&d, 100, 0);
+	assert(!list_drag_update(&d, 100 + DRAG_START - 1));
+	assert(!list_drag_update(&d, 100 - DRAG_START + 1));
+	assert(list_drag_update(&d, 100 - DRAG_START));
+	/* Once dragging it stays a drag, even back at the start. */
+	assert(list_drag_update(&d, 100));
+	/* The list follows the stylus 1:1: moving up scrolls down. */
+	list_drag_begin(&d, 150, 2 * LIST_PITCH);
+	assert(list_drag_scroll(&d, 140, 24) == 2 * LIST_PITCH + 10);
+	assert(list_drag_scroll(&d, 170, 24) == 2 * LIST_PITCH - 20);
+	/* ... and stops at both ends. */
+	assert(list_drag_scroll(&d, 150 + 1000, 24) == 0);
+	assert(list_drag_scroll(&d, 150 - 5000, 24) == list_max_scroll(24));
+	assert(list_drag_scroll(&d, 100, 3) == 0);
+	/* Not touching: no drag. */
+	d.down = false;
+	d.dragging = false;
+	assert(!list_drag_update(&d, 0));
+
+	/* 5.11: the indicator against the right edge, between the bars. */
+	ui_rect track = list_scroll_track();
+	assert(track.x + track.w == SCREEN_BOTTOM_W && track.w == SCROLL_W);
+	assert(track.y == BAR_H && track.y + track.h == SCREEN_H - BAR_H);
+	/* Clear of the rows, pressed ones included. */
+	assert(r0.x + r0.w + PRESS_SHIFT < track.x);
+	/* Thumb: visible share of the list, top and bottom at the ends. */
+	ui_rect top = list_scroll_thumb(0, 24);
+	ui_rect bottom = list_scroll_thumb(list_max_scroll(24), 24);
+	assert(top.y == track.y && top.h == track.h * 4 / 24);
+	assert(bottom.y + bottom.h == track.y + track.h);
+	ui_rect middle = list_scroll_thumb(list_max_scroll(24) / 2, 24);
+	assert(middle.y > top.y && middle.y < bottom.y);
+	/* Never shorter than SCROLL_MIN_H, never outside the track. */
+	ui_rect tiny = list_scroll_thumb(list_max_scroll(1000), 1000);
+	assert(tiny.h == SCROLL_MIN_H);
+	assert(tiny.y + tiny.h == track.y + track.h);
+	assert(list_scroll_thumb(-50, 24).y == track.y);
+	assert(list_scroll_thumb(1000000, 24).y == bottom.y);
+}
+
 int main(void)
 {
+	test_list_drag();
+	test_art_url();
+	test_thumb_queue();
 	test_list_logic();
 	test_layout_rects();
 	test_press_timing();
