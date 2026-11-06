@@ -29,7 +29,6 @@ static C2D_TextBuf text_buf;
 /* Only for measuring candidates while fitting the last query. */
 static C2D_TextBuf scratch_buf;
 
-static C2D_Text brand_text;
 static C2D_Text search_text;
 static C2D_Text last_label_text;
 static C2D_Text repeat_text;
@@ -131,7 +130,6 @@ static void ensure_parsed(void)
 	if (!stale && parsed_lang == lang_get())
 		return;
 	C2D_TextBufClear(text_buf);
-	parse(&brand_text, tr(STR_APP_NAME));
 	parse(&search_text, tr(STR_HOME_SEARCH));
 	parse(&last_label_text, tr(STR_HOME_LAST_SEARCH));
 	parse(&bubble_text, tr(STR_LANG_NAME));
@@ -303,14 +301,6 @@ bool view_home_dirty(void)
 }
 
 /* --- Drawing ---------------------------------------------------------- */
-
-void view_home_draw_top(void)
-{
-	ensure_parsed();
-	/* A single message: centred (3.3). */
-	ui_text_centered(&brand_text, SCREEN_TOP_W / 2, SCREEN_H / 2,
-	                 TXT_TITULO, COL_TEXTO);
-}
 
 static void draw_button_bar(const home_look *look)
 {

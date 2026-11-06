@@ -84,7 +84,8 @@ Todas las combinaciones de la tabla tienen un contraste ≥ 4.5:1, también en e
 
 - Degradado únicamente en el fondo de pantalla (`fondo_sup` → `fondo_inf`, vertical). Todo
   lo demás, relleno plano.
-- No usar transparencias ni mezclas alfa en ningún elemento.
+- No usar transparencias ni mezclas alfa en ningún elemento. Única excepción: el logotipo
+  (`romfs/gfx/logo.png`) se dibuja con su propio canal alfa.
 - No usar `#1DB954` ni `#1ED760`.
 
 ---
@@ -252,7 +253,11 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Superficie en relieve con relleno `capa_alta`, centrada a 8 px sobre la barra de botones;
   icono 16 px + texto `t_cuerpo` · `texto`.
 - Aparece y desaparece sin transición. Visible 60 frames.
-- Solo una a la vez; una nueva sustituye a la anterior.
+- Una nueva del mismo tipo sustituye a la anterior.
+- Burbuja de espera: la misma superficie con el indicador de carga (§5.7) en lugar del icono.
+  Visible mientras dura la espera (por ejemplo, «Buscando…» en «Búsqueda»), no 60 frames.
+- Pueden convivir una burbuja de espera y una normal: la de espera ocupa el sitio de siempre
+  y la otra se apila encima, a 8 px de la sombra de la primera.
 
 ### 5.10 Iconos
 
@@ -265,6 +270,10 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
   aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador) y ajustes
   (engranaje).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
+- El logotipo no es un icono: se carga en tiempo de ejecución desde `romfs:/gfx/logo.png`
+  (directorio `romfs/` del repositorio, empaquetado en el `.3dsx` y el `.cia`). PNG RGBA de
+  256×128 px como máximo, dibujado 1:1 sin reescalar; sin nombre ni logotipo de Spotify. Si
+  no se puede cargar, se muestra el nombre de la app en `t_titulo` · `texto`.
 
 ### 5.11 Indicador de desplazamiento
 
@@ -667,6 +676,7 @@ enum {
 	ROW_H = 41,
 	THUMB_SIZE = 33,
 	ART_SIZE = 160,
+	ART_BIG = 216,       /* carátula grande de la pantalla superior: 240 - 2·e3 */
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,
 	PROGRESS_H = 8, VOLUME_H = 6,

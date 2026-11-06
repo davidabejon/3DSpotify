@@ -19,6 +19,16 @@
 #include "theme.h"
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+
+typedef enum {
+	PLAYER_PHASE_IDLE,      /* nothing played yet */
+	PLAYER_PHASE_LOADING,   /* cover, audio key, connection */
+	PLAYER_PHASE_PLAYING,   /* playing or paused */
+	PLAYER_PHASE_FINISHED,
+	PLAYER_PHASE_FAILED
+} player_phase;
 
 /* The track `direction` (-1 or +1) steps from `index` in a queue of
  * `count`, or -1: the queue does not wrap. */
@@ -131,6 +141,40 @@ static inline int player_fill_px(int width, int permille)
 	if (permille >= 1000)
 		return width;
 	return width * permille / 1000;
+}
+
+/* The progress bar's fill in thousandths: full once the track finished
+ * (7.5), else the elapsed share. */
+static inline int player_progress_permille(bool finished, unsigned elapsed,
+                                           unsigned duration)
+{
+	return finished ? 1000 : player_permille(elapsed, duration);
+}
+
+/* "m:ss", as the player shows the elapsed time and the duration. */
+static inline void player_format_time(unsigned seconds, char *out,
+                                      size_t len)
+{
+	snprintf(out, len, "%u:%02u", seconds / 60, seconds % 60);
+}
+
+/* 9: the download share is shown with the clock, not every frame. It
+ * follows the real value on every `tick` (a new second, phase or track)
+ * and otherwise once every PLAYER_DOWNLOAD_FRAMES frames. */
+enum { PLAYER_DOWNLOAD_FRAMES = 60 };
+
+typedef struct {
+	unsigned shown;
+	int frames;
+} player_download_sample;
+
+static inline void player_sample_download(player_download_sample *sample,
+                                          bool tick, unsigned pct)
+{
+	if (tick || ++sample->frames >= PLAYER_DOWNLOAD_FRAMES) {
+		sample->shown = pct;
+		sample->frames = 0;
+	}
 }
 
 #endif

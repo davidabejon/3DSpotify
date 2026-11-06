@@ -75,8 +75,10 @@ void ui_button_bar(ui_rect bar, const ui_hint *hints, int count);
  * end of the progress. */
 void ui_progress(ui_rect r, int download, int progress, bool handle);
 
-/* The loading indicator (5.7), centred on (cx, cy). `step` advances every
- * LOADER_STEP frames. */
+/* The loading indicator (5.7), centred on (cx, cy): UI_LOADER_BARS bars,
+ * UI_LOADER_W px wide in all. `step` advances every LOADER_STEP frames. */
+#define UI_LOADER_BARS 3
+#define UI_LOADER_W (UI_LOADER_BARS * LOADER_BAR_W + (UI_LOADER_BARS - 1) * SP_1)
 void ui_loader(int cx, int cy, int step);
 
 /* A notice (5.8): raised `coral` (error) or `ambar` (warning) surface with
@@ -84,9 +86,19 @@ void ui_loader(int cx, int cy, int step);
 void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
                const C2D_Text *title, const C2D_Text *body);
 
+/* A cover in `box` (5.3, 7.5): 1 px `tinta` outline, the image fitted
+ * inside and centred; without `image` (NULL or no texture), a `capa_alta`
+ * square with the note icon centred in `texto_2`, so the layout does not
+ * move when the image arrives. */
+void ui_art(ui_rect box, const C2D_Image *image);
+
 /* A raised `capa_alta` bubble with an icon and a message (5.9). */
 void ui_bubble(ui_rect r, const C2D_Image *icon, const C2D_Text *text);
 float ui_bubble_content_width(const C2D_Text *text);
+/* The same bubble with the loading indicator (5.7) where the icon goes:
+ * the floating "Searching..." over the top screen. */
+void ui_bubble_loading(ui_rect r, int step, const C2D_Text *text);
+float ui_bubble_loading_content_width(const C2D_Text *text);
 
 /* Text whose line is vertically centred on `cy`, at whole pixels. */
 void ui_text(const C2D_Text *text, int x, int cy, float scale, u32 color);
@@ -100,6 +112,17 @@ void ui_text_wrapped(const C2D_Text *text, int x, int y, float scale,
                      u32 color, int width);
 /* Height of one line of the system font at `scale`, in whole pixels. */
 int ui_line_height(float scale);
+
+/* Width of `string` at `scale`, parsed into `scratch` (which it clears). */
+float ui_measure(C2D_TextBuf scratch, const char *string, float scale);
+
+/* The longest a fitted string gets: the source plus "...". */
+#define UI_FIELD_SIZE 136
+
+/* Parses `string` into `buf`, cut with "..." to `width` px at `scale`
+ * (3.3); `scratch` (UI_FIELD_SIZE glyphs) is used for measuring. */
+void ui_parse_fitted(C2D_Text *text, C2D_TextBuf buf, C2D_TextBuf scratch,
+                     const char *string, float scale, int width);
 
 /* A mask icon in `color`, top-left at (x, y), at its own size. */
 void ui_icon(const C2D_Image *icon, int x, int y, u32 color);

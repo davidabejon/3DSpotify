@@ -304,6 +304,16 @@ static inline ui_rect list_bubble_rect(float content_width)
 	return r;
 }
 
+/* Two bubbles may show at once (5.9): the search's and the language's.
+ * Slot 0 is list_bubble_rect; slot 1 stacks SP_2 above it, its shadow
+ * included. */
+static inline ui_rect list_bubble_slot_rect(float content_width, int slot)
+{
+	ui_rect r = list_bubble_rect(content_width);
+	r.y -= slot * (BUBBLE_H + SHADOW_OFF + SP_2);
+	return r;
+}
+
 /* "m:ss" for a duration; negative durations show as 0:00. */
 static inline void list_format_duration(int duration_ms, char *out,
                                         size_t outlen)

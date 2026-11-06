@@ -24,9 +24,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_SEARCH] = "Buscar",
 
 	/* Vista de resultados. */
-	[STR_RESULTS_HEADER] = "Resultados",
-	[STR_RESULTS_RANGE_FMT] = "%d-%d de %d",
-	[STR_RESULTS_QUERY_FMT] = "Resultados: \"%s\"",
 	[STR_RESULTS_SEARCHING] = "Buscando...",
 	[STR_RESULTS_NEW_SEARCH] = "Buscar otra cosa",
 	[STR_RESULTS_RETRY] = "Reintentar",
@@ -38,7 +35,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_CHOOSE] = "Elegir",
 
 	/* Pestana de ajustes. */
-	[STR_SETTINGS_TITLE] = "Ajustes",
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",
 	[STR_SETTINGS_RECONNECT] = "Volver a conectar",
 	[STR_SETTINGS_PAIR] = "Emparejar otra cuenta",

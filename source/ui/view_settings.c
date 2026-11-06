@@ -22,8 +22,6 @@ static const str_id glyph_labels[GLYPH_COUNT] = {
 };
 
 static C2D_TextBuf text_buf;
-static C2D_Text brand_text;
-static C2D_Text title_text;
 static C2D_Text item_text[SETTINGS_ITEM_COUNT];
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_text[GLYPH_COUNT];
@@ -82,8 +80,6 @@ static void ensure_parsed(void)
 	if (parsed_lang == lang_get())
 		return;
 	C2D_TextBufClear(text_buf);
-	parse(&brand_text, tr(STR_APP_NAME));
-	parse(&title_text, tr(STR_SETTINGS_TITLE));
 	char language[64];
 	snprintf(language, sizeof(language), tr(STR_SETTINGS_LANGUAGE_FMT),
 	         tr(STR_LANG_NAME));
@@ -245,17 +241,6 @@ bool view_settings_dirty(void)
 }
 
 /* --- Drawing ---------------------------------------------------------- */
-
-void view_settings_draw_top(void)
-{
-	ensure_parsed();
-	int title_line = ui_line_height(TXT_CABEZA);
-	ui_text(&title_text, SP_3, SP_3 + title_line / 2, TXT_CABEZA,
-	        COL_TEXTO);
-	/* Otherwise a single message: centred (3.3). */
-	ui_text_centered(&brand_text, SCREEN_TOP_W / 2, SCREEN_H / 2,
-	                 TXT_TITULO, COL_TEXTO);
-}
 
 void view_settings_draw_bottom(void)
 {

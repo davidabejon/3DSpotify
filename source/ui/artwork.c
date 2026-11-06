@@ -1,6 +1,7 @@
 #include "artwork.h"
 
 #include "art_url.h"
+#include "draw.h"
 #include "http3ds.h"
 #include "image_util.h"
 #include "ui.h"
@@ -151,6 +152,15 @@ void artwork_draw(artwork_state *artwork)
 	                  COL_TEXTO);
 	C2D_Image image = { &artwork->tex, &artwork->subtex };
 	C2D_DrawImageAt(image, x, y, 0, NULL, scale, scale);
+}
+
+void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow)
+{
+	artwork->dirty = false;
+	if (shadow > 0)
+		ui_fill(ui_rect_offset(box, shadow, shadow), COL_SOMBRA);
+	C2D_Image image = { &artwork->tex, &artwork->subtex };
+	ui_art(box, artwork->has_texture ? &image : NULL);
 }
 
 void artwork_invalidate(artwork_state *artwork)

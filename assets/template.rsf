@@ -1,7 +1,8 @@
 # makerom RSF for the Spotify 3DS CIA.
 #
 # Built by `python source/build.py --cia`, which passes the ELF, the icon
-# (SMDH) and the banner on the command line; nothing here points at files.
+# (SMDH) and the banner on the command line, and the absolute path of the
+# repository's romfs/ directory as -DAPP_ROMFS.
 
 BasicInfo:
   # The process name in the exheader: 8 characters at most.
@@ -10,6 +11,10 @@ BasicInfo:
   CompanyCode             : "00"
   ContentType             : Application
   Logo                    : Nintendo # Nintendo / Licensed / Distributed / iQue / iQueForSystem
+
+RomFs:
+  # romfs:/ in the app (the logo). build.py passes the absolute path.
+  RootPath                : $(APP_ROMFS)
 
 TitleInfo:
   Category                : Application

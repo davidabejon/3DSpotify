@@ -4,7 +4,6 @@
 #include "icons.h"
 #include "player_logic.h"
 #include "press_logic.h"
-#include "text_fit.h"
 #include "theme.h"
 
 #include <citro2d.h>
@@ -12,12 +11,10 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Fitted text: at most the source plus "...". */
-#define FIELD_SIZE 136
 #define STATIC_GLYPHS 768
 #define TRACK_GLYPHS 320
 #define TIME_GLYPHS 24
-#define SCRATCH_GLYPHS FIELD_SIZE
+#define SCRATCH_GLYPHS UI_FIELD_SIZE
 
 /* The button bar (STYLES.md 5.6). */
 enum { GLYPH_A, GLYPH_B, GLYPH_COUNT };
@@ -46,8 +43,7 @@ static char info_error[256];
 static player_info info = { .stage = STR_PLAYER_ART_LOADING,
                             .error = info_error };
 /* 9: the download share follows the clock, not every frame. */
-static unsigned shown_download;
-static int download_frames;
+static player_download_sample download;
 
 static press_state press_control[PLAYER_CONTROL_COUNT];
 static press_state press_glyph[GLYPH_COUNT];
@@ -116,10 +112,7 @@ void view_player_set(const player_info *next)
 	snprintf(info_error, sizeof(info_error), "%s",
 	         next->error ? next->error : "");
 	info.error = info_error;
-	if (tick || ++download_frames >= 60) {
-		shown_download = info.download_pct;
-		download_frames = 0;
-	}
+	player_sample_download(&download, tick, info.download_pct);
 }
 
 /* --- Text ------------------------------------------------------------- */
@@ -130,21 +123,10 @@ static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 	C2D_TextOptimize(text);
 }
 
-static float measure(const char *string, void *ctx)
-{
-	float scale = *(const float *)ctx;
-	C2D_Text text;
-	C2D_TextBufClear(scratch_buf);
-	C2D_TextParse(&text, scratch_buf, string);
-	return ui_text_width(&text, scale);
-}
-
 static void parse_fitted(C2D_Text *text, C2D_TextBuf buf, const char *string,
                          float scale, int width)
 {
-	char fitted[FIELD_SIZE];
-	text_fit(string, (float)width, measure, &scale, fitted, sizeof(fitted));
-	parse(text, buf, fitted);
+	ui_parse_fitted(text, buf, scratch_buf, string, scale, width);
 }
 
 static int content_width(void)
@@ -193,18 +175,13 @@ static void parse_track(void)
 	             content_width());
 }
 
-static void format_time(unsigned seconds, char *out, size_t len)
-{
-	snprintf(out, len, "%u:%02u", seconds / 60, seconds % 60);
-}
-
 static void parse_times(void)
 {
 	C2D_TextBufClear(time_buf);
 	char text[16];
-	format_time(info.elapsed_s, text, sizeof(text));
+	player_format_time(info.elapsed_s, text, sizeof(text));
 	parse(&elapsed_text, time_buf, text);
-	format_time(info.duration_s, text, sizeof(text));
+	player_format_time(info.duration_s, text, sizeof(text));
 	parse(&duration_text, time_buf, text);
 }
 
@@ -264,7 +241,7 @@ static player_look current_look(void)
 		.paused = info.paused,
 		.elapsed = info.elapsed_s,
 		.duration = info.duration_s,
-		.download = shown_download,
+		.download = download.shown,
 		.volume = info.volume_pct,
 		.loader_step = info.phase == PLAYER_PHASE_LOADING
 		               ? loader_frames / LOADER_STEP : 0,
@@ -508,8 +485,8 @@ static void draw_bars(const player_look *look)
 		ui_text(&duration_text, SCREEN_BOTTOM_W - SP_2 - w, cy, TXT_META,
 		        COL_TEXTO_2);
 	}
-	int progress = look->phase == PLAYER_PHASE_FINISHED
-	               ? 1000 : player_permille(look->elapsed, look->duration);
+	int progress = player_progress_permille(
+		look->phase == PLAYER_PHASE_FINISHED, look->elapsed, look->duration);
 	ui_progress(player_progress_rect(),
 	            player_permille(look->download, 100), progress, true);
 

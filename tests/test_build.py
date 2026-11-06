@@ -16,6 +16,61 @@ build = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build)
 
 
+def read_png_rgba(data: bytes) -> tuple[int, int, bytes]:
+    """Decodes an 8-bit, non-interlaced RGBA PNG with the standard library.
+    Fails on anything else: the logo has to be exactly that."""
+    import struct
+    import zlib
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise AssertionError("not a PNG")
+    pos, idat, header = 8, bytearray(), None
+    while pos < len(data):
+        length, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat += body
+        elif kind == b"IEND":
+            break
+    if header is None:
+        raise AssertionError("PNG without IHDR")
+    width, height, depth, colour, _, _, interlace = header
+    if (depth, colour, interlace) != (8, 6, 0):
+        raise AssertionError("logo must be 8-bit RGBA, not interlaced")
+    # Bail out on the size before decoding a huge image.
+    if width > 256 or height > 128:
+        return width, height, b""
+    raw = zlib.decompress(bytes(idat))
+    stride = width * 4
+    out = bytearray(height * stride)
+    prev = bytearray(stride)
+    for y in range(height):
+        filter_type = raw[y * (stride + 1)]
+        line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - 4] if i >= 4 else 0
+            b = prev[i]
+            c = prev[i - 4] if i >= 4 else 0
+            if filter_type == 1:
+                line[i] = (line[i] + a) & 0xFF
+            elif filter_type == 2:
+                line[i] = (line[i] + b) & 0xFF
+            elif filter_type == 3:
+                line[i] = (line[i] + (a + b) // 2) & 0xFF
+            elif filter_type == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pred = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+                line[i] = (line[i] + pred) & 0xFF
+            elif filter_type != 0:
+                raise AssertionError("bad PNG filter")
+        out[y * stride:(y + 1) * stride] = line
+        prev = line
+    return width, height, bytes(out)
+
+
 class BuildTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -229,7 +284,10 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("KEY_R)", results)
         # Rows are cut in pixels, never the duration (5.3, 3.3).
         self.assertIn("parse_fitted(&row_title[i]", results)
-        self.assertIn("ICON_NOTE", results)
+        # The thumbnail and its note placeholder are the shared ui_art.
+        self.assertIn("ui_art(list_thumb_rect(row)", results)
+        draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
+        self.assertIn("ICON_NOTE", draw)
         # On-demand render and view switching.
         frame = app[app.index("static void frame(void)"):
                     app.index("static void show_progress(")]
@@ -242,8 +300,8 @@ class BuildTests(unittest.TestCase):
         # from its tab, START closes the app.
         search = app[app.index("static void search_start("):
                      app.index("static bool ask_search_query(")]
-        self.assertIn("view_results_searching(search.query)", search)
-        self.assertIn("view_results_show(search.query", search)
+        self.assertIn("view_results_searching();", search)
+        self.assertIn("view_results_show(search.tracks", search)
         loop = app[app.index("static tabs_exit run_tabs("):
                    app.index("static void stop_tabs(")]
         self.assertIn("view_results_cancelling()", loop)
@@ -451,7 +509,11 @@ class BuildTests(unittest.TestCase):
                     app.index("static void show_progress(")]
         self.assertIn("changed |= view_player_dirty()", frame)
         self.assertIn("tabbar_draw();", frame)
-        self.assertIn("download_frames >= 60", player)
+        self.assertIn("player_sample_download(&download, tick,", player)
+        logic = (build.ROOT / "ui" / "player_logic.h").read_text(
+            encoding="utf-8")
+        self.assertIn("PLAYER_DOWNLOAD_FRAMES = 60", logic)
+        self.assertIn("++sample->frames >= PLAYER_DOWNLOAD_FRAMES", logic)
 
     def test_tabs_follow_style_guide(self):
         ui_dir = build.ROOT / "ui"
@@ -495,6 +557,129 @@ class BuildTests(unittest.TestCase):
         style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
             encoding="utf-8")
         self.assertIn("### 5.12 Barra de pesta", style)
+
+    def test_romfs_is_packed_into_3dsx_and_cia(self):
+        romfs = self.root / "romfs"
+        with self.assertRaisesRegex(SystemExit, "romfs directory is missing"):
+            build.require_romfs(romfs)
+        romfs.mkdir()
+        self.assertEqual(build.require_romfs(romfs), romfs.resolve())
+
+        pack = build.pack_command(Path("3dsxtool"), Path("app.elf"),
+                                  Path("app.3dsx"), Path("icon.smdh"), romfs)
+        self.assertIn(f"--smdh={Path('icon.smdh')}", pack)
+        self.assertIn(f"--romfs={romfs}", pack)
+        # Probes have neither an icon nor a romfs.
+        probe = build.pack_command(Path("3dsxtool"), Path("p.elf"),
+                                   Path("p.3dsx"), None, None)
+        self.assertFalse(any(arg.startswith("--") for arg in probe))
+
+        makerom = build.makerom_command(Path("makerom"), Path("app.elf"),
+                                        Path("icon.smdh"), Path("b.bnr"),
+                                        Path("app.cia"), romfs)
+        self.assertIn(f"-DAPP_ROMFS={romfs.as_posix()}", makerom)
+        self.assertTrue(Path(romfs.as_posix()).is_absolute())
+
+        rsf = (build.ASSETS / "template.rsf").read_text(encoding="utf-8")
+        self.assertRegex(rsf, r"(?m)^RomFs:\s*\n\s*(#.*\n\s*)*"
+                              r"RootPath\s*:\s*\$\(APP_ROMFS\)")
+        self.assertEqual(build.ROMFS, build.ROOT.parent / "romfs")
+        source = (build.ROOT / "build.py").read_text(encoding="utf-8")
+        self.assertIn("require_romfs(ROMFS) if app == \"spotify3ds\"", source)
+
+    def test_romfs_is_mounted_around_the_renderer(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        self.assertIn('#include "logo.h"', app)
+        self.assertLess(app.index("romfsInit()"), app.index("logo_load();"))
+        self.assertLess(app.index("ui_init()"), app.index("logo_load();"))
+        done = app.index("done:")
+        self.assertLess(app.index("logo_free();", done),
+                        app.index("ui_exit();", done))
+        self.assertLess(app.index("ui_exit();", done),
+                        app.index("romfsExit();", done))
+        # A failed romfsInit is not fatal: the logo falls back to text.
+        self.assertIn("bool romfs_ready = R_SUCCEEDED(romfsInit());", app)
+        logo = (build.ROOT / "ui" / "logo.c").read_text(encoding="utf-8")
+        self.assertIn("STR_APP_NAME", logo)
+        self.assertIn("GPU_NEAREST", logo)
+        self.assertIn("image_copy_to_texture(", logo)
+        self.assertIn("stbi_info_from_memory(", logo)
+
+    def test_top_now_reuses_the_bottom_player(self):
+        ui_dir = build.ROOT / "ui"
+        layout = (ui_dir / "now_layout.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", layout)
+        self.assertNotIn("#include <citro", layout)
+        top = (ui_dir / "top_now.c").read_text(encoding="utf-8")
+        # The same bar, times, fitting, sampling and texts as the player.
+        for call in ("ui_progress(", "player_progress_permille(",
+                     "player_format_time(", "ui_parse_fitted(",
+                     "player_sample_download(", "STR_PLAYER_FINISHED_TITLE",
+                     "STR_UNTITLED", "STR_UNKNOWN_ARTIST",
+                     "artwork_draw_in(art, now_art_rect(), ART_SHADOW_OFF)",
+                     "artwork_draw_in(art, now_big_art_rect(), "
+                     "ART_SHADOW_OFF)"):
+            self.assertIn(call, top)
+        for copy in ("static float measure(", "%u:%02u", ">= 60"):
+            self.assertNotIn(copy, top)
+        player = (ui_dir / "view_player.c").read_text(encoding="utf-8")
+        self.assertNotIn("static void format_time(", player)
+        self.assertNotIn("static float measure(", player)
+        artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
+        self.assertIn("ui_art(box,", artwork)
+        theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
+        self.assertIn("ART_BIG = 216", theme)
+
+    def test_top_screen_is_composed_by_top(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        frame = app[app.index("static void frame(void)"):
+                    app.index("static void show_progress(")]
+        # One compositor for the tabs; the text screens keep the artwork.
+        self.assertIn("top_set(&info);", frame)
+        self.assertIn("top_dirty(active_tab, &cover_art)", frame)
+        self.assertIn("top_draw(active_tab, &cover_art);", frame)
+        self.assertIn("artwork_draw(&cover_art);", frame)
+        self.assertNotIn("view_player_dirty() || artwork_dirty", frame)
+        for gone in ("view_home_draw_top", "view_results_draw_top",
+                     "view_settings_draw_top"):
+            self.assertNotIn(gone, app)
+            for path in ui_dir.glob("*.[ch]"):
+                self.assertNotIn(gone, path.read_text(encoding="utf-8"),
+                                 path.name)
+        done = app.index("done:")
+        self.assertLess(app.index("top_exit();", done),
+                        app.index("ui_exit();", done))
+        self.assertIn("!top_init()", app)
+        logic = (ui_dir / "top_logic.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", logic)
+        self.assertNotIn("#include <citro", logic)
+        top = (ui_dir / "top.c").read_text(encoding="utf-8")
+        self.assertIn("logo_draw_centered(", top)
+        self.assertNotIn("view_results", top)
+        # The search bubble is on the bottom screen: 5.9 with the loading
+        # indicator, and the language bubble stacked above it.
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("ui_bubble_loading(list_bubble_rect(", results)
+        self.assertIn("list_bubble_slot_rect(", results)
+        for gone in ("query_title_text", "range_text", "detail_title",
+                     "error_detail_text", "header_text"):
+            self.assertNotIn(gone, results)
+
+    def test_gitignore_keeps_romfs(self):
+        ignore = (build.ROOT.parent / ".gitignore").read_text(encoding="utf-8")
+        for line in ignore.splitlines():
+            self.assertNotIn("romfs", line.split("#")[0])
+
+    def test_logo_png_is_small_rgba(self):
+        # Drawn 1:1, so at most 256x128; its alpha may blend (2.7 makes an
+        # exception for the logo).
+        logo = build.ROMFS / "gfx" / "logo.png"
+        self.assertTrue(logo.is_file(), f"{logo} is missing")
+        width, height, pixels = read_png_rgba(logo.read_bytes())
+        self.assertLessEqual(width, 256, "logo wider than 256 px")
+        self.assertLessEqual(height, 128, "logo taller than 128 px")
+        self.assertEqual(len(pixels), width * height * 4)
 
     def test_ui_text_comes_from_language_tables(self):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")

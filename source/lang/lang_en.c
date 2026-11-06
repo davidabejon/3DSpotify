@@ -23,9 +23,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_SEARCH] = "Search",
 
 	/* Results view. */
-	[STR_RESULTS_HEADER] = "Results",
-	[STR_RESULTS_RANGE_FMT] = "%d-%d of %d",
-	[STR_RESULTS_QUERY_FMT] = "Results: \"%s\"",
 	[STR_RESULTS_SEARCHING] = "Searching...",
 	[STR_RESULTS_NEW_SEARCH] = "Search something else",
 	[STR_RESULTS_RETRY] = "Try again",
@@ -37,7 +34,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_CHOOSE] = "Choose",
 
 	/* Settings tab. */
-	[STR_SETTINGS_TITLE] = "Settings",
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",
 	[STR_SETTINGS_RECONNECT] = "Reconnect",
 	[STR_SETTINGS_PAIR] = "Pair another account",

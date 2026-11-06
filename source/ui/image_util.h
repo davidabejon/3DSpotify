@@ -84,4 +84,39 @@ static inline void image_to_texture(const uint8_t *src, int w, int h,
 	}
 }
 
+/* Smallest power of two >= n, never below 8 (the GPU's minimum texture
+ * side) nor above 1024 (its maximum); 0 when n does not fit. */
+static inline int image_pow2(int n)
+{
+	if (n > 1024)
+		return 0;
+	int size = 8;
+	while (size < n)
+		size <<= 1;
+	return size;
+}
+
+/* Copies an RGBA image (w x h) 1:1, without filtering, to the top-left
+ * corner of a tex_w x tex_h GPU_RGBA8 texture (tex_w a multiple of 8).
+ * Pixels outside w x h are left untouched; nothing is written when the
+ * image does not fit. */
+static inline void image_copy_to_texture(const uint8_t *src, int w, int h,
+                                         uint8_t *tex, int tex_w, int tex_h)
+{
+	if (!src || !tex || w <= 0 || h <= 0 || tex_w <= 0 || tex_h <= 0 ||
+	    (tex_w & 7) || w > tex_w || h > tex_h)
+		return;
+	for (int y = 0; y < h; y++) {
+		const uint8_t *p = src + (size_t)y * w * 4;
+		for (int x = 0; x < w; x++, p += 4) {
+			uint8_t *out = tex + (size_t)image_morton_offset(
+				(uint32_t)x, (uint32_t)y, (uint32_t)tex_w) * 4;
+			out[0] = p[3];
+			out[1] = p[2];
+			out[2] = p[1];
+			out[3] = p[0];
+		}
+	}
+}
+
 #endif

@@ -62,6 +62,18 @@ Se genera `source\dist\3ds\spotify3ds\spotify3ds.cia`; cópialo a la SD e
 instálalo con FBI o un instalador de CIA similar (requiere custom firmware).
 El CIA guarda su configuración en `SD:/3ds/spotibacan/`.
 
+Tanto el `.3dsx` como el `.cia` empaquetan el directorio `romfs/` del
+repositorio, que la app lee como `romfs:/`; si falta, el build se detiene.
+Contiene el logo de la pantalla superior, `romfs/gfx/logo.png`:
+
+- un diseño propio, sin el nombre ni el logo de Spotify;
+- un PNG RGBA de 8 bits de 256×128 px como máximo, que se dibuja 1:1 sin
+  reescalar (una imagen mayor no se carga); conserva su canal alfa, bordes
+  suaves incluidos.
+
+Sin un logo válido, la pantalla superior muestra el nombre de la app como
+texto.
+
 El target inicia la sesión directa: renueva la credencial guardada, permite
 emparejar si hace falta y comprueba la conexión al access point y a la sesión
 de biblioteca. Si no hay una credencial guardada, sigue el código de
@@ -88,6 +100,19 @@ pestañas, cada una con su icono:
   te mueves entre ellas.
 - **SELECT** cambia el idioma desde cualquier pestaña y **START** sale.
 
+### Pantalla superior
+
+- Sin nada sonando, o tras un error de reproducción, todas las pestañas
+  muestran el logo.
+- Mientras una pista carga, suena (también en pausa) o acaba de terminar,
+  **Inicio**, **Búsqueda** y **Ajustes** muestran la ficha de lo que suena:
+  carátula, título, artista, álbum, el tiempo y la barra de progreso con la
+  descarga por delante. La pestaña **Reproducción** muestra la carátula en
+  grande.
+- Mientras hay una búsqueda en curso, la pestaña **Búsqueda** añade encima
+  del logo o de la ficha una burbuja flotante «Buscando…» con el indicador de
+  carga.
+
 ### Inicio
 
 Toca **«Buscar canciones»** o pulsa **A** para abrir el teclado. Debajo aparece tu última búsqueda como un botón secundario; tócalo o llega a él con arriba/abajo y pulsa **A**. Al confirmar, la app pasa a la pestaña **Búsqueda**.
@@ -103,7 +128,7 @@ Mientras el teclado está abierto, la canción que suena se pausa y sigue al cer
 
 ### Búsqueda
 
-Los resultados muestran cuatro canciones a la vez. La **pantalla superior** muestra la consulta con el rango visible («1-4 de 24») y la ficha de la canción resaltada: título, artista, álbum y duración. La **pantalla inferior** muestra la lista con miniaturas bajo la barra de pestañas.
+Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** muestra la lista con miniaturas bajo la barra de pestañas; la superior sigue lo descrito en [Pantalla superior](#pantalla-superior).
 
 **Navegación:**
 - Arriba/abajo recorre la lista; la canción resaltada gana un fondo verde más brillante.
@@ -118,9 +143,9 @@ Los resultados muestran cuatro canciones a la vez. La **pantalla superior** mues
 - Izquierda/derecha — salta de cuatro en cuatro
 
 **Gestos táctiles:**
-- **Tocar una fila:** selecciona la canción; la fila se resalta y su ficha aparece en la pantalla superior.
+- **Tocar una fila:** selecciona la canción; la fila se resalta.
 - **Tocar nuevamente:** reproduce la canción al momento con el resto de resultados como cola.
-- **Arrastrar verticalmente:** desplaza la lista; las filas pueden quedar cortadas por la barra de pestañas y la barra de botones. La canción resaltada y su ficha siguen visibles en la pantalla superior mientras desplazas.
+- **Arrastrar verticalmente:** desplaza la lista; las filas pueden quedar cortadas por la barra de pestañas y la barra de botones.
 - **Arrastrar más de 8 píxeles desde donde tocaste:** el arrastre se confirma; el toque de la fila se cancela.
 
 **Estado de la búsqueda:**
@@ -132,7 +157,7 @@ Los resultados muestran cuatro canciones a la vez. La **pantalla superior** mues
 ### Reproducción
 
 La canción elegida se reproduce localmente con el resto de resultados como cola, y sigue sonando aunque cambies de pestaña.
-- La **pantalla superior** muestra la carátula (o un fondo neutro si no está disponible).
+- La **pantalla superior** muestra la carátula en grande (con el marcador de la nota hasta que llega).
 - La **pantalla inferior** muestra el título, el artista y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
 
 **Controles de reproducción:**

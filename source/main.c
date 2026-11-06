@@ -12,6 +12,7 @@
 #include "icons.h"
 #include "lang.h"
 #include "login5.h"
+#include "logo.h"
 #include "pair3ds.h"
 #include "player_logic.h"
 #include "spclient.h"
@@ -20,6 +21,7 @@
 #include "thumbs.h"
 #include "track.h"
 #include "tls3ds.h"
+#include "top.h"
 #include "ui.h"
 #include "view_home.h"
 #include "view_player.h"
@@ -766,18 +768,21 @@ static player_info player_snapshot(void)
 
 /* Renders a GPU frame only when something changed, else just waits for
  * VBlank: rendering shares the main thread with the Vorbis decoder. While a
- * track plays on the Playing tab, the clock changes once a second, so that
- * is one GPU frame per second; on the other tabs the player costs no
- * frame at all (STYLES.md 9).
+ * track plays, the clock changes once a second: the Playing tab's bottom
+ * screen and the top screen's "now playing" card on the other tabs show
+ * it, so that is one GPU frame per second on any tab (the big cover on the
+ * Playing tab has no clock). With nothing playing, the top screen's logo
+ * costs no frame at all (STYLES.md 9).
  *
  * Both screens are drawn together. Until the F0 spike confirms on hardware
  * that a target left out of a frame keeps its last image, skipping one is
- * not worth the risk; the top screen costs a rectangle and a quad.
+ * not worth the risk; the top screen costs a few rectangles and quads.
  *
- * With the tabs, the active tab's view draws both screens and the tab bar
- * goes over its bottom screen; the artwork's own changes only count on the
- * Playing tab and on the text screens, and switching tabs always
- * repaints. */
+ * With the tabs, top.h draws the top screen (logo, card or big cover, and
+ * the search bubble), the active tab's view draws the bottom one and the
+ * tab bar goes over it; the artwork's own changes only count while the
+ * cover is on screen, and switching tabs always repaints. The text screens
+ * keep the artwork on top, as before. */
 static void frame(void)
 {
 	/* 0: the text screen; 1 + tab: that tab. */
@@ -793,7 +798,8 @@ static void frame(void)
 	} else {
 		player_info info = player_snapshot();
 		view_player_set(&info);
-		changed = tabbar_dirty();
+		top_set(&info);
+		changed = tabbar_dirty() || top_dirty(active_tab, &cover_art);
 		switch (active_tab) {
 		case TAB_HOME:
 			changed |= view_home_dirty();
@@ -802,7 +808,7 @@ static void frame(void)
 			changed |= view_results_dirty();
 			break;
 		case TAB_PLAYER:
-			changed |= view_player_dirty() || artwork_dirty(&cover_art);
+			changed |= view_player_dirty();
 			break;
 		default:
 			changed |= view_settings_dirty();
@@ -815,24 +821,10 @@ static void frame(void)
 	}
 	ui_begin();
 	ui_scene(GFX_TOP);
-	if (!tabs) {
+	if (!tabs)
 		artwork_draw(&cover_art);
-	} else {
-		switch (active_tab) {
-		case TAB_HOME:
-			view_home_draw_top();
-			break;
-		case TAB_SEARCH:
-			view_results_draw_top();
-			break;
-		case TAB_PLAYER:
-			artwork_draw(&cover_art);
-			break;
-		default:
-			view_settings_draw_top();
-			break;
-		}
-	}
+	else
+		top_draw(active_tab, &cover_art);
 	ui_scene(GFX_BOTTOM);
 	if (!tabs) {
 		textscreen_draw();
@@ -951,7 +943,7 @@ static void search_start(const spotify_session *session, const char *query)
 	/* The tracks in the list are about to change under the queue's
 	 * copy. */
 	queue_from_results = false;
-	view_results_searching(search.query);
+	view_results_searching();
 	/* Below the decoder, like every worker that can overlap playback. */
 	search_thread = threadCreate(search_worker, &search, 16 * 1024,
 	                             background_priority(), -2, false);
@@ -959,8 +951,7 @@ static void search_start(const spotify_session *session, const char *query)
 		snprintf(search.error, sizeof(search.error), "%s",
 		         tr(STR_ERR_SEARCH_THREAD));
 		secure_clear(search.library_token, sizeof(search.library_token));
-		view_results_error(search.query, search.error,
-		                   search_error_advice(search.error));
+		view_results_error(search_error_advice(search.error));
 	}
 }
 
@@ -977,10 +968,9 @@ static void search_poll(void)
 		if (active_tab == TAB_SEARCH)
 			switch_tab(TAB_HOME);
 	} else if (search.result == 0) {
-		view_results_show(search.query, search.tracks, search.count, 0);
+		view_results_show(search.tracks, search.count, 0);
 	} else {
-		view_results_error(search.query, search.error,
-		                   search_error_advice(search.error));
+		view_results_error(search_error_advice(search.error));
 	}
 }
 
@@ -1467,25 +1457,35 @@ int main(int argc, char **argv)
 {
 	(void)argc;
 	gfxInitDefault();
+	/* Without romfs the logo falls back to the app name as text. */
+	bool romfs_ready = R_SUCCEEDED(romfsInit());
 	/* Without the renderer there is no way to show anything at all. */
 	if (!ui_init()) {
+		if (romfs_ready)
+			romfsExit();
 		gfxExit();
 		return 1;
 	}
-	/* Without icons or thumbnails the views still work, just without
-	 * them. */
+	/* Without icons, thumbnails or the logo the views still work, just
+	 * without them. */
 	icons_init();
 	thumbs_init();
+	if (romfs_ready)
+		logo_load();
 	if (!textscreen_init() || !view_home_init() || !view_results_init() ||
-	    !view_player_init() || !view_settings_init()) {
+	    !view_player_init() || !view_settings_init() || !top_init()) {
+		top_exit();
 		view_settings_exit();
 		view_player_exit();
 		view_results_exit();
 		view_home_exit();
+		logo_free();
 		thumbs_exit();
 		icons_exit();
 		textscreen_exit();
 		ui_exit();
+		if (romfs_ready)
+			romfsExit();
 		gfxExit();
 		return 1;
 	}
@@ -1592,14 +1592,18 @@ done:
 	if (soc_ready)
 		socExit();
 	free(soc_buffer);
+	top_exit();
 	view_settings_exit();
 	view_player_exit();
 	view_results_exit();
 	view_home_exit();
+	logo_free();
 	thumbs_exit();
 	icons_exit();
 	textscreen_exit();
 	ui_exit();
+	if (romfs_ready)
+		romfsExit();
 	gfxExit();
 	return 0;
 }

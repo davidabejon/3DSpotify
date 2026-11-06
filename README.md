@@ -64,6 +64,17 @@ This writes `source\dist\3ds\spotify3ds\spotify3ds.cia`; copy it to the SD
 card and install it with FBI or a similar CIA installer (requires custom
 firmware). The CIA keeps its settings in `SD:/3ds/spotibacan/`.
 
+Both the `.3dsx` and the `.cia` pack the repository's `romfs/` directory,
+which the app reads as `romfs:/`; the build stops if it is missing. It holds
+the logo of the top screen, `romfs/gfx/logo.png`:
+
+- your own artwork, with no Spotify name or logo;
+- an 8-bit RGBA PNG of at most 256×128 px, drawn 1:1 without scaling (a
+  larger image is not loaded); its alpha channel is kept, soft edges
+  included.
+
+Without a usable logo the top screen shows the app name as text instead.
+
 The target starts a direct session: it refreshes the stored credential, offers
 pairing when needed, and checks the access-point and library-session
 connections. If no credential is stored, follow the pairing code shown on the
@@ -89,6 +100,16 @@ icon:
   between them.
 - **SELECT** switches the language from any tab and **START** exits.
 
+### Top screen
+
+- With nothing playing, or after a playback error, every tab shows the logo.
+- While a track loads, plays (paused too) or has just finished, **Home**,
+  **Search** and **Settings** show the now-playing card: cover, title, artist,
+  album, the time and the progress bar with the download ahead of it. The
+  **Playing** tab shows the cover large instead.
+- While a search runs, the **Search** tab adds a floating "Searching…" bubble
+  with the loading indicator over the logo or the card.
+
 ### Home
 
 Tap **"Search songs"** or press **A** to open the keyboard. Your last search appears below as a secondary button; tap it or move to it with up/down and press **A**. Once confirmed, the app moves to the **Search** tab.
@@ -104,7 +125,7 @@ While the keyboard is open, the playing track pauses; it resumes once the keyboa
 
 ### Search
 
-Results show four songs at a time. The **top screen** shows the query with the visible range ("1-4 of 24") and the song card: title, artist, album, and duration of the highlighted song. The **bottom screen** shows the list with thumbnails under the tab bar.
+Results show four songs at a time. The **bottom screen** shows the list with thumbnails under the tab bar; the top screen follows [Top screen](#top-screen).
 
 **Navigation:**
 - Use up/down to move through songs; the highlighted one gets a brighter green background.
@@ -119,10 +140,9 @@ Results show four songs at a time. The **top screen** shows the query with the v
 - Left/right — jump four songs at a time
 
 **Touch gestures:**
-- **Tap a row:** selects the song; the row highlights and its card appears on the top screen.
+- **Tap a row:** selects the song; the row highlights.
 - **Tap again:** plays immediately with the remaining results as the queue.
-- **Drag vertically:** scrolls the list; rows can be cut off by the tab bar and the button bar. The highlighted
-  song and its card remain visible on the top screen while you scroll.
+- **Drag vertically:** scrolls the list; rows can be cut off by the tab bar and the button bar.
 - **Drag beyond 8 pixels from the starting point:** commits to scrolling; the row tap is cancelled.
 
 **Search status:**
@@ -134,7 +154,7 @@ Results show four songs at a time. The **top screen** shows the query with the v
 ### Playing
 
 The chosen track plays locally with the rest of the results as the queue, and keeps playing when you switch tabs.
-- The **top screen** shows the album artwork (or a neutral background if unavailable).
+- The **top screen** shows the album artwork large (a note placeholder until it arrives).
 - The **bottom screen** shows the title, artist and place in the queue ("3 of 24"), the previous, play/pause and next buttons, the time, the progress bar (with the download ahead of it) and the volume bar.
 
 **Playback controls:**

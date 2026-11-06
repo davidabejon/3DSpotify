@@ -98,6 +98,7 @@ enum {
 	DRAG_START = 8,       /* §6.9 un toque pasa a arrastre (e2) */
 	HANDLE_W = 6,         /* §5.4 tirador de 6×14 px */
 	HANDLE_H = 14,
+	ART_BIG = 216,        /* carátula grande de la pantalla superior: 240 - 2·e3 */
 };
 
 #endif

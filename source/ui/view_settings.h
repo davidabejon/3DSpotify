@@ -41,7 +41,7 @@ settings_action view_settings_update(u32 down);
 
 bool view_settings_dirty(void);
 
-void view_settings_draw_top(void);
+/* The bottom screen; the top one is top.h's. */
 void view_settings_draw_bottom(void);
 
 #endif

@@ -48,8 +48,7 @@ home_action view_home_update(u32 down);
  * animation changed since the last draw. */
 bool view_home_dirty(void);
 
-/* Draw into the current scene. */
-void view_home_draw_top(void);
+/* Draw into the current scene (the bottom screen; the top one is top.h's). */
 void view_home_draw_bottom(void);
 
 #endif

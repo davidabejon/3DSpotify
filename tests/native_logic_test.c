@@ -4,6 +4,7 @@
 #include "lang.h"
 #include "layout.h"
 #include "list_logic.h"
+#include "now_layout.h"
 #include "player_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
@@ -12,6 +13,7 @@
 #include "text_fit.h"
 #include "thumb_queue.h"
 #include "theme.h"
+#include "top_logic.h"
 
 #include <assert.h>
 #include <math.h>
@@ -191,6 +193,61 @@ static void test_image_to_texture(void)
 	image_to_texture(src, 2, 2, tex, 8, 16, 16);
 	image_to_texture(NULL, 2, 2, tex, 8, 1, 1);
 	assert(tex[0] == 0x11);
+}
+
+static void test_image_pow2(void)
+{
+	assert(image_pow2(0) == 8);
+	assert(image_pow2(1) == 8);
+	assert(image_pow2(8) == 8);
+	assert(image_pow2(9) == 16);
+	assert(image_pow2(128) == 128);
+	assert(image_pow2(129) == 256);
+	assert(image_pow2(1024) == 1024);
+	assert(image_pow2(1025) == 0);
+}
+
+static void test_image_copy_to_texture(void)
+{
+	/* A 10x3 image in a 16x8 texture: every pixel lands unfiltered at its
+	 * Morton offset, as A, B, G, R. */
+	enum { W = 10, H = 3, TW = 16, TH = 8 };
+	uint8_t src[W * H * 4];
+	for (int i = 0; i < W * H; i++) {
+		src[i * 4] = (uint8_t)i;           /* R carries the index */
+		src[i * 4 + 1] = (uint8_t)(i + 1); /* G */
+		src[i * 4 + 2] = (uint8_t)(i + 2); /* B */
+		src[i * 4 + 3] = (i & 1) ? 255 : 0;
+	}
+	uint8_t tex[TW * TH * 4];
+	memset(tex, 0xEE, sizeof(tex));
+	image_copy_to_texture(src, W, H, tex, TW, TH);
+	for (int y = 0; y < TH; y++)
+		for (int x = 0; x < TW; x++) {
+			uint32_t at = image_morton_offset((uint32_t)x, (uint32_t)y,
+			                                  TW) * 4;
+			if (x < W && y < H) {
+				int i = y * W + x;
+				assert(tex[at] == ((i & 1) ? 255 : 0));
+				assert(tex[at + 1] == (uint8_t)(i + 2));
+				assert(tex[at + 2] == (uint8_t)(i + 1));
+				assert(tex[at + 3] == (uint8_t)i);
+			} else {
+				/* Nothing outside w x h is written. */
+				assert(tex[at] == 0xEE && tex[at + 1] == 0xEE &&
+				       tex[at + 2] == 0xEE && tex[at + 3] == 0xEE);
+			}
+		}
+
+	/* Images that do not fit, bad widths and NULLs leave it alone. */
+	memset(tex, 0x11, sizeof(tex));
+	image_copy_to_texture(src, TW + 1, 1, tex, TW, TH);
+	image_copy_to_texture(src, 1, TH + 1, tex, TW, TH);
+	image_copy_to_texture(src, 1, 1, tex, 12, TH);
+	image_copy_to_texture(NULL, 1, 1, tex, TW, TH);
+	image_copy_to_texture(src, 0, 1, tex, TW, TH);
+	for (size_t i = 0; i < sizeof(tex); i++)
+		assert(tex[i] == 0x11);
 }
 
 /* Every byte is 6 px wide, so a multibyte character is wider than it looks:
@@ -946,11 +1003,150 @@ static void test_player_layout(void)
 	assert(player_fill_px(0, 500) == 0);
 }
 
+static void test_player_shared_helpers(void)
+{
+	char text[16];
+	player_format_time(0, text, sizeof(text));
+	assert(strcmp(text, "0:00") == 0);
+	player_format_time(84, text, sizeof(text));
+	assert(strcmp(text, "1:24") == 0);
+	player_format_time(3601, text, sizeof(text));
+	assert(strcmp(text, "60:01") == 0);
+
+	assert(player_progress_permille(true, 0, 0) == 1000);
+	assert(player_progress_permille(false, 30, 60) == 500);
+	assert(player_progress_permille(false, 5, 0) == 0);
+
+	/* The download follows every tick, else once a second. */
+	player_download_sample sample = { 0, 0 };
+	player_sample_download(&sample, true, 10);
+	assert(sample.shown == 10);
+	for (int i = 1; i < PLAYER_DOWNLOAD_FRAMES; i++) {
+		player_sample_download(&sample, false, 20 + i);
+		assert(sample.shown == 10);
+	}
+	player_sample_download(&sample, false, 99);
+	assert(sample.shown == 99);
+}
+
+static bool overlaps(ui_rect a, ui_rect b)
+{
+	return a.x < b.x + b.w && b.x < a.x + a.w &&
+	       a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+static bool on_top_screen(ui_rect r, int margin)
+{
+	return r.x >= margin && r.y >= margin &&
+	       r.x + r.w <= SCREEN_TOP_W - margin &&
+	       r.y + r.h <= SCREEN_H - margin;
+}
+
+static void test_now_layout(void)
+{
+	/* The system font's line feed is 30: t_titulo 23, t_cuerpo 15,
+	 * t_meta 14 (ui_line_height). Also try a taller font. */
+	static const int heights[][3] = { { 23, 15, 14 }, { 27, 18, 16 } };
+	for (size_t k = 0; k < sizeof(heights) / sizeof(heights[0]); k++) {
+		int title_h = heights[k][0], body_h = heights[k][1];
+		int meta_h = heights[k][2];
+
+		/* 7.5: 160x160 cover, e3 from the top and left edges, its 3 px
+		 * shadow included on screen. */
+		ui_rect art = now_art_rect();
+		assert(art.x == SP_3 && art.y == SP_3);
+		assert(art.w == ART_SIZE && art.h == ART_SIZE);
+		ui_rect shadow = ui_rect_offset(art, ART_SHADOW_OFF,
+		                                ART_SHADOW_OFF);
+		assert(on_top_screen(art, SP_3) && on_top_screen(shadow, SP_3));
+
+		/* The text column: right of the cover and its shadow, up to
+		 * e3 from the right edge. */
+		ui_rect text = { now_text_x(), SP_3, now_text_w(),
+		                 now_album_cy(title_h, body_h) + body_h / 2 + 1 -
+		                 SP_3 };
+		assert(text.x == SP_3 + ART_SIZE + SP_4);
+		assert(text.x + text.w == SCREEN_TOP_W - SP_3);
+		assert(!overlaps(text, shadow) && on_top_screen(text, SP_3));
+		int title_bottom = now_title_cy(title_h) + (title_h + 1) / 2;
+		int artist_top = now_artist_cy(title_h, body_h) - body_h / 2;
+		assert(artist_top - title_bottom >= SP_1 - 1);
+		assert(now_album_cy(title_h, body_h) -
+		       now_artist_cy(title_h, body_h) == body_h);
+		assert(text.y + text.h <= art.y + art.h);
+
+		/* Times e4 under the cover, the bar below with its handle
+		 * clear of their line, everything inside e3. */
+		int times_top = now_times_cy(meta_h) - meta_h / 2;
+		assert(times_top == art.y + art.h + SP_4);
+		assert(times_top > shadow.y + shadow.h);
+		ui_rect bar = now_progress_rect(meta_h);
+		assert(bar.h == PROGRESS_H);
+		assert(bar.x == SP_3 && bar.x + bar.w == SCREEN_TOP_W - SP_3);
+		ui_rect handle = { bar.x, bar.y + bar.h / 2 - HANDLE_H / 2,
+		                   HANDLE_W, HANDLE_H };
+		assert(handle.y >= times_top + meta_h);
+		assert(on_top_screen(handle, SP_3) && on_top_screen(bar, SP_3));
+	}
+
+	/* The big cover: centred, e3 above and below. */
+	ui_rect big = now_big_art_rect();
+	assert(big.w == ART_BIG && big.h == ART_BIG);
+	assert(big.x == 92 && big.y == SP_3);
+	assert(big.x * 2 + big.w == SCREEN_TOP_W);
+	assert(big.y + big.h == SCREEN_H - SP_3);
+	ui_rect big_shadow = ui_rect_offset(big, ART_SHADOW_OFF, ART_SHADOW_OFF);
+	assert(on_top_screen(big_shadow, 0));
+}
+
+static void test_list_bubbles(void)
+{
+	/* 5.9: centred SP_2 above the button bar; a second bubble stacks
+	 * above, clear of the first one's shadow and under the tab bar. */
+	ui_rect first = list_bubble_rect(100.0f);
+	assert(first.h == BUBBLE_H && first.w == 100 + 2 * SP_3);
+	assert(first.y + first.h + SP_2 == SCREEN_H - BAR_H);
+	assert(first.x * 2 + first.w == SCREEN_BOTTOM_W);
+	ui_rect same = list_bubble_slot_rect(100.0f, 0);
+	assert(same.x == first.x && same.y == first.y && same.w == first.w);
+	ui_rect second = list_bubble_slot_rect(60.0f, 1);
+	assert(second.y + second.h + SHADOW_OFF + SP_2 == first.y);
+	assert(!overlaps(ui_rect_offset(second, SHADOW_OFF, SHADOW_OFF), first));
+	assert(second.y > TAB_H);
+}
+
+static void test_top_mode(void)
+{
+	static const player_phase phases[] = {
+		PLAYER_PHASE_IDLE, PLAYER_PHASE_LOADING, PLAYER_PHASE_PLAYING,
+		PLAYER_PHASE_FINISHED, PLAYER_PHASE_FAILED
+	};
+	for (int tab = 0; tab < TAB_COUNT; tab++)
+		for (size_t i = 0; i < sizeof(phases) / sizeof(phases[0]); i++) {
+			player_phase phase = phases[i];
+			bool music = phase == PLAYER_PHASE_LOADING ||
+			             phase == PLAYER_PHASE_PLAYING ||
+			             phase == PLAYER_PHASE_FINISHED;
+			assert(top_music_on(phase) == music);
+			top_mode mode = top_mode_for((app_tab)tab, phase);
+			if (!music)
+				assert(mode == TOP_LOGO);
+			else if (tab == TAB_PLAYER)
+				assert(mode == TOP_ART_BIG);
+			else
+				assert(mode == TOP_NOW_CARD);
+		}
+}
+
 int main(void)
 {
 	test_tabs();
 	test_settings_layout();
 	test_player_layout();
+	test_player_shared_helpers();
+	test_now_layout();
+	test_list_bubbles();
+	test_top_mode();
 	test_list_drag();
 	test_art_url();
 	test_thumb_queue();
@@ -966,6 +1162,8 @@ int main(void)
 	test_image_fit();
 	test_image_morton_offset();
 	test_image_to_texture();
+	test_image_pow2();
+	test_image_copy_to_texture();
 	test_search_path_encoding();
 	test_queue_boundaries();
 	test_language_tables();

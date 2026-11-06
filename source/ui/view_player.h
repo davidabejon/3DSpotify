@@ -14,19 +14,12 @@
 #define VIEW_PLAYER_H
 
 #include "lang.h"
+#include "player_logic.h"
 #include "spclient.h"
 
 #include <3ds.h>
 
 #include <stdbool.h>
-
-typedef enum {
-	PLAYER_PHASE_IDLE,      /* nothing played yet */
-	PLAYER_PHASE_LOADING,   /* cover, audio key, connection */
-	PLAYER_PHASE_PLAYING,   /* playing or paused */
-	PLAYER_PHASE_FINISHED,
-	PLAYER_PHASE_FAILED
-} player_phase;
 
 typedef struct {
 	player_phase phase;

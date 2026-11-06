@@ -1,8 +1,11 @@
 #include "draw.h"
 
+#include "icons.h"
 #include "player_logic.h"
+#include "text_fit.h"
 
 #include <math.h>
+#include <stddef.h>
 
 void ui_fill(ui_rect r, u32 color)
 {
@@ -216,10 +219,8 @@ void ui_loader(int cx, int cy, int step)
 {
 	/* Each bar a step behind the previous one: 0, -2, -4, -2 px. */
 	static const int lift[] = { 0, 1, 2, 1 };
-	const int bars = 3;
-	int width = bars * LOADER_BAR_W + (bars - 1) * SP_1;
-	int x = cx - width / 2;
-	for (int i = 0; i < bars; i++) {
+	int x = cx - UI_LOADER_W / 2;
+	for (int i = 0; i < UI_LOADER_BARS; i++) {
 		int up = lift[(step + i) % 4] * LOADER_STEP_PX;
 		ui_rect bar = { x + i * (LOADER_BAR_W + SP_1),
 		                cy - LOADER_BAR_H / 2 - up, LOADER_BAR_W,
@@ -243,17 +244,91 @@ void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
 	                body_rect.w - 2 * SP_3);
 }
 
+void ui_art(ui_rect box, const C2D_Image *image)
+{
+	ui_rect inside = outlined(box, COL_CAPA_ALTA);
+	if (image && image->tex && image->subtex->width &&
+	    image->subtex->height) {
+		/* Fitted into the box and centred, on whole pixels; the
+		 * `capa_alta` fill shows only beside a non-square image. */
+		int w = image->subtex->width, h = image->subtex->height;
+		float sx = (float)inside.w / (float)w;
+		float sy = (float)inside.h / (float)h;
+		float scale = sx < sy ? sx : sy;
+		int shown_w = ui_px_ceil(w * scale), shown_h = ui_px_ceil(h * scale);
+		C2D_DrawImageAt(*image, inside.x + (inside.w - shown_w) / 2,
+		                inside.y + (inside.h - shown_h) / 2, 0.0f, NULL,
+		                scale, scale);
+		return;
+	}
+	C2D_Image note = icon_image(ICON_NOTE);
+	ui_icon(&note, box.x + (box.w - ICON_S) / 2,
+	        box.y + (box.h - ICON_S) / 2, COL_TEXTO_2);
+}
+
 float ui_bubble_content_width(const C2D_Text *text)
 {
 	return ICON_S + SP_1 + ui_text_width(text, TXT_CUERPO);
 }
 
+/* The raised `capa_alta` surface of a bubble (5.9), shared by both kinds;
+ * returns where it landed. */
+static ui_rect bubble_body(ui_rect r)
+{
+	return ui_bevel_rect(r, COL_CAPA_ALTA, COL_CAPA_LUZ, COL_SOMBRA, false);
+}
+
 void ui_bubble(ui_rect r, const C2D_Image *icon, const C2D_Text *text)
 {
-	ui_rect body = ui_bevel_rect(r, COL_CAPA_ALTA, COL_CAPA_LUZ, COL_SOMBRA,
-	                             false);
+	ui_rect body = bubble_body(r);
 	int cy = body.y + body.h / 2;
 	int x = body.x + SP_3;
 	ui_icon(icon, x, cy - ICON_S / 2, COL_TEXTO);
 	ui_text(text, x + ICON_S + SP_1, cy, TXT_CUERPO, COL_TEXTO);
+}
+
+float ui_bubble_loading_content_width(const C2D_Text *text)
+{
+	return UI_LOADER_W + SP_1 + ui_text_width(text, TXT_CUERPO);
+}
+
+void ui_bubble_loading(ui_rect r, int step, const C2D_Text *text)
+{
+	ui_rect body = bubble_body(r);
+	int cy = body.y + body.h / 2;
+	int x = body.x + SP_3;
+	ui_loader(x + UI_LOADER_W / 2, cy, step);
+	ui_text(text, x + UI_LOADER_W + SP_1, cy, TXT_CUERPO, COL_TEXTO);
+}
+
+/* --- Text fitting ------------------------------------------------------ */
+
+typedef struct {
+	C2D_TextBuf scratch;
+	float scale;
+} fit_ctx;
+
+static float measure_fit(const char *string, void *ctx)
+{
+	const fit_ctx *fit = ctx;
+	return ui_measure(fit->scratch, string, fit->scale);
+}
+
+float ui_measure(C2D_TextBuf scratch, const char *string, float scale)
+{
+	C2D_Text text;
+	C2D_TextBufClear(scratch);
+	C2D_TextParse(&text, scratch, string);
+	return ui_text_width(&text, scale);
+}
+
+void ui_parse_fitted(C2D_Text *text, C2D_TextBuf buf, C2D_TextBuf scratch,
+                     const char *string, float scale, int width)
+{
+	char fitted[UI_FIELD_SIZE];
+	fit_ctx fit = { scratch, scale };
+	text_fit(string, (float)width, measure_fit, &fit, fitted,
+	         sizeof(fitted));
+	C2D_TextParse(text, buf, fitted);
+	C2D_TextOptimize(text);
 }
