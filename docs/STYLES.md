@@ -595,31 +595,3 @@ enum {
 
 #endif
 ```
-
-### 10.2 Tareas asociadas
-
-- Crear `source/ui/draw.c` / `draw.h` con `ui_bevel_rect` (§5.1), `ui_panel` y `ui_button`
-  (estados de §6).
-- Lógica de estados de pulsación (reposo/pulsado/duración mínima/cancelación táctil) en un
-  header puro y testeado en host.
-- Añadir test en host de contraste ≥ 4.5:1 para todas las combinaciones de §2.6.
-- Actualizar `tests/test_build.py` donde cambien cadenas de `main.c`.
-- Reflejar los controles táctiles y L/R en `README.md` y `README_es.md`.
-
----
-
-## 11. Lista de comprobación por pantalla
-
-- [ ] Colores y tamaños salen de `theme.h`.
-- [ ] Ningún color con transparencia; degradado solo en el fondo.
-- [ ] Esquinas rectas y coordenadas enteras en todos los elementos.
-- [ ] Texto solo en las combinaciones de §2.6.
-- [ ] Nada por debajo de `TXT_META`; recortes medidos.
-- [ ] Objetivos táctiles ≥ 32 px; todo accesible también con botones.
-- [ ] Cada control tiene estados reposo, foco, pulsado y deshabilitado.
-- [ ] Toda pulsación táctil y física muestra el estado pulsado ≥ 6 frames.
-- [ ] Botones físicos invierten su glifo en la barra de botones.
-- [ ] Acciones sin control en pantalla muestran burbuja.
-- [ ] Ningún texto visible fuera de `tr(STR_...)`, en ambos idiomas.
-- [ ] El reproductor solo redibuja en los casos de §9.
-- [ ] Probado en consola real con audio sonando.
