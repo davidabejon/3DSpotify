@@ -3,9 +3,13 @@
  * The tables live in lang_en.c and lang_es.c, indexed by str_id. Entries that
  * end in _FMT are printf formats: every language must use the same conversion
  * specifiers in the same order (tests/native_logic_test.c checks this).
- * Entries that start with STR_KEYS_ are button hints and must fit one line of
- * the 40-column bottom-screen console. The 3DS console font is ASCII only, so
- * Spanish text is written without accents.
+ * Entries that start with STR_KEYS_ are button hints for the text screens and
+ * must fit one line of the 40-column grid. STR_HINT_ entries label one
+ * action each in the button bar of the redesigned views (docs/STYLES.md
+ * 5.6), next to the button's glyph; there the limit is the width in pixels.
+ * Capitals only start a sentence (STYLES.md 3.3).
+ * The tables stay ASCII (no accents in Spanish) until that restriction is
+ * lifted on purpose; citro2d itself could draw them.
  *
  * This module has no 3DS dependencies so the host tests can link it.
  */
@@ -23,39 +27,43 @@ typedef enum {
 typedef enum {
 	/* Generic. STR_ERROR is first so a zeroed startup_error reads "Error". */
 	STR_ERROR,
-	STR_NONE,
+	STR_APP_NAME,
+	STR_LANG_NAME, /* the language's own name, for the SELECT bubble */
 	STR_UNTITLED,
 	STR_UNKNOWN_ARTIST,
 	STR_NO_VALID_RESPONSE,
 	STR_CHECK_SD_SPACE,
 	STR_APP_CLOSING,
 	STR_LABEL_ARTIST,
-	STR_LABEL_ALBUM,
-	STR_LABEL_DURATION,
-	STR_LABEL_QUEUE,
-	STR_LABEL_QUERY,
-	STR_LABEL_PREVIOUS_QUERY,
-	STR_LABEL_SERVER,
 	STR_LABEL_CODE,
 
-	/* Button hints (one console line each). */
+	/* Button hints (one text-screen line each). */
 	STR_KEYS_LANGUAGE,
 	STR_KEYS_CANCEL_EXIT,
 	STR_KEYS_RESULTS_EXIT,
-	STR_KEYS_BACK_EXIT,
 	STR_KEYS_EXIT,
 	STR_KEYS_PLAYER,
-	STR_KEYS_SEARCH_RETRY,
-	STR_KEYS_NO_RESULTS,
-	STR_KEYS_RESULTS_MOVE,
-	STR_KEYS_RESULTS_NAV,
-	STR_KEYS_SELECTION_PLAY,
-	STR_KEYS_SELECTION_SEARCH,
-	STR_KEYS_SELECTION_SESSION,
-	STR_KEYS_STARTUP_RETRY,
-	STR_KEYS_SESSION_SEARCH,
-	STR_KEYS_SESSION_RECONNECT,
-	STR_KEYS_SESSION_PAIR,
+	STR_KEYS_STARTUP_RETRY, /* the last STR_KEYS_ entry */
+
+	/* Home view. */
+	STR_HOME_TITLE,
+	STR_HOME_SEARCH,
+	STR_HOME_LAST_SEARCH,
+	STR_HINT_SEARCH,
+	STR_HINT_RECONNECT,
+	STR_HINT_PAIR,
+
+	/* Results view. */
+	STR_RESULTS_HEADER,
+	STR_RESULTS_RANGE_FMT,
+	STR_RESULTS_QUERY_FMT,
+	STR_RESULTS_SEARCHING,
+	STR_RESULTS_NEW_SEARCH,
+	STR_RESULTS_RETRY,
+	STR_HINT_PLAY,
+	STR_HINT_BACK,
+	STR_HINT_CANCEL,
+	STR_HINT_RETRY,
 
 	/* Session start-up. */
 	STR_LOGIN_TITLE,
@@ -74,7 +82,6 @@ typedef enum {
 	STR_CHECK_WIFI_CONNECTED,
 	STR_PS_ENTROPY,
 	STR_SESSION_FAILED_TITLE,
-	STR_SESSION_READY_TITLE,
 
 	/* Start-up error categories. */
 	STR_CAT_NO_NETWORK,
@@ -110,8 +117,6 @@ typedef enum {
 
 	/* Search. */
 	STR_SEARCH_HINT,
-	STR_SEARCH_PROGRESS_TITLE,
-	STR_SEARCH_CONNECTING,
 	STR_SEARCH_CANCELLING,
 	STR_SEARCH_FAILED_TITLE,
 	STR_SEARCH_HTTP_401,
@@ -120,10 +125,7 @@ typedef enum {
 	STR_SEARCH_CHECK_WIFI,
 	STR_ERR_SEARCH_LOAD,
 	STR_ERR_SEARCH_THREAD,
-	STR_RESULTS_TITLE,
 	STR_RESULTS_EMPTY,
-	STR_RESULTS_PAGE_FMT,
-	STR_SELECTION_TITLE,
 
 	/* Playback. */
 	STR_PLAYER_TITLE,

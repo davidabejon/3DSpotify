@@ -67,19 +67,64 @@ emparejar si hace falta y comprueba la conexión al access point y a la sesión
 de biblioteca. Si no hay una credencial guardada, sigue el código de
 emparejamiento que aparece en la consola desde otro dispositivo y autoriza la
 cuenta en Spotify. El refresh token se guarda en la SD para los siguientes
-arranques. En la pantalla de sesión, A abre la búsqueda, X vuelve a conectar,
-Y permite emparejar otra cuenta y START sale. En resultados, arriba/abajo
-desplaza la lista, A selecciona, B vuelve y Y inicia otra consulta. B cancela
-una búsqueda pendiente cuando termine la petición de red activa.
+arranques.
 
-A en la pantalla de selección inicia la reproducción local. Durante la
-reproducción, la pantalla superior muestra la carátula (o un fondo neutro si
-no está disponible); la inferior muestra la pista y el progreso. A
-pausa/reanuda, izquierda/derecha cambia de pista, arriba/abajo ajusta el
-volumen local, B vuelve a resultados y START detiene y sale. La cola sigue el
-orden de los resultados y no envuelve en sus extremos. La reproducción
-completa, carátulas y controles aún deben validarse en una 3DS real. Los
-probes siguen disponibles como targets independientes.
+### Pantalla de inicio
+
+En la pantalla de inicio, toca **«Buscar canciones»** o pulsa **A** para abrir el teclado. Debajo aparece tu última búsqueda como un botón secundario; tócalo o llega a él con arriba/abajo y pulsa **A**.
+
+**Controles táctiles:**
+- Toca un botón para resaltarlo; el botón muestra un estado pulsado cuando levantas el lápiz dentro de él.
+- Si deslizas el lápiz fuera del botón antes de levantarlo, se cancela el toque.
+
+**Indicadores de acción:** Los glifos con fondos de color muestran las acciones disponibles:
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — abre el teclado de búsqueda
+- <span style="background-color: #3FA2FF; color: white; padding: 2px 4px; border-radius: 2px;">X</span> — reconecta con Spotify
+- <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — empareja otra cuenta
+- **SELECT** — cambia el idioma
+- **START** — sale
+
+### Resultados de búsqueda
+
+Los resultados muestran cuatro canciones a la vez. La **pantalla superior** muestra la ficha de la canción: título, artista, álbum y duración de la canción resaltada. La **pantalla inferior** muestra la lista con miniaturas.
+
+**Navegación:**
+- Arriba/abajo recorre la lista; la canción resaltada gana un borde verde (`lima`) y un fondo más brillante.
+- L/R salta de cuatro en cuatro.
+- Toca una canción para resaltarla; tócala otra vez (o pulsa **A**) para reproducirla directamente.
+- Arrastra la lista con el lápiz para desplazarla; la barra del borde derecho indica por dónde vas.
+
+**Indicadores de acción:**
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — reproduce la canción resaltada
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pantalla de inicio
+- <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — inicia una nueva búsqueda
+- L/R — salta de cuatro en cuatro
+
+**Gestos táctiles:**
+- **Tocar una fila:** selecciona la canción; la fila se resalta y su ficha aparece en la pantalla superior.
+- **Tocar nuevamente:** reproduce la canción al momento con el resto de resultados como cola.
+- **Arrastrar verticalmente:** desplaza la lista; las filas pueden quedar cortadas por los bordes de la pantalla. La canción resaltada y su ficha siguen visibles en la pantalla superior mientras desplazas.
+- **Arrastrar más de 8 píxeles desde donde tocaste:** el arrastre se confirma; el toque de la fila se cancela.
+
+**Estado de la búsqueda:**
+- Si la búsqueda falla, pulsa **A** (o toca el botón de la pantalla) para reintentar.
+- Pulsa **B** para cancelar una búsqueda pendiente cuando termine la petición de red activa.
+
+### Reproducción
+
+La canción elegida se reproduce localmente con el resto de resultados como cola. Durante la reproducción:
+- La **pantalla superior** muestra la carátula (o un fondo neutro si no está disponible) con el título,
+  artista y álbum a la derecha.
+- La **pantalla inferior** muestra el número de pista, barra de progreso y control de volumen.
+
+**Controles de reproducción:**
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda
+- Izquierda/derecha — cambia de pista
+- Arriba/abajo — ajusta el volumen local
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a resultados
+- **START** — detiene y sale
+
+La cola sigue el orden de los resultados y no envuelve en sus extremos. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
 
 ## Probes
 

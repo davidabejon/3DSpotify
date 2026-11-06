@@ -4,39 +4,43 @@
 const char *const lang_strings_es[STR_COUNT] = {
 	/* Generico. */
 	[STR_ERROR] = "Error",
-	[STR_NONE] = "(ninguna)",
+	[STR_APP_NAME] = "3DSpotify",
+	[STR_LANG_NAME] = "Espanol",
 	[STR_UNTITLED] = "(sin titulo)",
 	[STR_UNKNOWN_ARTIST] = "(artista desconocido)",
 	[STR_NO_VALID_RESPONSE] = "No se recibio una respuesta valida.",
 	[STR_CHECK_SD_SPACE] = "Comprueba el espacio disponible en la tarjeta SD.",
 	[STR_APP_CLOSING] = "La aplicacion se esta cerrando.",
 	[STR_LABEL_ARTIST] = "Artista",
-	[STR_LABEL_ALBUM] = "Album",
-	[STR_LABEL_DURATION] = "Duracion",
-	[STR_LABEL_QUEUE] = "Cola",
-	[STR_LABEL_QUERY] = "Consulta",
-	[STR_LABEL_PREVIOUS_QUERY] = "Consulta anterior",
-	[STR_LABEL_SERVER] = "Servidor",
 	[STR_LABEL_CODE] = "Codigo",
 
 	/* Botones. */
 	[STR_KEYS_LANGUAGE] = "SELECT: English",
 	[STR_KEYS_CANCEL_EXIT] = "B: cancelar   START: salir",
 	[STR_KEYS_RESULTS_EXIT] = "B: resultados   START: salir",
-	[STR_KEYS_BACK_EXIT] = "B: volver   START: salir",
 	[STR_KEYS_EXIT] = "START: salir",
 	[STR_KEYS_PLAYER] = "A: pausa  Izq/Der: pista  Arr/Ab: vol.",
-	[STR_KEYS_SEARCH_RETRY] = "A: reintentar   Y: cambiar consulta",
-	[STR_KEYS_NO_RESULTS] = "Y: nueva busqueda   B: volver",
-	[STR_KEYS_RESULTS_MOVE] = "Arriba/abajo: mover  A: seleccionar",
-	[STR_KEYS_RESULTS_NAV] = "Y: buscar  B: volver  START: salir",
-	[STR_KEYS_SELECTION_PLAY] = "A: reproducir   B: resultados",
-	[STR_KEYS_SELECTION_SEARCH] = "Y: nueva busqueda",
-	[STR_KEYS_SELECTION_SESSION] = "X: sesion   START: salir",
 	[STR_KEYS_STARTUP_RETRY] = "A: reintentar   Y: emparejar",
-	[STR_KEYS_SESSION_SEARCH] = "A: buscar canciones",
-	[STR_KEYS_SESSION_RECONNECT] = "X: volver a conectar",
-	[STR_KEYS_SESSION_PAIR] = "Y: emparejar otra cuenta",
+
+	/* Vista de inicio. */
+	[STR_HOME_TITLE] = "Inicio",
+	[STR_HOME_SEARCH] = "Buscar canciones",
+	[STR_HOME_LAST_SEARCH] = "Ultima busqueda",
+	[STR_HINT_SEARCH] = "Buscar",
+	[STR_HINT_RECONNECT] = "Reconectar",
+	[STR_HINT_PAIR] = "Emparejar",
+
+	/* Vista de resultados. */
+	[STR_RESULTS_HEADER] = "Resultados",
+	[STR_RESULTS_RANGE_FMT] = "%d-%d de %d",
+	[STR_RESULTS_QUERY_FMT] = "Resultados: \"%s\"",
+	[STR_RESULTS_SEARCHING] = "Buscando...",
+	[STR_RESULTS_NEW_SEARCH] = "Buscar otra cosa",
+	[STR_RESULTS_RETRY] = "Reintentar",
+	[STR_HINT_PLAY] = "Reproducir",
+	[STR_HINT_BACK] = "Volver",
+	[STR_HINT_CANCEL] = "Cancelar",
+	[STR_HINT_RETRY] = "Reintentar",
 
 	/* Inicio de sesion. */
 	[STR_LOGIN_TITLE] = "3DSpotify - iniciando sesion directa",
@@ -55,7 +59,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_CHECK_WIFI_CONNECTED] = "Comprueba que el Wi-Fi de la consola esta conectado.",
 	[STR_PS_ENTROPY] = "No se pudo habilitar la fuente de aleatoriedad de la consola.",
 	[STR_SESSION_FAILED_TITLE] = "No se pudo iniciar la sesion",
-	[STR_SESSION_READY_TITLE] = "Sesion Spotify lista",
 
 	/* Categorias de error al iniciar. */
 	[STR_CAT_NO_NETWORK] = "No hay servicio de red",
@@ -91,20 +94,15 @@ const char *const lang_strings_es[STR_COUNT] = {
 
 	/* Busqueda. */
 	[STR_SEARCH_HINT] = "Nombre de cancion o artista",
-	[STR_SEARCH_PROGRESS_TITLE] = "Buscando canciones",
-	[STR_SEARCH_CONNECTING] = "Conectando con Spotify y cargando resultados...",
-	[STR_SEARCH_CANCELLING] = "Cancelando al terminar la solicitud de red...",
-	[STR_SEARCH_FAILED_TITLE] = "No se pudo completar la busqueda",
+	[STR_SEARCH_CANCELLING] = "Cancelando al terminar la solicitud...",
+	[STR_SEARCH_FAILED_TITLE] = "La busqueda fallo",
 	[STR_SEARCH_HTTP_401] = "La sesion fue rechazada. Pulsa B y luego X para reconectar.",
 	[STR_SEARCH_HTTP_403] = "Spotify no permite esta operacion para la cuenta o pista.",
 	[STR_SEARCH_HTTP_429] = "Se alcanzo el limite de solicitudes; espera antes de reintentar.",
 	[STR_SEARCH_CHECK_WIFI] = "Comprueba el Wi-Fi y vuelve a intentarlo.",
 	[STR_ERR_SEARCH_LOAD] = "No se pudieron cargar los resultados.",
 	[STR_ERR_SEARCH_THREAD] = "No se pudo iniciar la tarea de busqueda.",
-	[STR_RESULTS_TITLE] = "Resultados de Spotify",
 	[STR_RESULTS_EMPTY] = "No se encontraron canciones.",
-	[STR_RESULTS_PAGE_FMT] = "Pagina %d/%d  (%d canciones)",
-	[STR_SELECTION_TITLE] = "Cancion seleccionada",
 
 	/* Reproduccion. */
 	[STR_PLAYER_TITLE] = "Reproduccion local",

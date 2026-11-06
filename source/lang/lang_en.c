@@ -3,39 +3,43 @@
 const char *const lang_strings_en[STR_COUNT] = {
 	/* Generic. */
 	[STR_ERROR] = "Error",
-	[STR_NONE] = "(none)",
+	[STR_APP_NAME] = "3DSpotify",
+	[STR_LANG_NAME] = "English",
 	[STR_UNTITLED] = "(untitled)",
 	[STR_UNKNOWN_ARTIST] = "(unknown artist)",
 	[STR_NO_VALID_RESPONSE] = "No valid response was received.",
 	[STR_CHECK_SD_SPACE] = "Check the free space on the SD card.",
 	[STR_APP_CLOSING] = "The application is closing.",
 	[STR_LABEL_ARTIST] = "Artist",
-	[STR_LABEL_ALBUM] = "Album",
-	[STR_LABEL_DURATION] = "Duration",
-	[STR_LABEL_QUEUE] = "Queue",
-	[STR_LABEL_QUERY] = "Query",
-	[STR_LABEL_PREVIOUS_QUERY] = "Previous query",
-	[STR_LABEL_SERVER] = "Server",
 	[STR_LABEL_CODE] = "Code",
 
 	/* Button hints. */
 	[STR_KEYS_LANGUAGE] = "SELECT: Espanol",
 	[STR_KEYS_CANCEL_EXIT] = "B: cancel   START: exit",
 	[STR_KEYS_RESULTS_EXIT] = "B: results   START: exit",
-	[STR_KEYS_BACK_EXIT] = "B: back   START: exit",
 	[STR_KEYS_EXIT] = "START: exit",
 	[STR_KEYS_PLAYER] = "A: pause  L/R: track  Up/Down: volume",
-	[STR_KEYS_SEARCH_RETRY] = "A: retry   Y: change query",
-	[STR_KEYS_NO_RESULTS] = "Y: new search   B: back",
-	[STR_KEYS_RESULTS_MOVE] = "Up/down: move  A: select",
-	[STR_KEYS_RESULTS_NAV] = "Y: new search  B: back  START: exit",
-	[STR_KEYS_SELECTION_PLAY] = "A: play   B: results",
-	[STR_KEYS_SELECTION_SEARCH] = "Y: new search",
-	[STR_KEYS_SELECTION_SESSION] = "X: session   START: exit",
 	[STR_KEYS_STARTUP_RETRY] = "A: retry   Y: pair",
-	[STR_KEYS_SESSION_SEARCH] = "A: search songs",
-	[STR_KEYS_SESSION_RECONNECT] = "X: reconnect",
-	[STR_KEYS_SESSION_PAIR] = "Y: pair another account",
+
+	/* Home view. */
+	[STR_HOME_TITLE] = "Home",
+	[STR_HOME_SEARCH] = "Search songs",
+	[STR_HOME_LAST_SEARCH] = "Last search",
+	[STR_HINT_SEARCH] = "Search",
+	[STR_HINT_RECONNECT] = "Reconnect",
+	[STR_HINT_PAIR] = "Pair",
+
+	/* Results view. */
+	[STR_RESULTS_HEADER] = "Results",
+	[STR_RESULTS_RANGE_FMT] = "%d-%d of %d",
+	[STR_RESULTS_QUERY_FMT] = "Results: \"%s\"",
+	[STR_RESULTS_SEARCHING] = "Searching...",
+	[STR_RESULTS_NEW_SEARCH] = "Search something else",
+	[STR_RESULTS_RETRY] = "Try again",
+	[STR_HINT_PLAY] = "Play",
+	[STR_HINT_BACK] = "Back",
+	[STR_HINT_CANCEL] = "Cancel",
+	[STR_HINT_RETRY] = "Retry",
 
 	/* Session start-up. */
 	[STR_LOGIN_TITLE] = "3DSpotify - direct sign-in",
@@ -54,7 +58,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_CHECK_WIFI_CONNECTED] = "Make sure the console's Wi-Fi is connected.",
 	[STR_PS_ENTROPY] = "Could not enable the console's entropy source.",
 	[STR_SESSION_FAILED_TITLE] = "Could not start the session",
-	[STR_SESSION_READY_TITLE] = "Spotify session ready",
 
 	/* Start-up error categories. */
 	[STR_CAT_NO_NETWORK] = "No network service",
@@ -90,20 +93,15 @@ const char *const lang_strings_en[STR_COUNT] = {
 
 	/* Search. */
 	[STR_SEARCH_HINT] = "Song or artist name",
-	[STR_SEARCH_PROGRESS_TITLE] = "Searching songs",
-	[STR_SEARCH_CONNECTING] = "Connecting to Spotify and loading results...",
-	[STR_SEARCH_CANCELLING] = "Cancelling after the network request...",
-	[STR_SEARCH_FAILED_TITLE] = "The search could not be completed",
+	[STR_SEARCH_CANCELLING] = "Cancelling after the current request...",
+	[STR_SEARCH_FAILED_TITLE] = "Search failed",
 	[STR_SEARCH_HTTP_401] = "The session was rejected. Press B, then X to reconnect.",
 	[STR_SEARCH_HTTP_403] = "Spotify does not allow this for the account or track.",
 	[STR_SEARCH_HTTP_429] = "Request limit reached; wait before retrying.",
 	[STR_SEARCH_CHECK_WIFI] = "Check the Wi-Fi and try again.",
 	[STR_ERR_SEARCH_LOAD] = "Could not load the results.",
 	[STR_ERR_SEARCH_THREAD] = "Could not start the search task.",
-	[STR_RESULTS_TITLE] = "Spotify results",
 	[STR_RESULTS_EMPTY] = "No songs found.",
-	[STR_RESULTS_PAGE_FMT] = "Page %d/%d  (%d songs)",
-	[STR_SELECTION_TITLE] = "Selected song",
 
 	/* Playback. */
 	[STR_PLAYER_TITLE] = "Local playback",

@@ -33,6 +33,7 @@ class NativeLogicTests(unittest.TestCase):
                     str(ROOT / "source" / "lang" / "lang_en.c"),
                     str(ROOT / "source" / "lang" / "lang_es.c"),
                     "-o", str(executable),
+                    "-lm",
                 ],
                 check=True,
                 cwd=ROOT,

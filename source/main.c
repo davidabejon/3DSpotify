@@ -9,22 +9,25 @@
 #include "ap3ds.h"
 #include "artwork.h"
 #include "cfg3ds.h"
+#include "icons.h"
 #include "lang.h"
 #include "login5.h"
 #include "pair3ds.h"
 #include "player_logic.h"
 #include "spclient.h"
 #include "textscreen.h"
+#include "thumbs.h"
 #include "track.h"
 #include "tls3ds.h"
 #include "ui.h"
+#include "view_home.h"
+#include "view_results.h"
 #include "worker_priority.h"
 #include "stb_vorbis.h"
 
 #define SOC_BUFFER 0x100000
 #define SEARCH_LIMIT 24
 #define SEARCH_QUERY_SIZE 96
-#define RESULTS_PER_PAGE 7
 /* 8 x 2048 frames is ~370 ms of audio at 44.1 kHz: enough cushion for the
  * decoder to ride out a burst of TLS work in the download thread. */
 #define PLAYER_WAVE_BUFFERS 8
@@ -82,6 +85,12 @@ static sp_track playback_queue[SEARCH_LIMIT];
 static int playback_queue_count;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
+/* Which view owns the screens. VIEW_TEXT is the text screen (bottom) and
+ * the artwork (top), for the screens not redesigned yet. */
+typedef enum { VIEW_TEXT, VIEW_HOME, VIEW_RESULTS } screen_view;
+static screen_view active_view = VIEW_TEXT;
+/* An applet (the keyboard) drew over both screens. */
+static bool screens_lost;
 
 static void frame(void);
 
@@ -114,12 +123,17 @@ static void language_init(void)
 
 /* SELECT switches the language on any menu screen and remembers the choice.
  * Returns true when the caller has to redraw its screen. */
+static void switch_language(void)
+{
+	lang_set(lang_next(lang_get()));
+	cfg_set("language", lang_code(lang_get()));
+}
+
 static bool language_toggled(u32 down)
 {
 	if (!(down & KEY_SELECT))
 		return false;
-	lang_set(lang_next(lang_get()));
-	cfg_set("language", lang_code(lang_get()));
+	switch_language();
 	return true;
 }
 
@@ -753,36 +767,72 @@ cleanup:
  *
  * Both screens are drawn together. Until the F0 spike confirms on hardware
  * that a target left out of a frame keeps its last image, skipping one is
- * not worth the risk; the top screen costs a rectangle and a quad. */
+ * not worth the risk; the top screen costs a rectangle and a quad.
+ *
+ * The redesigned views draw both screens while active; the artwork's own
+ * changes only count for the text view, and switching views always
+ * repaints. */
 static void frame(void)
 {
+	static screen_view drawn_view = VIEW_TEXT;
 	artwork_poll(&cover_art);
-	bool restored = ui_take_restored();
-	if (!restored && !artwork_dirty(&cover_art) && !textscreen_dirty()) {
+	bool restored = ui_take_restored() || screens_lost;
+	screens_lost = false;
+	bool changed;
+	switch (active_view) {
+	case VIEW_HOME:
+		changed = view_home_dirty();
+		break;
+	case VIEW_RESULTS:
+		changed = view_results_dirty();
+		break;
+	default:
+		changed = artwork_dirty(&cover_art) || textscreen_dirty();
+		break;
+	}
+	if (!restored && active_view == drawn_view && !changed) {
 		gspWaitForVBlank();
 		return;
 	}
 	ui_begin();
 	ui_scene(GFX_TOP);
-	artwork_draw(&cover_art);
+	switch (active_view) {
+	case VIEW_HOME:
+		view_home_draw_top();
+		break;
+	case VIEW_RESULTS:
+		view_results_draw_top();
+		break;
+	default:
+		artwork_draw(&cover_art);
+		break;
+	}
 	ui_scene(GFX_BOTTOM);
-	textscreen_draw();
+	switch (active_view) {
+	case VIEW_HOME:
+		view_home_draw_bottom();
+		break;
+	case VIEW_RESULTS:
+		view_results_draw_bottom();
+		break;
+	default:
+		textscreen_draw();
+		break;
+	}
 	ui_end();
+	drawn_view = active_view;
+}
+
+/* The next frame draws `view`, repainting both screens. */
+static void set_view(screen_view view)
+{
+	active_view = view;
 }
 
 static void show_progress(const char *message)
 {
 	textscreen_clear();
 	textscreen_printf("%s\n\n%s\n", tr(STR_LOGIN_TITLE), message);
-	frame();
-}
-
-static void show_search_progress(const char *query)
-{
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_SEARCH_PROGRESS_TITLE));
-	textscreen_printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
-	textscreen_printf("%s\n", tr(STR_SEARCH_CONNECTING));
 	frame();
 }
 
@@ -829,7 +879,9 @@ static search_result search_tracks(const spotify_session *session,
 	snprintf(search.library_token, sizeof(search.library_token), "%s",
 	         session->library_token);
 
-	show_search_progress(search.query);
+	view_results_searching(search.query);
+	set_view(VIEW_RESULTS);
+	frame();
 	Thread thread = threadCreate(search_worker, &search, 16 * 1024,
 	                             0x18, -2, false);
 	if (!thread) {
@@ -843,12 +895,14 @@ static search_result search_tracks(const spotify_session *session,
 	while (aptMainLoop() && !search.done) {
 		hidScanInput();
 		u32 down = hidKeysDown();
+		/* Feedback only: cancelling is decided here. */
+		view_results_update(down);
 		if (down & KEY_START)
 			search.exit_requested = true;
 		if (!search.cancel_requested && (down & (KEY_B | KEY_START)))
 			search.cancel_requested = true;
 		if (search.cancel_requested)
-			player_update_line(tr(STR_SEARCH_CANCELLING));
+			view_results_cancelling();
 		frame();
 	}
 	if (!aptMainLoop()) {
@@ -865,72 +919,37 @@ static search_result search_tracks(const spotify_session *session,
 	return search.result == 0 ? SEARCH_REQUEST_OK : SEARCH_REQUEST_ERROR;
 }
 
+/* Only a confirmed query replaces `query`: cancelling the keyboard keeps the
+ * last search for the home view's repeat chip. */
 static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 {
+	char typed[SEARCH_QUERY_SIZE] = {0};
 	SwkbdState keyboard;
 	swkbdInit(&keyboard, SWKBD_TYPE_WESTERN, 1, SEARCH_QUERY_SIZE - 1);
 	swkbdSetValidation(&keyboard, SWKBD_NOTEMPTY_NOTBLANK,
 	                   SWKBD_FILTER_PROFANITY, -1);
 	swkbdSetHintText(&keyboard, tr(STR_SEARCH_HINT));
-	bool confirmed = swkbdInputText(&keyboard, query, SEARCH_QUERY_SIZE) ==
+	bool confirmed = swkbdInputText(&keyboard, typed, sizeof(typed)) ==
 	                 SWKBD_BUTTON_CONFIRM;
+	if (confirmed)
+		memcpy(query, typed, sizeof(typed));
 	/* The keyboard applet takes over both screens. */
 	artwork_invalidate(&cover_art);
 	textscreen_invalidate();
+	screens_lost = true;
 	return confirmed;
 }
 
-static void show_search_error(const char *query, const char *error)
+/* What to suggest for a failed search, from the HTTP status in `error`. */
+static str_id search_error_advice(const char *error)
 {
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_SEARCH_FAILED_TITLE));
-	textscreen_printf("%s: %s\n\n", tr(STR_LABEL_QUERY), query);
-	textscreen_printf("%s\n\n", error);
-	str_id advice = STR_SEARCH_CHECK_WIFI;
 	if (strstr(error, "HTTP 401"))
-		advice = STR_SEARCH_HTTP_401;
-	else if (strstr(error, "HTTP 403"))
-		advice = STR_SEARCH_HTTP_403;
-	else if (strstr(error, "HTTP 429"))
-		advice = STR_SEARCH_HTTP_429;
-	textscreen_printf("%s\n\n", tr(advice));
-	textscreen_printf("%s\n", tr(STR_KEYS_SEARCH_RETRY));
-	textscreen_printf("%s\n", tr(STR_KEYS_BACK_EXIT));
-	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
-}
-
-static void show_results(const char *query, int selected)
-{
-	int first = (selected / RESULTS_PER_PAGE) * RESULTS_PER_PAGE;
-	int page_count = (search.count + RESULTS_PER_PAGE - 1) /
-	                 RESULTS_PER_PAGE;
-	textscreen_clear();
-	textscreen_printf("%s\n", tr(STR_RESULTS_TITLE));
-	textscreen_printf("%s: %.44s\n\n", tr(STR_LABEL_QUERY), query);
-	if (search.count == 0) {
-		textscreen_printf("%s\n\n", tr(STR_RESULTS_EMPTY));
-		textscreen_printf("%s\n", tr(STR_KEYS_NO_RESULTS));
-		textscreen_printf("%s\n", tr(STR_KEYS_EXIT));
-		textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
-		return;
-	}
-
-	for (int i = first; i < search.count &&
-	     i < first + RESULTS_PER_PAGE; i++) {
-		const sp_track *track = &search.tracks[i];
-		int seconds = track->duration_ms > 0
-		              ? track->duration_ms / 1000 : 0;
-		textscreen_printf("%c %02d. %.39s\n", i == selected ? '>' : ' ', i + 1,
-		                  track->name[0] ? track->name : tr(STR_UNTITLED));
-		textscreen_printf("   %.29s  %d:%02d\n", track->artist[0] ? track->artist
-		                  : tr(STR_UNKNOWN_ARTIST), seconds / 60, seconds % 60);
-	}
-	textscreen_printf("\n");
-	textscreen_printf(tr(STR_RESULTS_PAGE_FMT),
-	                  first / RESULTS_PER_PAGE + 1, page_count, search.count);
-	textscreen_printf("\n%s\n", tr(STR_KEYS_RESULTS_MOVE));
-	textscreen_printf("%s\n", tr(STR_KEYS_RESULTS_NAV));
-	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
+		return STR_SEARCH_HTTP_401;
+	if (strstr(error, "HTTP 403"))
+		return STR_SEARCH_HTTP_403;
+	if (strstr(error, "HTTP 429"))
+		return STR_SEARCH_HTTP_429;
+	return STR_SEARCH_CHECK_WIFI;
 }
 
 static void prepare_queue(void)
@@ -940,31 +959,107 @@ static void prepare_queue(void)
 	       (size_t)playback_queue_count * sizeof(playback_queue[0]));
 }
 
-static void show_selection(int selected)
+/* Where the search flow goes next. */
+typedef enum {
+	FLOW_EXIT,        /* close the app */
+	FLOW_HOME,        /* back to the home view */
+	FLOW_NEW_SEARCH,  /* ask for another query */
+	FLOW_RESULTS      /* back to the results */
+} flow_step;
+
+/* Plays the results from `*selected`, straight from the list: there is no
+ * selection screen in between. The player moves through the queue with
+ * L/R; `*selected` follows it, so the list comes back focused on the last
+ * track played. */
+static flow_step play_flow(spotify_session *session, int *selected)
 {
-	const sp_track *track = &playback_queue[selected];
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_SELECTION_TITLE));
-	textscreen_printf("%.42s\n", track->name);
-	textscreen_printf("%s: %.42s\n", tr(STR_LABEL_ARTIST), track->artist);
-	textscreen_printf("%s: %.42s\n", tr(STR_LABEL_ALBUM), track->album);
-	textscreen_printf("%s: %d:%02d\n\n", tr(STR_LABEL_DURATION),
-	                  track->duration_ms / 60000,
-	                  (track->duration_ms / 1000) % 60);
-	textscreen_printf("%s: %d/%d\n", tr(STR_LABEL_QUEUE), selected + 1,
-	                  playback_queue_count);
-	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_PLAY));
-	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_SEARCH));
-	textscreen_printf("%s\n", tr(STR_KEYS_SELECTION_SESSION));
-	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	prepare_queue();
+	int queue_index = *selected;
+	set_view(VIEW_TEXT);
+	for (;;) {
+		playback_result result = playback(session, playback_queue,
+		                                  playback_queue_count,
+		                                  &queue_index);
+		if (result == PLAYER_EXIT_APP)
+			return FLOW_EXIT;
+		if (result == PLAYER_TRACK_CHANGED)
+			continue;
+		*selected = queue_index;
+		return FLOW_RESULTS;
+	}
 }
 
+/* The results view for a finished search of `query`: the list, no
+ * results, or the error, until the user leaves it. */
+static flow_step results_flow(spotify_session *session, const char *query,
+                              search_result result)
+{
+	int selected = 0;
+	for (;;) {
+		if (result == SEARCH_REQUEST_ERROR)
+			view_results_error(query, search.error,
+			                   search_error_advice(search.error));
+		else
+			view_results_show(query, search.tracks, search.count,
+			                  selected);
+		set_view(VIEW_RESULTS);
+
+		results_action action = RESULTS_ACTION_NONE;
+		while (action == RESULTS_ACTION_NONE) {
+			hidScanInput();
+			u32 down = hidKeysDown();
+			if (down & KEY_START)
+				return FLOW_EXIT;
+			action = view_results_update(down);
+			if (action == RESULTS_ACTION_LANGUAGE) {
+				/* The view shows the new language by itself. */
+				switch_language();
+				action = RESULTS_ACTION_NONE;
+			}
+			frame();
+			if (!aptMainLoop())
+				return FLOW_EXIT;
+		}
+
+		switch (action) {
+		case RESULTS_ACTION_BACK:
+			return FLOW_HOME;
+		case RESULTS_ACTION_NEW_SEARCH:
+			return FLOW_NEW_SEARCH;
+		case RESULTS_ACTION_RETRY:
+			result = search_tracks(session, query);
+			if (result == SEARCH_REQUEST_CANCELLED)
+				return FLOW_HOME;
+			if (result == SEARCH_REQUEST_EXIT)
+				return FLOW_EXIT;
+			selected = 0;
+			break;
+		case RESULTS_ACTION_OPEN: {
+			/* Back from the player with the last played track focused. */
+			selected = view_results_selected();
+			/* The thumbnails must not compete with the audio download
+			 * (STYLES.md 9); they resume, kept, back in the list. */
+			thumbs_stop();
+			flow_step step = play_flow(session, &selected);
+			if (step != FLOW_RESULTS)
+				return step;
+			break;
+		}
+		default:
+			break;
+		}
+	}
+}
+
+/* Asks for a query (unless `repeat`, which runs `query` again) and shows
+ * its results. Returns false when the app should close. */
 static bool search_flow(spotify_session *session,
-                        char query[SEARCH_QUERY_SIZE])
+                        char query[SEARCH_QUERY_SIZE], bool repeat)
 {
 	for (;;) {
-		if (!ask_search_query(query))
+		if (!repeat && !ask_search_query(query))
 			return true;
+		repeat = false;
 		if (!query[0])
 			continue;
 		search_result result = search_tracks(session, query);
@@ -972,144 +1067,14 @@ static bool search_flow(spotify_session *session,
 			return true;
 		if (result == SEARCH_REQUEST_EXIT)
 			return false;
-		if (result == SEARCH_REQUEST_ERROR) {
-			for (;;) {
-				show_search_error(query, search.error);
-				while (aptMainLoop()) {
-					hidScanInput();
-					u32 down = hidKeysDown();
-					if (down & KEY_START)
-						return false;
-					if (down & KEY_B)
-						return true;
-					if (down & KEY_Y)
-						break;
-					if (language_toggled(down))
-						show_search_error(query, search.error);
-					if (down & KEY_A) {
-						result = search_tracks(session, query);
-						if (result == SEARCH_REQUEST_CANCELLED)
-							return true;
-						if (result == SEARCH_REQUEST_EXIT)
-							return false;
-						if (result == SEARCH_REQUEST_ERROR)
-							break;
-						goto show_results_screen;
-					}
-					frame();
-				}
-				if (!aptMainLoop())
-					return false;
-				if (hidKeysDown() & KEY_Y)
-					break;
-			}
-			continue;
-		}
-
-show_results_screen:
-		if (search.count == 0) {
-			show_results(query, 0);
-			for (;;) {
-				while (aptMainLoop()) {
-					hidScanInput();
-					u32 down = hidKeysDown();
-					if (down & KEY_START)
-						return false;
-					if (down & KEY_B)
-						return true;
-					if (down & KEY_Y)
-						break;
-					if (language_toggled(down))
-						show_results(query, 0);
-					frame();
-				}
-				if (!aptMainLoop())
-					return false;
-				if (hidKeysDown() & KEY_Y)
-					break;
-			}
-			continue;
-		}
-
-		int selected = 0;
-		show_results(query, selected);
-		for (;;) {
-			hidScanInput();
-			u32 down = hidKeysDown();
-			if (down & KEY_START)
-				return false;
-			if (down & KEY_B)
-				return true;
-			if (down & KEY_Y)
-				break;
-			bool selection_changed = false;
-			if (down & KEY_UP && selected > 0) {
-				selected--;
-				selection_changed = true;
-			}
-			if (down & KEY_DOWN && selected + 1 < search.count) {
-				selected++;
-				selection_changed = true;
-			}
-			if (language_toggled(down))
-				selection_changed = true;
-			if (selection_changed)
-				show_results(query, selected);
-			if (down & KEY_A) {
-				prepare_queue();
-				int queue_index = selected;
-				show_selection(queue_index);
-				for (;;) {
-					hidScanInput();
-					down = hidKeysDown();
-					if (down & KEY_START)
-						return false;
-					if (down & KEY_X)
-						return true;
-					if (down & KEY_B)
-						break;
-					if (down & KEY_Y)
-						break;
-					if (language_toggled(down))
-						show_selection(queue_index);
-					if (down & KEY_A) {
-						for (;;) {
-							playback_result result =
-								playback(session, playback_queue,
-								         playback_queue_count,
-								         &queue_index);
-							if (result == PLAYER_EXIT_APP)
-								return false;
-							if (result == PLAYER_TRACK_CHANGED)
-								continue;
-							if (result == PLAYER_RETURN_RESULTS) {
-								selected = queue_index;
-								goto return_to_results;
-							}
-							break;
-						}
-						show_selection(queue_index);
-					}
-					frame();
-				}
-				if (!aptMainLoop())
-					return false;
-				if (hidKeysDown() & KEY_Y)
-					break;
-				show_results(query, selected);
-				continue;
-return_to_results:
-				show_results(query, selected);
-				continue;
-			}
-			frame();
-			if (!aptMainLoop())
-				return false;
-		}
-		if (!aptMainLoop())
+		flow_step step = results_flow(session, query, result);
+		/* Leaving the results: no more thumbnails (STYLES.md 9). */
+		thumbs_stop();
+		if (step == FLOW_EXIT)
 			return false;
-		if (hidKeysDown() & KEY_Y)
-			continue;
+		if (step == FLOW_HOME)
+			return true;
+		/* FLOW_NEW_SEARCH: ask again. */
 	}
 }
 
@@ -1367,18 +1332,10 @@ static void show_error(const startup_error *error)
 	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
 }
 
-static void show_session_ready(const spotify_session *session, const char *query)
+static void show_home(const char *query)
 {
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_SESSION_READY_TITLE));
-	textscreen_printf("%s: %s\n\n", tr(STR_LABEL_SERVER), session->host);
-	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_SEARCH));
-	textscreen_printf("%s: %.40s\n\n", tr(STR_LABEL_PREVIOUS_QUERY),
-	                  query[0] ? query : tr(STR_NONE));
-	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_RECONNECT));
-	textscreen_printf("%s\n", tr(STR_KEYS_SESSION_PAIR));
-	textscreen_printf("%s\n", tr(STR_KEYS_EXIT));
-	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	view_home_enter(query);
+	set_view(VIEW_HOME);
 }
 
 int main(int argc, char **argv)
@@ -1390,7 +1347,16 @@ int main(int argc, char **argv)
 		gfxExit();
 		return 1;
 	}
-	if (!textscreen_init()) {
+	/* Without icons or thumbnails the views still work, just without
+	 * them. */
+	icons_init();
+	thumbs_init();
+	if (!textscreen_init() || !view_home_init() || !view_results_init()) {
+		view_results_exit();
+		view_home_exit();
+		thumbs_exit();
+		icons_exit();
+		textscreen_exit();
 		ui_exit();
 		gfxExit();
 		return 1;
@@ -1440,29 +1406,31 @@ int main(int argc, char **argv)
 		textscreen_printf("%s\n", tr(STR_LOGIN_CONNECTING));
 		frame();
 		if (start_session(force_pair, &error, &session)) {
-			show_session_ready(&session, query);
+			show_home(query);
 			for (;;) {
 				hidScanInput();
 				u32 down = hidKeysDown();
 				if (down & KEY_START)
 					goto done;
-				if (down & KEY_A) {
-					if (!search_flow(&session, query))
+				home_action action = view_home_update(down);
+				if (action == HOME_ACTION_SEARCH ||
+				    action == HOME_ACTION_REPEAT) {
+					set_view(VIEW_TEXT);
+					if (!search_flow(&session, query,
+					                 action == HOME_ACTION_REPEAT))
 						goto done;
-					show_session_ready(&session, query);
+					show_home(query);
 				}
-				if (down & KEY_X) {
+				if (action == HOME_ACTION_RECONNECT ||
+				    action == HOME_ACTION_PAIR) {
+					set_view(VIEW_TEXT);
 					secure_clear(&session, sizeof(session));
-					force_pair = false;
+					force_pair = action == HOME_ACTION_PAIR;
 					break;
 				}
-				if (down & KEY_Y) {
-					secure_clear(&session, sizeof(session));
-					force_pair = true;
-					break;
-				}
-				if (language_toggled(down))
-					show_session_ready(&session, query);
+				/* SELECT: the view shows the new language by itself. */
+				if (action == HOME_ACTION_LANGUAGE)
+					switch_language();
 				frame();
 				if (!aptMainLoop())
 					goto done;
@@ -1516,6 +1484,10 @@ done:
 	if (soc_ready)
 		socExit();
 	free(soc_buffer);
+	view_results_exit();
+	view_home_exit();
+	thumbs_exit();
+	icons_exit();
 	textscreen_exit();
 	ui_exit();
 	gfxExit();

@@ -114,6 +114,220 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("0x18", artwork)
         self.assertNotIn("static s32 background_priority", app)
 
+    def test_home_view_replaces_session_text_screen(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("view_home.c", "view_home.h", "home_logic.h",
+                     "text_fit.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        self.assertNotIn("show_session_ready", app)
+        self.assertIn("view_home_init()", app)
+        self.assertLess(app.index("view_home_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        # Pure logic stays free of 3DS headers for the host tests.
+        for name in ("home_logic.h", "text_fit.h", "theme.h", "layout.h",
+                     "press_logic.h"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("#include <3ds", source)
+            self.assertNotIn("#include <citro", source)
+        # The home view joins the on-demand render: a frame only when dirty.
+        frame = app[app.index("static void frame(void)"):
+                    app.index("static void show_progress(")]
+        self.assertIn("view_home_dirty()", frame)
+        self.assertIn("view_home_draw_bottom()", frame)
+        # The repeat button runs the last query without the keyboard, and a
+        # cancelled keyboard does not wipe it.
+        self.assertIn("action == HOME_ACTION_REPEAT", app)
+        ask = app[app.index("static bool ask_search_query("):
+                  app.index("static str_id search_error_advice(")]
+        self.assertIn("if (confirmed)", ask)
+
+    def test_ui_follows_style_guide(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("theme.h", "draw.c", "draw.h", "layout.h",
+                     "press_logic.h", "icons.c", "icons.h",
+                     "icons_data.c", "icons_data.h", "gen_icons.py"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        # Every colour is opaque: no alpha in the theme (2, 2.7).
+        theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
+        self.assertNotIn("THEME_RGBA", theme)
+        for line in theme.splitlines():
+            if line.startswith("#define COL_"):
+                self.assertIn("THEME_RGB(", line)
+        # Every colour comes from theme.h (docs/STYLES.md 1.5).
+        for path in [build.ROOT / "main.c", *ui_dir.glob("*.c")]:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("C2D_Color32", source, path.name)
+            self.assertNotIn("UI_COLOR_", source, path.name)
+        # The redesigned views: no loose colours, sizes or text scales.
+        for name in ("view_home.c", "view_results.c", "draw.c"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
+            # 0.0f is the depth argument of the C2D calls.
+            self.assertIsNone(re.search(r"\b0\.(?!0f)\d+f\b", source), name)
+        # Flat and square (1.2, 4.3): solid rectangles only, through the
+        # draw.c helpers; no circles, triangles, gradients or blending.
+        draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
+        self.assertIn("ui_rect ui_bevel_rect(", draw)
+        self.assertIn("void ui_panel(", draw)
+        self.assertIn("void ui_button(", draw)
+        home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        for source, name in ((draw, "draw.c"), (home, "view_home.c"),
+                             (results, "view_results.c")):
+            for call in ("C2D_DrawCircle", "C2D_DrawTriangle",
+                         "C2D_DrawRectangle(", "C2D_DrawEllipse",
+                         "color_fade", "color_mix"):
+                self.assertNotIn(call, source, name)
+        self.assertNotIn("C2D_DrawRect", home)
+        self.assertNotIn("C2D_DrawRect", results)
+        # Icons: crisp at whole pixels (5.10).
+        icons = (ui_dir / "icons.c").read_text(encoding="utf-8")
+        self.assertIn("GPU_NEAREST, GPU_NEAREST", icons)
+        # Both screens share the background gradient (7.1).
+        ui = (ui_dir / "ui.c").read_text(encoding="utf-8")
+        self.assertIn("COL_FONDO_SUP, COL_FONDO_SUP", ui)
+        # Touch acts on release; physical buttons show the pressed state.
+        self.assertIn("TOUCH_ACTIVATE", home)
+        self.assertIn("press_shown(pending_press)", home)
+        # Icons are generated C arrays that match their generator.
+        spec = importlib.util.spec_from_file_location(
+            "gen_icons", ui_dir / "gen_icons.py")
+        gen_icons = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen_icons)
+        self.assertTrue(gen_icons.is_current(),
+                        "run source/ui/gen_icons.py")
+        self.assertIn("icons_init();", app)
+        self.assertLess(app.index("icons_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+
+    def test_results_view_replaces_search_text_screens(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("view_results.c", "view_results.h", "list_logic.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        for gone in ("show_search_progress", "show_search_error",
+                     "show_results(", "RESULTS_PER_PAGE 7"):
+            self.assertNotIn(gone, app)
+        logic = (ui_dir / "list_logic.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", logic)
+        self.assertNotIn("#include <citro", logic)
+        # 7.4: four rows per screen, L/R jump as many.
+        self.assertIn("#define RESULTS_PER_PAGE 4", logic)
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("move_focus(RESULTS_PER_PAGE)", results)
+        self.assertIn("KEY_L", results)
+        # Rows are cut in pixels, never the duration (5.3, 3.3).
+        self.assertIn("parse_fitted(&row_title[i]", results)
+        self.assertIn("ICON_NOTE", results)
+        # On-demand render and view switching.
+        frame = app[app.index("static void frame(void)"):
+                    app.index("static void show_progress(")]
+        self.assertIn("view_results_dirty()", frame)
+        self.assertIn("view_results_draw_bottom()", frame)
+        self.assertIn("view_results_init()", app)
+        self.assertLess(app.index("view_results_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        # Searching is a state of the view; B and START still cancel.
+        search = app[app.index("static search_result search_tracks("):
+                     app.index("static bool ask_search_query(")]
+        self.assertIn("view_results_searching(search.query)", search)
+        self.assertIn("view_results_cancelling()", search)
+        self.assertIn("down & (KEY_B | KEY_START)", search)
+        # The selection survives playback (F3) and errors can be retried.
+        self.assertIn("*selected = queue_index;", app)
+        self.assertIn("case RESULTS_ACTION_RETRY:", app)
+        self.assertIn("search_error_advice(search.error)", app)
+
+    def test_result_thumbnails_follow_style_guide(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("thumbs.c", "thumbs.h", "thumb_queue.h", "art_url.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        for name in ("thumb_queue.h", "art_url.h"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("#include <3ds", source)
+            self.assertNotIn("#include <citro", source)
+        thumbs = (ui_dir / "thumbs.c").read_text(encoding="utf-8")
+        artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
+        # One allow-list for every cover download.
+        self.assertIn("art_url_allowed(", artwork)
+        self.assertNotIn("static bool artwork_url_allowed", artwork)
+        self.assertIn("art_url_path(url)", thumbs)
+        # STYLES.md 9: one keep-alive session, below the decoder's priority.
+        self.assertIn("http_session_open(ART_HOST)", thumbs)
+        self.assertIn("http_session_request(", thumbs)
+        self.assertNotIn("http_get_url(", thumbs)
+        self.assertIn("background_priority()", thumbs)
+        # A fixed pool made once, filled on the main thread; nothing
+        # allocated per thumbnail; no citro3d in the worker.
+        self.assertNotIn("malloc", thumbs)
+        self.assertNotIn("calloc", thumbs)
+        worker = thumbs[thumbs.index("static bool fetch("):
+                        thumbs.index("/* --- Main thread")]
+        for call in ("C3D_", "C2D_", "linearAlloc"):
+            self.assertNotIn(call, worker)
+        self.assertIn("C3D_TexInit(", thumbs[:thumbs.index("static bool fetch(")])
+        # stb_image is still implemented once, in artwork.c.
+        self.assertNotIn("STB_IMAGE_IMPLEMENTATION", thumbs)
+        # Cancelled and joined before playback and on leaving the results.
+        self.assertIn("threadJoin(worker", thumbs)
+        flow = app[app.index("static flow_step results_flow("):
+                   app.index("static void show_pair_screen(")]
+        self.assertLess(flow.index("thumbs_stop();"),
+                        flow.index("play_flow(session, &selected)"))
+        search = flow[flow.index("static bool search_flow("):]
+        self.assertLess(search.index("results_flow(session, query, result)"),
+                        search.index("thumbs_stop();"))
+        self.assertIn("thumbs_init();", app)
+        self.assertLess(app.index("thumbs_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        # The view: uploads on update, a fixed-size slot either way.
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("thumbs_poll()", results)
+        self.assertIn("thumbs_image(index, &image)", results)
+        self.assertIn("thumbs_set_window(first)", results)
+
+    def test_results_play_directly_and_scroll_by_touch(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        lang_dir = build.ROOT / "lang"
+        # No selection screen: the list opens the player.
+        self.assertNotIn("show_selection", app)
+        self.assertNotIn("selection_flow", app)
+        for table in ("lang.h", "lang_en.c", "lang_es.c"):
+            source = (lang_dir / table).read_text(encoding="utf-8")
+            self.assertNotIn("STR_SELECTION_TITLE", source)
+            self.assertNotIn("STR_KEYS_SELECTION_", source)
+        play = app[app.index("static flow_step play_flow("):
+                   app.index("static flow_step results_flow(")]
+        self.assertIn("playback(session, playback_queue", play)
+        self.assertIn("*selected = queue_index;", play)
+        self.assertNotIn("hidKeysDown", play)
+        # Dragging (6.9) and the scroll indicator (5.11).
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("list_drag_begin(&drag", results)
+        self.assertIn("list_drag_update(&drag", results)
+        self.assertIn("press_cancel(&press_row)", results)
+        # A drag may leave rows cut; the buttons align to whole rows.
+        self.assertIn("list_align(scroll, selected, count)", results)
+        # The focus survives a drag (6.9), and the first button press with
+        # it out of view only brings the list back to it (6.6).
+        drag_end = results[results.index("static void drag_end(void)"):]
+        drag_end = drag_end[:drag_end.index("\n}\n")]
+        for change in ("list_snap", "scroll =", "selected ="):
+            self.assertNotIn(change, drag_end)
+        self.assertIn("!list_row_whole(selected, scroll, count)", results)
+        self.assertNotIn("list_keep_visible", results)
+        self.assertIn("list_scroll_thumb(scroll, count)", results)
+        self.assertIn("list_hit_row(pos.px, pos.py, scroll, count)", results)
+        style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
+            encoding="utf-8")
+        self.assertIn("### 5.11 Indicador de desplazamiento", style)
+        self.assertIn("### 6.9 Arrastre en listas", style)
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(
