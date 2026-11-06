@@ -18,22 +18,18 @@
 #define TEXT_GLYPHS 512
 #define SCRATCH_GLYPHS (QUERY_SIZE + 8)
 
-/* The button bar (STYLES.md 5.6): the three actions of this view. */
-enum { GLYPH_A, GLYPH_X, GLYPH_Y, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "X", "Y" };
-static const u32 glyph_colors[GLYPH_COUNT] = {
-	COL_BTN_A, COL_BTN_X, COL_BTN_Y
-};
-static const str_id glyph_labels[GLYPH_COUNT] = {
-	STR_HINT_SEARCH, STR_HINT_RECONNECT, STR_HINT_PAIR
-};
+/* The button bar (STYLES.md 5.6). Reconnecting and pairing live in the
+ * Settings tab now. */
+enum { GLYPH_A, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = { "A" };
+static const u32 glyph_colors[GLYPH_COUNT] = { COL_BTN_A };
+static const str_id glyph_labels[GLYPH_COUNT] = { STR_HINT_SEARCH };
 
 static C2D_TextBuf text_buf;
 /* Only for measuring candidates while fitting the last query. */
 static C2D_TextBuf scratch_buf;
 
 static C2D_Text brand_text;
-static C2D_Text title_text;
 static C2D_Text search_text;
 static C2D_Text last_label_text;
 static C2D_Text repeat_text;
@@ -136,7 +132,6 @@ static void ensure_parsed(void)
 		return;
 	C2D_TextBufClear(text_buf);
 	parse(&brand_text, tr(STR_APP_NAME));
-	parse(&title_text, tr(STR_HOME_TITLE));
 	parse(&search_text, tr(STR_HOME_SEARCH));
 	parse(&last_label_text, tr(STR_HOME_LAST_SEARCH));
 	parse(&bubble_text, tr(STR_LANG_NAME));
@@ -226,10 +221,6 @@ static void release_keys(u32 up)
 			press_end(&press_repeat);
 		}
 	}
-	if (up & KEY_X)
-		press_end(&press_glyph[GLYPH_X]);
-	if (up & KEY_Y)
-		press_end(&press_glyph[GLYPH_Y]);
 }
 
 /* Returns true while the stylus owns the input. */
@@ -295,12 +286,6 @@ home_action view_home_update(u32 down)
 		press_begin(item_press(item));
 		press_begin(&press_glyph[GLYPH_A]);
 		queue(item_action(item), item_press(item));
-	} else if (down & KEY_X) {
-		press_begin(&press_glyph[GLYPH_X]);
-		queue(HOME_ACTION_RECONNECT, &press_glyph[GLYPH_X]);
-	} else if (down & KEY_Y) {
-		press_begin(&press_glyph[GLYPH_Y]);
-		queue(HOME_ACTION_PAIR, &press_glyph[GLYPH_Y]);
 	} else if (down & KEY_SELECT) {
 		/* No control on screen: a bubble with the result (6.5). */
 		bubble_frames = 0;
@@ -341,11 +326,6 @@ void view_home_draw_bottom(void)
 {
 	ensure_parsed();
 	home_look look = current_look();
-
-	ui_rect header = home_header_rect();
-	ui_panel(header);
-	ui_text(&title_text, SP_2, header.y + header.h / 2, TXT_CABEZA,
-	        COL_TEXTO);
 
 	C2D_Image icon = icon_image(ICON_SEARCH);
 	ui_control_look search = {

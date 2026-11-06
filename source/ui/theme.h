@@ -56,8 +56,9 @@ enum {
 	FOCUS_W = 2, FOCUS_GAP = 1,
 	TOUCH_MIN = 32,
 	BAR_H = 24,
-	ROW_H = 43,
-	THUMB_SIZE = 35,
+	TAB_H = 32,
+	ROW_H = 41,
+	THUMB_SIZE = 33,
 	ART_SIZE = 160,
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,
@@ -95,6 +96,8 @@ enum {
 	SCROLL_W = 4,         /* §5.11 indicador de desplazamiento (e1) */
 	SCROLL_MIN_H = 16,    /* §5.11 alto mínimo del tirador (e4) */
 	DRAG_START = 8,       /* §6.9 un toque pasa a arrastre (e2) */
+	HANDLE_W = 6,         /* §5.4 tirador de 6×14 px */
+	HANDLE_H = 14,
 };
 
 #endif

@@ -26,7 +26,7 @@ Todos los colores son opacos (alfa 255).
 |----------------|-----------|------------------------------------------------------------|
 | `fondo_sup`    | `#1A7049` | Parte superior del degradado de fondo.                     |
 | `fondo_inf`    | `#136040` | Parte inferior del degradado de fondo.                     |
-| `capa`         | `#0F4B30` | Superficies: filas, paneles, cabecera, barra de botones.   |
+| `capa`         | `#0F4B30` | Superficies: filas, paneles, pestañas, barra de botones.   |
 | `capa_alta`    | `#17603E` | Relleno de botón secundario, pista de las barras.          |
 | `capa_luz`     | `#237A52` | Banda superior del relieve de `capa_alta`.                 |
 | `sombra`       | `#08301E` | Sombra dura, banda inferior del relieve neutro.            |
@@ -133,7 +133,7 @@ Fuente del sistema (`C2D_FontLoadSystem` o fuente por defecto de citro2d) para t
 | `e2`  | 8  | Margen lateral de la pantalla inferior.   |
 | `e3`  | 12 | Margen lateral de la pantalla superior.   |
 | `e4`  | 16 | Separación entre bloques.                 |
-| `e6`  | 24 | Alto de cabecera y barra de botones.      |
+| `e6`  | 24 | Alto de la barra de botones.              |
 
 ### 4.3 Geometría
 
@@ -171,8 +171,8 @@ Orden de dibujo de cualquier botón o panel elevado, todo con `C2D_DrawRectSolid
     ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
 ```
 
-Paneles no interactivos (cabecera, barra de botones, paneles de detalle): relleno `capa`,
-contorno 1 px `tinta`, sin relieve ni sombra.
+Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en reposo: relleno
+`capa`, contorno 1 px `tinta`, sin relieve ni sombra.
 
 ### 5.2 Botón
 
@@ -189,20 +189,21 @@ contorno 1 px `tinta`, sin relieve ni sombra.
 ### 5.3 Fila de lista
 
 ```
- ┌──────────────────────────────────────────┐ 43 px
+ ┌──────────────────────────────────────────┐ 41 px
  │ ┌────┐ Título de la canción...     3:42  │  t_cabeza · texto   /  t_meta · texto_2
- │ │ 35 │                                   │
+ │ │ 33 │                                   │
  │ └────┘ Artista                           │  t_cuerpo · texto_2
  └──────────────────────────────────────────┘
-   4 px  miniatura 35×35, texto a e2 (8 px) de ella
+   4 px  miniatura 33×33, texto a e2 (8 px) de ella
 ```
 
 - Reposo: relleno `capa`, contorno 1 px `tinta`, sin relieve, separación 4 px entre filas.
 - En foco: relleno `clorofila`, banda inferior 2 px `musgo`; título, artista y duración en
   `tinta`.
 - Duración alineada a la derecha, nunca recortada.
-- Miniatura de la carátula (`art_small`, 64 px) a 35×35, a 4 px de los bordes izquierdo,
-  superior e inferior de la fila, con contorno 1 px `tinta`.
+- Miniatura de la carátula (`art_small`, 64 px) a 33×33, a 4 px de los bordes izquierdo,
+  superior e inferior de la fila, con contorno 1 px `tinta`. El alto de la fila (41 px) es
+  justo el título (`t_cabeza`) más el artista (`t_cuerpo`) con 4 px arriba y abajo.
 - Mientras carga o si la pista no tiene carátula: cuadrado `capa_alta` del mismo tamaño con
   el icono de nota (16 px) centrado en `texto_2`. El layout de la fila no cambia cuando llega
   la imagen.
@@ -261,14 +262,15 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Iconos sobre `clorofila`, `coral`, `ambar`: `tinta`. Sobre `capa`, `capa_alta` y fondo:
   `texto`.
 - Conjunto: reproducir, pausa, anterior, siguiente, volumen, buscar, cuenta, Wi-Fi, error,
-  aviso, idioma, nota musical.
+  aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador) y ajustes
+  (engranaje).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 
 ### 5.11 Indicador de desplazamiento
 
 ```
  ┌──────────────────────────┐
- │ Resultados      1-4 de 24│
+ │ [⌂]  [⌕]  [▮▮▮]  [⚙]     │  barra de pestañas
  │┌───────────────────────┐▓│  ▓ = tirador `clorofila`
  ││┌──┐ Canción     3:42  │▓│  ░ = pista `capa`
  │└───────────────────────┘░│
@@ -276,14 +278,40 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
  │──────────────────────────│
 ```
 
-- Franja de 4 px (`e1`) pegada al borde derecho de la pantalla inferior, entre la cabecera y
-  la barra de botones; queda a 4 px del borde derecho de las filas.
+- Franja de 4 px (`e1`) pegada al borde derecho de la pantalla inferior, entre la barra de
+  pestañas y la barra de botones; queda a 4 px del borde derecho de las filas.
 - Pista: relleno plano `capa`. Tirador: relleno plano `clorofila`. Sin contorno, sin relieve.
 - Alto del tirador proporcional a la parte visible de la lista, con un mínimo de 16 px (`e4`);
   posición proporcional al desplazamiento.
 - Solo cuando la lista no cabe entera en pantalla.
 - Se actualiza en el mismo frame que el desplazamiento, también durante el arrastre (§6.9).
 - No es un control: no responde al toque.
+
+### 5.12 Barra de pestañas
+
+```
+ ┌────────┬────────┬────────┬────────┐  32 px
+ │   ⌂    │▓▓▓⌕▓▓▓▓│  ▮▮▮   │   ⚙    │  ▓ = activa `clorofila`
+ └────────┴────────┴────────┴────────┘
+  Inicio   Búsqueda  Reprod.  Ajustes    (sin etiqueta: solo icono)
+```
+
+- Franja de 32 px (`TAB_H`, el mínimo táctil) arriba de la pantalla inferior, a todo el
+  ancho. Sustituye a la cabecera de 24 px de las vistas.
+- Cuatro pestañas de 80 px, en este orden: Inicio (casa), Búsqueda (lupa), Reproducción
+  (ecualizador) y Ajustes (engranaje). Cada una lleva solo su icono de 16 px centrado, sin
+  texto.
+- Reposo: panel `capa` con contorno 1 px `tinta`, icono `texto`.
+- Activa: relleno `clorofila`, banda inferior 2 px `musgo`, contorno 1 px `tinta`, icono
+  `tinta`.
+- Pulsada (§6.3): desplazada 2 px a la derecha y abajo, relleno `musgo`, icono `tinta`. Se
+  dibuja la última, por encima de sus vecinas.
+- Táctil (§6.4): la pestaña se pulsa al tocarla y se activa al levantar el lápiz dentro.
+- Botones (§6.5): L/R pasan a la pestaña anterior o siguiente, en cualquier pantalla; ZL/ZR
+  (solo New 3DS) hacen lo mismo. Ninguna vista usa L/R para otra cosa.
+  La pestaña nueva se activa en el mismo frame y muestra el estado pulsado.
+- No da la vuelta: en la primera y la última pestaña, el botón hacia fuera no hace nada.
+- Se dibuja después de la vista: las filas arrastradas pasan por debajo.
 
 ---
 
@@ -336,8 +364,11 @@ Duración:
   `tinta`, letra en el color del botón, desplazado 1 px abajo.
 - Si la acción no tiene control en pantalla (SELECT idioma, START salir, cambio de volumen
   fuera del reproductor), mostrar una burbuja (§5.9) con el resultado: «English», «Volumen 60 %».
+  En Ajustes, SELECT tiene control en pantalla: el botón de idioma muestra el estado pulsado.
+- L/R y ZL/ZR cambian de pestaña: la pestaña nueva se activa y muestra el estado pulsado
+  (§5.12) con la misma duración. No tienen glifo en la barra de botones.
 
-### 6.6 Cruceta y L/R en listas
+### 6.6 Cruceta en listas
 
 - El foco se mueve en el mismo frame de la pulsación.
 - La nueva fila pasa al estado en foco (§5.3).
@@ -346,8 +377,10 @@ Duración:
 - El desplazamiento de la lista se aplica sin transición.
 - Si un arrastre dejó filas cortadas (§6.9), la pulsación ajusta antes la lista a filas
   enteras: con botones siempre se ven 4 filas completas.
-- Si además la fila en foco quedó cortada o fuera de la vista, esa primera pulsación (cruceta,
-  L/R o A) solo devuelve la lista a ella: no mueve el foco ni reproduce. A muestra igualmente
+- En la lista de resultados, izquierda/derecha saltan 4 filas. L/R son de la barra de
+  pestañas.
+- Si además la fila en foco quedó cortada o fuera de la vista, esa primera pulsación (cruceta
+  o A) solo devuelve la lista a ella: no mueve el foco ni reproduce. A muestra igualmente
   su glifo pulsado (§6.5).
 
 ### 6.7 Volumen
@@ -367,14 +400,16 @@ Duración:
 - Al empezar el arrastre, la fila tocada vuelve a reposo en ese frame y no ejecuta su acción
   (§6.4).
 - Durante el arrastre la lista sigue al lápiz píxel a píxel, sin pasar del primer ni del
-  último elemento. Las filas que entran o salen quedan cortadas por la cabecera y la barra de
-  botones; puede asomar una quinta fila.
+  último elemento. Las filas que entran o salen quedan cortadas por la barra de pestañas y la
+  barra de botones; puede asomar una quinta fila.
+- Solo empieza un arrastre el toque que cae dentro de la lista; el que cae en la barra de
+  pestañas es de la barra.
 - Al levantar el lápiz, la lista se queda donde está, aunque alguna fila quede cortada por
-  la cabecera o la barra de botones.
+  la barra de pestañas o la barra de botones.
 - El foco se queda en su fila aunque el arrastre la corte o la saque de la vista. La ficha
   de la pantalla superior sigue mostrando esa canción.
 - Tocar una fila, cortada o no, la pone en foco sin mover la lista.
-- En cuanto se usa la cruceta, L/R o A, la lista vuelve a filas enteras (4 a la vista) con la
+- En cuanto se usa la cruceta o A, la lista vuelve a filas enteras (4 a la vista) con la
   fila en foco visible, en el mismo frame y sin transición (§6.6).
 - Sin inercia.
 
@@ -415,29 +450,36 @@ Ambas pantallas: degradado vertical `fondo_sup` → `fondo_inf` a pantalla compl
 ```
  SUPERIOR                                  INFERIOR
  ┌────────────────────────────────┐        ┌──────────────────────────┐
- │ Resultados: "consulta"         │        │ Resultados      1-4 de 24│ 24 px
+ │ Resultados: "rock"   1-4 de 24 │        │ [⌂] [▓⌕▓] [▮▮▮] [⚙]      │ 32 px
  │ ┌────────────────────────────┐ │        │┌───────────────────────┐▓│
  │ │ Título de la fila en foco  │ │        ││┌──┐ Canción uno  3:42 │▓│
  │ │ Artista                    │ │        ││└──┘ Artista           │░│ 4 filas
- │ │ Álbum                      │ │        │└───────────────────────┘░│ × 43 px
+ │ │ Álbum                      │ │        │└───────────────────────┘░│ × 41 px
  │ │ 3:42                       │ │        │ ...                     ░│
  │ └────────────────────────────┘ │        │──────────────────────────│
  └────────────────────────────────┘        │ [A] Reprod. [Y] Buscar [B]│ 24 px
                                            └──────────────────────────┘
 ```
 
-- Inferior: cabecera 24 px, 4 filas de 43 px con miniatura (§5.3) separadas 4 px, barra de
-  botones. La primera fila queda a 4 px de la cabecera y la última a 4 px de la barra de
-  botones: 4 + 4 × 43 + 3 × 4 + 4 = 192 px, exactamente el espacio entre las barras.
-- Cabecera: panel `capa`; título `t_cabeza` · `texto` a la izquierda y rango visible
-  («1-4 de 24») en `t_meta` · `texto_2` a la derecha.
+- Inferior: barra de pestañas de 32 px (§5.12) con «Búsqueda» activa, 4 filas de 41 px con
+  miniatura (§5.3) separadas 4 px, barra de botones. La primera fila queda a 4 px de la barra
+  de pestañas y la última a 4 px de la barra de botones: 4 + 4 × 41 + 3 × 4 + 4 = 184 px,
+  exactamente el espacio entre las barras.
+- Superior: título `t_cabeza` · `texto` («Resultados: "consulta"») a la izquierda y rango
+  visible («1-4 de 24») en `t_meta` · `texto_2` a la derecha, en la misma línea.
+- Antes de la primera búsqueda: mensaje centrado «Todavía no has buscado nada» y botón
+  primario «Buscar canciones».
 - Desplazamiento continuo: la lista se mueve lo justo para mantener visible la fila en foco.
-  L/R saltan 4 filas. Fijar `RESULTS_PER_PAGE` a 4.
+  Izquierda/derecha saltan 4 filas. Fijar `RESULTS_PER_PAGE` a 4.
 - Táctil: tocar una fila la pone en foco; tocar la fila en foco la reproduce; arrastrar
   desplaza la lista (§6.9).
 - Indicador de desplazamiento (§5.11) a la derecha, cuando hay más de 4 resultados.
-- A, o tocar la fila en foco, abre directamente el reproductor con esa canción y el resto de
-  resultados como cola. No hay pantalla intermedia de canción seleccionada.
+- A, o tocar la fila en foco, pasa a la pestaña «Reproducción» con esa canción y el resto de
+  resultados como cola. No hay pantalla intermedia de canción seleccionada. Mientras suena esa
+  cola, la fila en foco sigue a la pista que suena.
+- La búsqueda corre en segundo plano: se puede cambiar de pestaña mientras tanto. B la
+  cancela desde su pestaña y vuelve a «Inicio».
+- B vuelve a «Inicio».
 - Superior: detalle de la fila en foco en panel `capa`, una línea por dato (título, artista,
   álbum, duración).
 - El teclado (`swkbd`) se deja con el aspecto del sistema.
@@ -447,14 +489,14 @@ Ambas pantallas: degradado vertical `fondo_sup` → `fondo_inf` a pantalla compl
 ```
  SUPERIOR                                  INFERIOR
  ┌────────────────────────────────┐        ┌──────────────────────────┐
- │ ┌──────────┐                   │        │ Pista 3/24 de la cola    │
- │ │          │  Título canción   │        │                          │
- │ │ carátula │  Artista          │        │   [◀◀]   [ ▶ ]   [▶▶]    │
- │ │ 160×160  │  Álbum            │        │                          │
- │ │          │                   │        │ ███████▌░░░░░░  1:24/3:42│
- │ └──────────┘                   │        │ Vol █████░░░             │
- │                                │        │──────────────────────────│
- └────────────────────────────────┘        │ [A] Pausa [◀▶] Pista ... │
+ │ ┌──────────┐                   │        │ [⌂] [⌕] [▓▮▮▮▓] [⚙]      │ 32 px
+ │ │          │  Título canción   │        │ Título canción   3 de 24 │
+ │ │ carátula │  Artista          │        │ Artista                  │
+ │ │ 160×160  │  Álbum            │        │   [◀◀]   [ ▶ ]   [▶▶]    │
+ │ │          │                   │        │ 1:24               3:42  │
+ │ └──────────┘                   │        │ ███████▌░░░░░░░░░░░░░░░░ │
+ │                                │        │ Volumen █████░░░         │
+ └────────────────────────────────┘        │ [A] Pausa  [B] Volver    │
                                            └──────────────────────────┘
 ```
 
@@ -464,13 +506,54 @@ Ambas pantallas: degradado vertical `fondo_sup` → `fondo_inf` a pantalla compl
   El resto del layout no se mueve al llegar la imagen.
 - Metadatos a la derecha de la carátula: título `t_titulo` · `texto`, artista y álbum
   `t_cuerpo` · `texto_2`.
-- Inferior: botón central primario 48×48; anterior y siguiente secundarios 40×40; barras de
-  progreso y volumen debajo.
+- Inferior, bajo la barra de pestañas: título `t_cabeza` · `texto` con la posición en la cola
+  («3 de 24») en `t_meta` · `texto_2` a la derecha, artista `t_cuerpo` · `texto_2`; botón
+  central primario 48×48 y anterior y siguiente secundarios 40×40, centrados a 16 px; tiempo
+  transcurrido y duración en `t_meta` · `texto_2`; barras de progreso y volumen debajo.
+- Los iconos de los controles son de 16 px mientras no exista el juego de 24 px (§5.10).
+- Anterior y siguiente se deshabilitan (§6.1) en los extremos de la cola.
+- Mientras carga (carátula, clave de audio, conexión): indicador de carga (§5.7) y el paso
+  actual en `t_cuerpo` · `texto` en lugar de los controles; aún no suena nada.
+- Pista terminada: el botón central muestra «reproducir» y vuelve a empezarla; la barra de
+  progreso queda llena y «Pista terminada» sustituye a los tiempos.
+- Error: aviso de error (§5.8) con el detalle; A reintenta.
+- Sin nada en reproducción: mensaje centrado «Todavía no suena nada».
+- El audio sigue sonando en cualquier pestaña. B vuelve a «Búsqueda» sin cortarlo.
+- El teclado (`swkbd`) bloquea el hilo principal: la pista se pausa mientras está abierto y
+  sigue al cerrarlo.
 
 ### 7.6 Pista terminada / error
 
 - Superior: última carátula o, si no la hay, el logotipo.
-- Inferior: aviso centrado y barra de botones.
+- Inferior: dentro de la pestaña «Reproducción» (§7.5), con la barra de pestañas.
+
+### 7.7 Inicio
+
+- Inferior: barra de pestañas con «Inicio» activa, botón primario «Buscar canciones» a 16 px
+  bajo ella y, si la hay, la última búsqueda como botón secundario.
+- Barra de botones: [A] Buscar. Volver a conectar y emparejar están en «Ajustes».
+
+### 7.8 Ajustes
+
+```
+ INFERIOR
+ ┌──────────────────────────┐
+ │ [⌂] [⌕] [▮▮▮] [▓⚙▓]      │ 32 px
+ │                          │
+ │ [ (o) Idioma: Español  ] │ 48..80
+ │ [  Volver a conectar   ] │ 96..128
+ │ [Emparejar otra cuenta ] │ 144..176
+ │──────────────────────────│
+ │ [A] Elegir  [B] Volver   │
+ └──────────────────────────┘
+```
+
+- Tres botones secundarios a todo el ancho útil, 32 px de alto y 16 px de separación, el
+  primero a 16 px de la barra de pestañas. Foco con la cruceta (§6.2) y toque (§6.4).
+- Idioma: el botón muestra el idioma actual y lo cambia al pulsarlo, sin burbuja.
+- Volver a conectar y emparejar detienen la reproducción y vuelven a la pantalla de sesión.
+- Superior: título «Ajustes» arriba a la izquierda y el nombre de la app centrado.
+- B vuelve a «Inicio».
 
 ---
 
@@ -491,19 +574,29 @@ Ambas pantallas: degradado vertical `fondo_sup` → `fondo_inf` a pantalla compl
 - Carátula: textura `C3D_Tex` 256×256 RGBA8 con subtextura al tamaño real; conversión a
   formato tiled en el hilo de descarga.
 - En el reproductor solo se marca `dirty` por:
-  - progreso y reloj (≤ 1 vez por segundo),
+  - progreso, descarga y reloj (≤ 1 vez por segundo),
   - feedback de pulsación (§6) mientras dura,
   - cambio de volumen o pausa,
   - llegada de la carátula,
   - aparición y retirada de la burbuja.
 - No dibujar indicadores de carga, marquesinas ni animaciones en bucle en el reproductor.
+- Con el audio sonando en otra pestaña, el reproductor no marca `dirty`: solo cuentan la
+  pestaña visible y la barra de pestañas. Cambiar de pestaña redibuja las dos pantallas una
+  vez.
+- El audio se alimenta en cada vuelta del bucle principal, antes de atender a la vista, sea
+  cual sea la pestaña.
+- La búsqueda y cualquier otro hilo que pueda coincidir con la reproducción van por debajo
+  de la prioridad del decodificador.
 - Miniaturas de resultados:
   - Un único hilo de descarga con una sesión keep-alive a `i.scdn.co`; primero las filas
     visibles, luego las 4 siguientes.
   - Pool fijo de texturas 64×64 RGBA8, sin reservas por miniatura. Decodificación y conversión
     a formato tiled en el hilo; subida de la textura en el hilo principal.
   - Marcar `dirty` al llegar cada miniatura visible.
-  - Cancelar y esperar al hilo antes de reproducir y al salir de la vista.
+  - Cancelar y esperar al hilo antes de reproducir y mientras se descarga el audio. Lo ya
+    descargado se conserva.
+  - No pararlo al salir de la pestaña «Búsqueda»: esperar a su petición en curso bloquearía
+    el hilo principal, y con él el audio. Solo pide las filas visibles y las 4 siguientes.
 
 ---
 
@@ -570,8 +663,9 @@ enum {
 	FOCUS_W = 2, FOCUS_GAP = 1,
 	TOUCH_MIN = 32,
 	BAR_H = 24,
-	ROW_H = 43,
-	THUMB_SIZE = 35,
+	TAB_H = 32,
+	ROW_H = 41,
+	THUMB_SIZE = 33,
 	ART_SIZE = 160,
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,

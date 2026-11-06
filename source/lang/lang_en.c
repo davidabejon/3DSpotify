@@ -10,24 +10,17 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_NO_VALID_RESPONSE] = "No valid response was received.",
 	[STR_CHECK_SD_SPACE] = "Check the free space on the SD card.",
 	[STR_APP_CLOSING] = "The application is closing.",
-	[STR_LABEL_ARTIST] = "Artist",
 	[STR_LABEL_CODE] = "Code",
 
 	/* Button hints. */
 	[STR_KEYS_LANGUAGE] = "SELECT: Espanol",
-	[STR_KEYS_CANCEL_EXIT] = "B: cancel   START: exit",
-	[STR_KEYS_RESULTS_EXIT] = "B: results   START: exit",
 	[STR_KEYS_EXIT] = "START: exit",
-	[STR_KEYS_PLAYER] = "A: pause  L/R: track  Up/Down: volume",
 	[STR_KEYS_STARTUP_RETRY] = "A: retry   Y: pair",
 
 	/* Home view. */
-	[STR_HOME_TITLE] = "Home",
 	[STR_HOME_SEARCH] = "Search songs",
 	[STR_HOME_LAST_SEARCH] = "Last search",
 	[STR_HINT_SEARCH] = "Search",
-	[STR_HINT_RECONNECT] = "Reconnect",
-	[STR_HINT_PAIR] = "Pair",
 
 	/* Results view. */
 	[STR_RESULTS_HEADER] = "Results",
@@ -40,6 +33,14 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_BACK] = "Back",
 	[STR_HINT_CANCEL] = "Cancel",
 	[STR_HINT_RETRY] = "Retry",
+	[STR_HINT_PAUSE] = "Pause",
+	[STR_HINT_CHOOSE] = "Choose",
+
+	/* Settings tab. */
+	[STR_SETTINGS_TITLE] = "Settings",
+	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",
+	[STR_SETTINGS_RECONNECT] = "Reconnect",
+	[STR_SETTINGS_PAIR] = "Pair another account",
 
 	/* Session start-up. */
 	[STR_LOGIN_TITLE] = "3DSpotify - direct sign-in",
@@ -95,27 +96,26 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_SEARCH_HINT] = "Song or artist name",
 	[STR_SEARCH_CANCELLING] = "Cancelling after the current request...",
 	[STR_SEARCH_FAILED_TITLE] = "Search failed",
-	[STR_SEARCH_HTTP_401] = "The session was rejected. Press B, then X to reconnect.",
+	[STR_SEARCH_HTTP_401] = "The session was rejected. Reconnect it from Settings.",
 	[STR_SEARCH_HTTP_403] = "Spotify does not allow this for the account or track.",
 	[STR_SEARCH_HTTP_429] = "Request limit reached; wait before retrying.",
 	[STR_SEARCH_CHECK_WIFI] = "Check the Wi-Fi and try again.",
 	[STR_ERR_SEARCH_LOAD] = "Could not load the results.",
 	[STR_ERR_SEARCH_THREAD] = "Could not start the search task.",
 	[STR_RESULTS_EMPTY] = "No songs found.",
+	[STR_RESULTS_IDLE] = "Nothing searched yet.",
 
 	/* Playback. */
-	[STR_PLAYER_TITLE] = "Local playback",
-	[STR_PLAYER_QUEUE_FMT] = "Track %d/%d in queue",
-	[STR_PLAYER_STATUS_FMT] = "%02u:%02u/%02d:%02d DL:%u%% Vol:%u%%",
 	[STR_PLAYER_ART_LOADING] = "Loading cover art...",
-	[STR_PLAYER_ART_DOWNLOADING] = "Downloading and preparing cover art...",
-	[STR_PLAYER_ART_WAITING] = "Waiting for the request to finish...",
 	[STR_PLAYER_AUDIO_PREPARING] = "Preparing audio output...",
 	[STR_PLAYER_AUDIO_KEY] = "Fetching the audio key...",
 	[STR_PLAYER_DOWNLOAD_CANCELLING] = "Cancelling the download...",
 	[STR_PLAYER_FAILED_TITLE] = "Could not play the track",
 	[STR_PLAYER_INTERRUPTED] = "Playback was interrupted.",
 	[STR_PLAYER_FINISHED_TITLE] = "Track finished",
+	[STR_PLAYER_IDLE] = "Nothing playing yet.",
+	[STR_PLAYER_POSITION_FMT] = "%d of %d",
+	[STR_PLAYER_VOLUME] = "Volume",
 	[STR_ERR_NO_REFRESH_CREDENTIAL] = "No credential available to renew OAuth.",
 	[STR_ERR_NO_ACCESS_TOKEN] = "Spotify did not return an access token.",
 	[STR_ERR_SAVE_RENEWED_OAUTH] = "Could not save the renewed OAuth credential.",

@@ -1,5 +1,7 @@
 #include "draw.h"
 
+#include "player_logic.h"
+
 #include <math.h>
 
 void ui_fill(ui_rect r, u32 color)
@@ -100,8 +102,10 @@ float ui_button_content_width(const C2D_Text *label, bool icon)
 	return (icon ? ICON_S + SP_1 : 0) + ui_text_width(label, TXT_CUERPO);
 }
 
-void ui_button(ui_rect r, ui_button_kind kind, ui_control_look look,
-               const C2D_Text *label, const C2D_Image *icon)
+/* The button's surface in any state of 6.1. Returns where it ended up;
+ * `*ink` is the colour of its content. */
+static ui_rect button_body(ui_rect r, ui_button_kind kind,
+                           ui_control_look look, u32 *ink_out)
 {
 	ui_rect body;
 	u32 ink;
@@ -132,7 +136,24 @@ void ui_button(ui_rect r, ui_button_kind kind, ui_control_look look,
 		if (look.focused)
 			ui_focus_ring(body);
 	}
+	*ink_out = ink;
+	return body;
+}
 
+void ui_icon_button(ui_rect r, ui_button_kind kind, ui_control_look look,
+                    const C2D_Image *icon)
+{
+	u32 ink;
+	ui_rect body = button_body(r, kind, look, &ink);
+	ui_icon(icon, body.x + (body.w - ICON_S) / 2,
+	        body.y + (body.h - ICON_S) / 2, ink);
+}
+
+void ui_button(ui_rect r, ui_button_kind kind, ui_control_look look,
+               const C2D_Text *label, const C2D_Image *icon)
+{
+	u32 ink;
+	ui_rect body = button_body(r, kind, look, &ink);
 	bool has_icon = icon && icon->tex;
 	int width = ui_px_ceil(ui_button_content_width(label, has_icon));
 	int x = body.x + (body.w - width) / 2;
@@ -170,6 +191,24 @@ void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
 		              hints[i].inverted) + SP_1;
 		ui_text(hints[i].label, x, cy, TXT_META, COL_TEXTO_2);
 		x += ui_px_ceil(ui_text_width(hints[i].label, TXT_META)) + SP_3;
+	}
+}
+
+void ui_progress(ui_rect r, int download, int progress, bool handle)
+{
+	ui_rect inside = outlined(r, COL_CAPA_ALTA);
+	if (download >= 0) {
+		ui_rect loaded = inside;
+		loaded.w = player_fill_px(inside.w, download);
+		ui_fill(loaded, COL_MUSGO);
+	}
+	ui_rect played = inside;
+	played.w = player_fill_px(inside.w, progress);
+	ui_fill(played, COL_CLOROFILA);
+	if (handle) {
+		ui_rect knob = { played.x + played.w - HANDLE_W / 2,
+		                 r.y + r.h / 2 - HANDLE_H / 2, HANDLE_W, HANDLE_H };
+		outlined(knob, COL_TEXTO);
 	}
 }
 

@@ -45,6 +45,9 @@ typedef struct {
  * no texture) and the label are centred as a group, label at TXT_CUERPO. */
 void ui_button(ui_rect r, ui_button_kind kind, ui_control_look look,
                const C2D_Text *label, const C2D_Image *icon);
+/* A square button with only an icon, centred: the player's controls. */
+void ui_icon_button(ui_rect r, ui_button_kind kind, ui_control_look look,
+                    const C2D_Image *icon);
 /* Width of a button's content: icon, gap and label. */
 float ui_button_content_width(const C2D_Text *label, bool icon);
 
@@ -64,6 +67,13 @@ typedef struct {
 /* The button bar (5.6): a `capa` panel with up to four actions, left to
  * right from the margin. */
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count);
+
+/* A progress (5.4) or volume (5.5) bar in `r`: 1 px `tinta` outline,
+ * `capa_alta` track, the download in `musgo` ahead of the progress in
+ * `clorofila`, both in thousandths (download < 0: none). With `handle`, a
+ * HANDLE_W x HANDLE_H `texto` handle outlined in `tinta`, centred on the
+ * end of the progress. */
+void ui_progress(ui_rect r, int download, int progress, bool handle);
 
 /* The loading indicator (5.7), centred on (cx, cy). `step` advances every
  * LOADER_STEP frames. */

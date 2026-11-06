@@ -3,10 +3,11 @@
  * tests/native_logic_test.c. Whole pixels throughout.
  *
  * Bottom screen, 320 x 240:
- *   header    0..24   panel: title on the left, "1-4 of 24" on the right
- *   rows     28..212  4 rows of ROW_H, SP_1 apart, with SP_1 under the
- *                     header and SP_1 over the button bar: exactly the
- *                     192 px between the bars
+ *   tabs      0..32   the tab bar (tabs_logic.h); "1-4 of 24" goes to the
+ *                     top screen
+ *   rows     36..212  4 rows of ROW_H, SP_1 apart, with SP_1 under the
+ *                     tab bar and SP_1 over the button bar: exactly the
+ *                     184 px between the bars
  *   scroll  316..320  the scroll indicator, against the right edge
  *   hints   216..240  button bar
  * `scroll` is the pixel offset of the list and the first (possibly cut)
@@ -24,7 +25,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
-/* Rows on screen; also how far L/R jump (7.4: RESULTS_PER_PAGE). */
+/* Rows on screen; also how far left/right jump (7.4: RESULTS_PER_PAGE). */
 #define RESULTS_PER_PAGE 4
 /* From one row to the next. */
 #define LIST_PITCH (ROW_H + SP_1)
@@ -84,10 +85,10 @@ static inline void list_range(int first, int count, int visible, int *from,
 	*to = first + visible < count ? first + visible : count;
 }
 
-static inline ui_rect list_header_rect(void)
+/* Where the list area starts: under the tab bar. */
+static inline int list_top(void)
 {
-	ui_rect r = { 0, 0, SCREEN_BOTTOM_W, BAR_H };
-	return r;
+	return TAB_H;
 }
 
 static inline ui_rect list_hints_rect(void)
@@ -99,7 +100,7 @@ static inline ui_rect list_hints_rect(void)
 /* The row in screen slot `slot` (0..RESULTS_PER_PAGE-1). */
 static inline ui_rect list_row_rect(int slot)
 {
-	ui_rect r = { SP_2, BAR_H + SP_1 + slot * (ROW_H + SP_1),
+	ui_rect r = { SP_2, list_top() + SP_1 + slot * (ROW_H + SP_1),
 	              SCREEN_BOTTOM_W - 2 * SP_2, ROW_H };
 	return r;
 }
@@ -133,11 +134,19 @@ static inline ui_rect list_row_at(int index, int scroll)
 	return r;
 }
 
+/* Whether (x, y) is inside the list area, between the bars: where a drag
+ * may start. */
+static inline bool list_area_contains(int x, int y)
+{
+	(void)x;
+	return y >= list_top() && y < SCREEN_H - BAR_H;
+}
+
 /* The track under (x, y), or -1: inside the list area, rows only, not the
  * gaps between them. */
 static inline int list_hit_row(int x, int y, int scroll, int count)
 {
-	if (y < BAR_H || y >= SCREEN_H - BAR_H)
+	if (y < list_top() || y >= SCREEN_H - BAR_H)
 		return -1;
 	int offset = y - list_row_rect(0).y + scroll;
 	if (offset < 0)
@@ -163,7 +172,7 @@ static inline int list_snap(int scroll, int count)
  * fewer. */
 static inline void list_full_rows(int scroll, int count, int *from, int *to)
 {
-	int top = BAR_H;
+	int top = list_top();
 	int bottom = SCREEN_H - BAR_H;
 	int r0 = list_row_rect(0).y;
 	/* Row i is whole when r0 + i*P - scroll >= top and its bottom edge
@@ -236,8 +245,8 @@ static inline int list_drag_scroll(const list_drag *d, int y, int count)
  * the visible part of the list. */
 static inline ui_rect list_scroll_track(void)
 {
-	ui_rect r = { SCREEN_BOTTOM_W - SCROLL_W, BAR_H, SCROLL_W,
-	              SCREEN_H - 2 * BAR_H };
+	ui_rect r = { SCREEN_BOTTOM_W - SCROLL_W, list_top(), SCROLL_W,
+	              SCREEN_H - list_top() - BAR_H };
 	return r;
 }
 
@@ -264,7 +273,7 @@ static inline ui_rect list_scroll_thumb(int scroll, int count)
  * button SP_4 under it. The notice fits a title and three lines. */
 static inline ui_rect list_notice_rect(void)
 {
-	ui_rect r = { SP_2, BAR_H + SP_4, SCREEN_BOTTOM_W - 2 * SP_2,
+	ui_rect r = { SP_2, list_top() + SP_4, SCREEN_BOTTOM_W - 2 * SP_2,
 	              4 * SP_6 };
 	return r;
 }

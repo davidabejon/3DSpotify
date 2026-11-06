@@ -69,9 +69,28 @@ emparejamiento que aparece en la consola desde otro dispositivo y autoriza la
 cuenta en Spotify. El refresh token se guarda en la SD para los siguientes
 arranques.
 
-### Pantalla de inicio
+### Pestañas
 
-En la pantalla de inicio, toca **«Buscar canciones»** o pulsa **A** para abrir el teclado. Debajo aparece tu última búsqueda como un botón secundario; tócalo o llega a él con arriba/abajo y pulsa **A**.
+Una vez iniciada la sesión, la parte superior de la pantalla inferior es una barra con cuatro
+pestañas, cada una con su icono:
+
+| Icono | Pestaña | Qué contiene |
+|---|---|---|
+| Casa | **Inicio** | Buscar canciones y repetir la última búsqueda. |
+| Lupa | **Búsqueda** | Los últimos resultados, la búsqueda en curso o su error. |
+| Ecualizador | **Reproducción** | La canción que suena, con sus controles. |
+| Engranaje | **Ajustes** | Idioma, volver a conectar y emparejar otra cuenta. |
+
+- Toca una pestaña para abrirla (se activa al levantar el lápiz dentro de ella).
+- **L/R** pasan a la pestaña anterior o siguiente desde cualquier pantalla; **ZL/ZR** (solo
+  New 3DS) hacen lo mismo.
+- La música sigue sonando en cualquier pestaña, y la búsqueda corre en segundo plano mientras
+  te mueves entre ellas.
+- **SELECT** cambia el idioma desde cualquier pestaña y **START** sale.
+
+### Inicio
+
+Toca **«Buscar canciones»** o pulsa **A** para abrir el teclado. Debajo aparece tu última búsqueda como un botón secundario; tócalo o llega a él con arriba/abajo y pulsa **A**. Al confirmar, la app pasa a la pestaña **Búsqueda**.
 
 **Controles táctiles:**
 - Toca un botón para resaltarlo; el botón muestra un estado pulsado cuando levantas el lápiz dentro de él.
@@ -79,52 +98,59 @@ En la pantalla de inicio, toca **«Buscar canciones»** o pulsa **A** para abrir
 
 **Indicadores de acción:** Los glifos con fondos de color muestran las acciones disponibles:
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — abre el teclado de búsqueda
-- <span style="background-color: #3FA2FF; color: white; padding: 2px 4px; border-radius: 2px;">X</span> — reconecta con Spotify
-- <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — empareja otra cuenta
-- **SELECT** — cambia el idioma
-- **START** — sale
 
-### Resultados de búsqueda
+Mientras el teclado está abierto, la canción que suena se pausa y sigue al cerrarlo.
 
-Los resultados muestran cuatro canciones a la vez. La **pantalla superior** muestra la ficha de la canción: título, artista, álbum y duración de la canción resaltada. La **pantalla inferior** muestra la lista con miniaturas.
+### Búsqueda
+
+Los resultados muestran cuatro canciones a la vez. La **pantalla superior** muestra la consulta con el rango visible («1-4 de 24») y la ficha de la canción resaltada: título, artista, álbum y duración. La **pantalla inferior** muestra la lista con miniaturas bajo la barra de pestañas.
 
 **Navegación:**
-- Arriba/abajo recorre la lista; la canción resaltada gana un borde verde (`lima`) y un fondo más brillante.
-- L/R salta de cuatro en cuatro.
-- Toca una canción para resaltarla; tócala otra vez (o pulsa **A**) para reproducirla directamente.
+- Arriba/abajo recorre la lista; la canción resaltada gana un fondo verde más brillante.
+- Izquierda/derecha salta de cuatro en cuatro.
+- Toca una canción para resaltarla; tócala otra vez (o pulsa **A**) para reproducirla: la app pasa a la pestaña **Reproducción**.
 - Arrastra la lista con el lápiz para desplazarla; la barra del borde derecho indica por dónde vas.
 
 **Indicadores de acción:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — reproduce la canción resaltada
-- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pantalla de inicio
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Inicio
 - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — inicia una nueva búsqueda
-- L/R — salta de cuatro en cuatro
+- Izquierda/derecha — salta de cuatro en cuatro
 
 **Gestos táctiles:**
 - **Tocar una fila:** selecciona la canción; la fila se resalta y su ficha aparece en la pantalla superior.
 - **Tocar nuevamente:** reproduce la canción al momento con el resto de resultados como cola.
-- **Arrastrar verticalmente:** desplaza la lista; las filas pueden quedar cortadas por los bordes de la pantalla. La canción resaltada y su ficha siguen visibles en la pantalla superior mientras desplazas.
+- **Arrastrar verticalmente:** desplaza la lista; las filas pueden quedar cortadas por la barra de pestañas y la barra de botones. La canción resaltada y su ficha siguen visibles en la pantalla superior mientras desplazas.
 - **Arrastrar más de 8 píxeles desde donde tocaste:** el arrastre se confirma; el toque de la fila se cancela.
 
 **Estado de la búsqueda:**
+- Antes de la primera búsqueda, la pestaña ofrece el botón **«Buscar canciones»**.
 - Si la búsqueda falla, pulsa **A** (o toca el botón de la pantalla) para reintentar.
 - Pulsa **B** para cancelar una búsqueda pendiente cuando termine la petición de red activa.
+- Mientras suena la cola de estos resultados, la fila resaltada sigue a la canción que suena.
 
 ### Reproducción
 
-La canción elegida se reproduce localmente con el resto de resultados como cola. Durante la reproducción:
-- La **pantalla superior** muestra la carátula (o un fondo neutro si no está disponible) con el título,
-  artista y álbum a la derecha.
-- La **pantalla inferior** muestra el número de pista, barra de progreso y control de volumen.
+La canción elegida se reproduce localmente con el resto de resultados como cola, y sigue sonando aunque cambies de pestaña.
+- La **pantalla superior** muestra la carátula (o un fondo neutro si no está disponible).
+- La **pantalla inferior** muestra el título, el artista y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
 
 **Controles de reproducción:**
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda
-- Izquierda/derecha — cambia de pista
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda; con la pista terminada, la vuelve a empezar; con un error, reintenta
+- Izquierda/derecha, o los botones de la pantalla — cambia de pista
 - Arriba/abajo — ajusta el volumen local
-- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a resultados
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Búsqueda sin cortar la música
 - **START** — detiene y sale
 
-La cola sigue el orden de los resultados y no envuelve en sus extremos. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
+La cola sigue el orden de los resultados y no envuelve en sus extremos: en ellos, el botón anterior o siguiente aparece deshabilitado. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
+
+### Ajustes
+
+- **Idioma** — muestra el idioma actual y lo cambia (también con **SELECT** desde cualquier pestaña).
+- **Volver a conectar** — vuelve a abrir la sesión con la credencial guardada.
+- **Emparejar otra cuenta** — empieza el emparejamiento con un código nuevo.
+
+Elige con arriba/abajo y **A**, o tocando el botón. Volver a conectar y emparejar detienen la reproducción. **B** vuelve a la pestaña Inicio.
 
 ## Probes
 

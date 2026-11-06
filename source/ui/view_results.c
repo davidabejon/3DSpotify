@@ -4,6 +4,7 @@
 #include "icons.h"
 #include "list_logic.h"
 #include "press_logic.h"
+#include "tabbar.h"
 #include "text_fit.h"
 #include "thumbs.h"
 #include "theme.h"
@@ -29,6 +30,7 @@
 #define CONTROL_BUTTON 1000
 
 typedef enum {
+	MODE_IDLE,
 	MODE_SEARCHING,
 	MODE_LIST,
 	MODE_EMPTY,
@@ -43,7 +45,7 @@ static const u32 glyph_colors[GLYPH_COUNT] = {
 };
 
 /* Content. */
-static results_mode mode = MODE_SEARCHING;
+static results_mode mode = MODE_IDLE;
 static char query[QUERY_SIZE];
 static const sp_track *tracks;
 static int count;
@@ -55,6 +57,10 @@ static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
 /* Bumped whenever a thumbnail arrives, so the list repaints. */
 static int thumbs_serial;
+/* Whether the thumbnails may download now (STYLES.md 9: not while the
+ * audio downloads), and whether thumbs.c holds this list. */
+static bool thumbs_allowed = true;
+static bool thumbs_synced;
 
 /* Parsed text. `stale`: content or language changed. */
 static C2D_TextBuf static_buf, row_buf, detail_buf, range_buf, scratch_buf;
@@ -64,7 +70,7 @@ static int parsed_first = -1;
 static int parsed_selected = -1;
 
 static C2D_Text query_title_text;   /* top: Results: "query" */
-static C2D_Text header_text;        /* bottom header */
+static C2D_Text header_text;        /* top, before any search */
 static C2D_Text status_text;        /* top, while searching */
 static C2D_Text empty_text;
 static C2D_Text button_text;        /* empty: new search; error: retry */
@@ -75,6 +81,7 @@ static C2D_Text bubble_text;
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_play, hint_back, hint_search, hint_cancel, hint_retry;
 static C2D_Text range_text;
+static int range_room;              /* px kept for it on the top screen */
 static C2D_Text row_title[MAX_TRACKS];
 static C2D_Text row_artist[MAX_TRACKS];
 static C2D_Text row_duration[MAX_TRACKS];
@@ -163,6 +170,46 @@ static void set_query(const char *text)
 	snprintf(query, sizeof(query), "%s", text ? text : "");
 }
 
+/* Gives thumbs.c this list when allowed; until then nothing it holds is
+ * drawn. */
+static void sync_thumbs(void)
+{
+	thumbs_synced = false;
+	if (!thumbs_allowed || mode != MODE_LIST)
+		return;
+	thumbs_set_tracks(tracks, count);
+	thumbs_set_window(first);
+	thumbs_synced = true;
+}
+
+void view_results_allow_thumbs(bool allow)
+{
+	if (allow == thumbs_allowed)
+		return;
+	thumbs_allowed = allow;
+	/* Stopped, what was fetched stays usable; nothing new arrives. */
+	if (allow)
+		sync_thumbs();
+	else
+		thumbs_stop();
+}
+
+void view_results_idle(void)
+{
+	set_query("");
+	mode = MODE_IDLE;
+	tracks = NULL;
+	count = selected = first = scroll = 0;
+	cancelling = false;
+	thumbs_synced = false;
+	reset_interaction();
+}
+
+void view_results_enter(void)
+{
+	reset_interaction();
+}
+
 void view_results_searching(const char *text)
 {
 	set_query(text);
@@ -170,6 +217,7 @@ void view_results_searching(const char *text)
 	tracks = NULL;
 	count = selected = first = scroll = 0;
 	cancelling = false;
+	thumbs_synced = false;
 	reset_interaction();
 }
 
@@ -193,8 +241,7 @@ void view_results_show(const char *text, const sp_track *list, int n,
 	scroll = first * LIST_PITCH;
 	reset_interaction();
 	/* Covers: visible rows first (STYLES.md 9). */
-	thumbs_set_tracks(list, count);
-	thumbs_set_window(first);
+	sync_thumbs();
 }
 
 void view_results_error(const char *text, const char *error, str_id help)
@@ -205,12 +252,21 @@ void view_results_error(const char *text, const char *error, str_id help)
 	count = selected = first = scroll = 0;
 	snprintf(error_detail, sizeof(error_detail), "%s", error ? error : "");
 	advice = help;
+	thumbs_synced = false;
 	reset_interaction();
 }
 
 int view_results_selected(void)
 {
 	return selected;
+}
+
+static void focus_row(int index);
+
+void view_results_focus(int index)
+{
+	if (mode == MODE_LIST && index >= 0 && index < count)
+		focus_row(index);
 }
 
 /* --- Text -------------------------------------------------------------- */
@@ -265,19 +321,25 @@ static int top_width(void)
 static void parse_static(void)
 {
 	C2D_TextBufClear(static_buf);
+	/* Room for the widest range, right of the query title. */
+	char widest[32];
+	snprintf(widest, sizeof(widest), tr(STR_RESULTS_RANGE_FMT), MAX_TRACKS,
+	         MAX_TRACKS, MAX_TRACKS);
+	float meta = TXT_META;
+	range_room = ui_px_ceil(measure(widest, &meta)) + SP_4;
 	char line[QUERY_SIZE + 32];
 	snprintf(line, sizeof(line), tr(STR_RESULTS_QUERY_FMT), query);
 	parse_fitted(&query_title_text, static_buf, line, TXT_CABEZA,
-	             top_width());
-	parse(&header_text, static_buf,
-	      tr(mode == MODE_SEARCHING ? STR_RESULTS_SEARCHING
-	                                : STR_RESULTS_HEADER));
+	             top_width() - range_room);
+	parse(&header_text, static_buf, tr(STR_RESULTS_HEADER));
 	parse(&status_text, static_buf,
 	      tr(cancelling ? STR_SEARCH_CANCELLING : STR_RESULTS_SEARCHING));
-	parse(&empty_text, static_buf, tr(STR_RESULTS_EMPTY));
+	parse(&empty_text, static_buf,
+	      tr(mode == MODE_IDLE ? STR_RESULTS_IDLE : STR_RESULTS_EMPTY));
 	parse(&button_text, static_buf,
 	      tr(mode == MODE_ERROR ? STR_RESULTS_RETRY
-	                            : STR_RESULTS_NEW_SEARCH));
+	         : mode == MODE_IDLE ? STR_HOME_SEARCH
+	                             : STR_RESULTS_NEW_SEARCH));
 	ui_rect notice = list_notice_rect();
 	parse_fitted(&notice_title_text, static_buf, tr(STR_SEARCH_FAILED_TITLE),
 	             TXT_CABEZA, notice.w - 2 * SP_3 - ICON_S - SP_1);
@@ -474,7 +536,7 @@ static void move_focus(int delta)
 
 static bool has_button(void)
 {
-	return mode == MODE_EMPTY || mode == MODE_ERROR;
+	return mode == MODE_IDLE || mode == MODE_EMPTY || mode == MODE_ERROR;
 }
 
 static results_action button_action(void)
@@ -486,7 +548,7 @@ static results_action button_action(void)
 static ui_rect button_rect(void)
 {
 	return list_action_rect(ui_text_width(&button_text, TXT_CUERPO),
-	                        mode == MODE_EMPTY);
+	                        mode == MODE_EMPTY || mode == MODE_IDLE);
 }
 
 static void release_keys(u32 up)
@@ -520,7 +582,11 @@ static bool handle_touch(u32 down, u32 held, u32 up)
 			touchPosition pos;
 			hidTouchRead(&pos);
 			if (down & KEY_TOUCH) {
-				list_drag_begin(&drag, pos.py, scroll);
+				/* Only from the list itself: the tab bar keeps its own
+				 * touches. */
+				if (list_area_contains(pos.px, pos.py) &&
+				    !tabbar_touching())
+					list_drag_begin(&drag, pos.py, scroll);
 			} else if (list_drag_update(&drag, pos.py)) {
 				/* A drag is not a tap: the row returns to rest without
 				 * acting (6.4, 6.9). */
@@ -614,7 +680,7 @@ results_action view_results_update(u32 down)
 		return RESULTS_ACTION_NONE;
 
 	if (mode == MODE_LIST &&
-	    (down & (KEY_UP | KEY_DOWN | KEY_L | KEY_R | KEY_A)) &&
+	    (down & (KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_A)) &&
 	    !list_row_whole(selected, scroll, count)) {
 		/* 6.6: with the focus dragged out of view, the first button press
 		 * only brings the list back to it, on whole rows. A still shows
@@ -630,9 +696,10 @@ results_action view_results_update(u32 down)
 			move_focus(-1);
 		else if (down & KEY_DOWN)
 			move_focus(1);
-		else if (down & KEY_L)
+		/* Left/right page; L/R are the tab bar's. */
+		else if (down & KEY_LEFT)
 			move_focus(-RESULTS_PER_PAGE);
-		else if (down & KEY_R)
+		else if (down & KEY_RIGHT)
 			move_focus(RESULTS_PER_PAGE);
 	}
 
@@ -674,7 +741,7 @@ static void draw_thumb(ui_rect row, int index)
 	ui_fill(thumb, COL_TINTA);
 	ui_rect inside = ui_rect_inset(thumb, OUTLINE_W);
 	C2D_Image image;
-	if (index >= 0 && thumbs_image(index, &image)) {
+	if (index >= 0 && thumbs_synced && thumbs_image(index, &image)) {
 		/* Fitted into the square, centred on whole pixels. */
 		int w = image.subtex->width, h = image.subtex->height;
 		int longest = w > h ? w : h;
@@ -734,19 +801,6 @@ static void draw_row(ui_rect row, int index, const results_look *look)
 	ui_text(&row_duration[index], duration_x, title_cy, TXT_META, meta_ink);
 }
 
-static void draw_header(void)
-{
-	ui_rect header = list_header_rect();
-	ui_panel(header);
-	int cy = header.y + header.h / 2;
-	ui_text(&header_text, SP_2, cy, TXT_CABEZA, COL_TEXTO);
-	if (mode == MODE_LIST || mode == MODE_EMPTY) {
-		int w = ui_px_ceil(ui_text_width(&range_text, TXT_META));
-		ui_text(&range_text, header.x + header.w - SP_2 - w, cy, TXT_META,
-		        COL_TEXTO_2);
-	}
-}
-
 static void draw_bar(const results_look *look)
 {
 	ui_hint hints[3];
@@ -754,6 +808,9 @@ static void draw_bar(const results_look *look)
 	const C2D_Text *a_label = NULL;
 	switch (mode) {
 	case MODE_SEARCHING:
+		break;
+	case MODE_IDLE:
+		a_label = &hint_search;
 		break;
 	case MODE_LIST:
 		a_label = &hint_play;
@@ -810,6 +867,7 @@ void view_results_draw_bottom(void)
 		}
 		break;
 	}
+	case MODE_IDLE:
 	case MODE_EMPTY: {
 		/* A single message: centred (3.3). */
 		ui_rect notice = list_notice_rect();
@@ -831,8 +889,8 @@ void view_results_draw_bottom(void)
 		          NULL);
 	}
 
-	/* Bars after the rows: nudged and dragged rows slide under them. */
-	draw_header();
+	/* The bar after the rows: nudged and dragged rows slide under it, and
+	 * under the tab bar, drawn by the caller. */
 	draw_bar(&look);
 
 	if (look.bubble) {
@@ -870,8 +928,18 @@ void view_results_draw_top(void)
 {
 	ensure_parsed();
 	int title_line = ui_line_height(TXT_CABEZA);
-	ui_text(&query_title_text, SP_3, SP_3 + title_line / 2, TXT_CABEZA,
-	        COL_TEXTO);
+	int title_cy = SP_3 + title_line / 2;
+	if (mode == MODE_IDLE) {
+		ui_text(&header_text, SP_3, title_cy, TXT_CABEZA, COL_TEXTO);
+		return;
+	}
+	ui_text(&query_title_text, SP_3, title_cy, TXT_CABEZA, COL_TEXTO);
+	/* The visible range: the tab bar left no room for it below. */
+	if (mode == MODE_LIST || mode == MODE_EMPTY) {
+		int w = ui_px_ceil(ui_text_width(&range_text, TXT_META));
+		ui_text(&range_text, SCREEN_TOP_W - SP_3 - w, title_cy, TXT_META,
+		        COL_TEXTO_2);
+	}
 	int below = SP_3 + title_line + SP_2;
 
 	switch (mode) {
@@ -891,6 +959,7 @@ void view_results_draw_top(void)
 		ui_text_wrapped(&error_detail_text, SP_3, below, TXT_CUERPO,
 		                COL_TEXTO_2, top_width());
 		break;
+	case MODE_IDLE:
 	case MODE_EMPTY:
 		break;
 	}
