@@ -574,6 +574,10 @@ class BuildTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn("### 5.12 Barra de pesta", style)
 
+    def test_output_name_uses_app_title(self):
+        self.assertEqual(build.output_name("spotify3ds"), "3DSpotify")
+        self.assertEqual(build.output_name("probe_tls"), "probe_tls")
+
     def test_romfs_is_packed_into_3dsx_and_cia(self):
         romfs = self.root / "romfs"
         with self.assertRaisesRegex(SystemExit, "romfs directory is missing"):

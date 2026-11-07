@@ -49,12 +49,12 @@ La prueba C de codificación, cola y cancelación se ejecuta si hay un compilado
 C nativo disponible; en caso contrario, unittest la marca como omitida.
 
 El artefacto queda en
-`source\dist\3ds\spotify3ds\spotify3ds.3dsx`. Cópialo a
-`SD:/3ds/spotify3ds/` y ejecútalo desde Homebrew Launcher, o envíalo desde el
+`source\dist\3ds\3DSpotify\3DSpotify.3dsx`. Cópialo a
+`SD:/3ds/3DSpotify/` y ejecútalo desde Homebrew Launcher, o envíalo desde el
 PC con:
 
 ```powershell
-3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <IP_DE_LA_CONSOLA>
+3dslink.exe source\dist\3ds\3DSpotify\3DSpotify.3dsx -a <IP_DE_LA_CONSOLA>
 ```
 `3dslink` forma parte de las herramientas de devkitPro.
 
@@ -65,7 +65,7 @@ Para instalarla en el menú HOME, genera también el CIA (requiere `makerom` y
 python source\build.py --cia
 ```
 
-Se genera `source\dist\3ds\spotify3ds\spotify3ds.cia`; cópialo a la SD e
+Se genera `source\dist\3ds\3DSpotify\3DSpotify.cia`; cópialo a la SD e
 instálalo con FBI o un instalador de CIA similar (requiere custom firmware).
 El CIA guarda su configuración en `SD:/3ds/spotibacan/`.
 

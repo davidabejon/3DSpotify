@@ -50,12 +50,12 @@ The C tests for search encoding, queue boundaries, and cancellation run when a
 host C compiler is available; otherwise unittest reports them as skipped.
 
 The artifact is written to
-`source\dist\3ds\spotify3ds\spotify3ds.3dsx`. Copy it to
-`SD:/3ds/spotify3ds/` and launch it from the Homebrew Launcher, or send it
+`source\dist\3ds\3DSpotify\3DSpotify.3dsx`. Copy it to
+`SD:/3ds/3DSpotify/` and launch it from the Homebrew Launcher, or send it
 from the PC with:
 
 ```powershell
-3dslink.exe source\dist\3ds\spotify3ds\spotify3ds.3dsx -a <CONSOLE_IP>
+3dslink.exe source\dist\3ds\3DSpotify\3DSpotify.3dsx -a <CONSOLE_IP>
 ```
 `3dslink` is part of devkitPro's tools.
 
@@ -66,7 +66,7 @@ To install it on the Home Menu instead, build the CIA as well (needs
 python source\build.py --cia
 ```
 
-This writes `source\dist\3ds\spotify3ds\spotify3ds.cia`; copy it to the SD
+This writes `source\dist\3ds\3DSpotify\3DSpotify.cia`; copy it to the SD
 card and install it with FBI or a similar CIA installer (requires custom
 firmware). The CIA keeps its settings in `SD:/3ds/spotibacan/`.
 

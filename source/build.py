@@ -3,7 +3,7 @@
 From the repository root:
     python source/build.py --app spotify3ds --fetch-deps
 
-Add --cia to also package dist/3ds/spotify3ds/spotify3ds.cia for FBI and
+Add --cia to also package dist/3ds/3DSpotify/3DSpotify.cia for FBI and
 similar installers (needs makerom and bannertool from devkitPro's tools).
 
 Python 3.12+ is required. --fetch-deps downloads pinned dependencies when
@@ -251,6 +251,12 @@ def makerom_command(makerom: Path, elf: Path, smdh: Path, banner: Path,
             f"-DAPP_ROMFS={romfs.as_posix()}"]
 
 
+def output_name(app: str) -> str:
+    """Base name of the output folder and of the .3dsx and .cia files: the
+    app's title for the real client, the target name for the probes."""
+    return APP_TITLE if app == "spotify3ds" else app
+
+
 def make_cia(sdk: Path, bannertool: Path, elf: Path, smdh: Path,
              out: Path, dest: Path, romfs: Path) -> Path:
     makerom = require_tool(sdk / "tools" / "bin", "makerom")
@@ -341,7 +347,8 @@ def main():
                     "-Wl,--start-group", "-lcitro2d", "-lcitro3d", "-lctru",
                     "-lm", "-Wl,--end-group"], check=True)
 
-    dest = ROOT / "dist" / "3ds" / app / f"{app}.3dsx"
+    name = output_name(app)
+    dest = ROOT / "dist" / "3ds" / name / f"{name}.3dsx"
     dest.parent.mkdir(parents=True, exist_ok=True)
     bannertool = smdh = None
     if app == "spotify3ds":
@@ -356,7 +363,7 @@ def main():
         print("Copy it to the SD card and install it with FBI or a similar "
               "CIA installer.")
     if app == "spotify3ds":
-        print(f"Copy {dest.parent} to SD:/3ds/ and launch {app}.3dsx from "
+        print(f"Copy {dest.parent} to SD:/3ds/ and launch {dest.name} from "
               "Homebrew Launcher, or send it with 3dslink.")
 
 
