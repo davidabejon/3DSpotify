@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>3DSpotify</title>
+	<meta name="description" content="Unofficial Spotify client for the Nintendo 3DS. Search for songs and play them on the console.">
+	<meta name="theme-color" content="#1A7049">
+	<link rel="icon" type="image/png" href="assets/icon.png">
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Iconos de la app (source/ui/gen_icons.py), 16×16 en la rejilla de píxeles. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+	<symbol id="i-search" viewBox="0 0 16 16"><path d="M4 1h6v1h-6zM3 2h8v1h-8zM2 3h2v1h-2zM10 3h2v1h-2zM2 4h2v1h-2zM10 4h2v1h-2zM2 5h2v1h-2zM10 5h2v1h-2zM2 6h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM10 7h2v1h-2zM2 8h2v1h-2zM10 8h2v1h-2zM3 9h8v1h-8zM4 10h6v1h-6zM11 10h2v1h-2zM11 11h3v1h-3zM12 12h3v1h-3zM13 13h2v1h-2z"/></symbol>
+	<symbol id="i-language" viewBox="0 0 16 16"><path d="M5 1h6v1h-6zM3 2h10v1h-10zM2 3h3v1h-3zM7 3h2v1h-2zM11 3h3v1h-3zM2 4h2v1h-2zM7 4h2v1h-2zM12 4h2v1h-2zM1 5h2v1h-2zM7 5h2v1h-2zM13 5h2v1h-2zM1 6h2v1h-2zM7 6h2v1h-2zM13 6h2v1h-2zM1 7h14v1h-14zM1 8h14v1h-14zM1 9h2v1h-2zM7 9h2v1h-2zM13 9h2v1h-2zM1 10h2v1h-2zM7 10h2v1h-2zM13 10h2v1h-2zM2 11h2v1h-2zM7 11h2v1h-2zM12 11h2v1h-2zM2 12h3v1h-3zM7 12h2v1h-2zM11 12h3v1h-3zM3 13h10v1h-10zM5 14h6v1h-6z"/></symbol>
+	<symbol id="i-note" viewBox="0 0 16 16"><path d="M5 1h10v1h-10zM5 2h10v1h-10zM5 3h2v1h-2zM13 3h2v1h-2zM5 4h2v1h-2zM13 4h2v1h-2zM5 5h2v1h-2zM13 5h2v1h-2zM5 6h2v1h-2zM13 6h2v1h-2zM5 7h2v1h-2zM13 7h2v1h-2zM5 8h2v1h-2zM13 8h2v1h-2zM5 9h2v1h-2zM13 9h2v1h-2zM1 10h6v1h-6zM9 10h6v1h-6zM1 11h6v1h-6zM9 11h6v1h-6zM1 12h6v1h-6zM9 12h6v1h-6zM2 13h4v1h-4zM10 13h4v1h-4z"/></symbol>
+	<symbol id="i-error" viewBox="0 0 16 16"><path d="M5 1h6v1h-6zM3 2h10v1h-10zM2 3h3v1h-3zM11 3h3v1h-3zM2 4h2v1h-2zM7 4h2v1h-2zM12 4h2v1h-2zM1 5h2v1h-2zM7 5h2v1h-2zM13 5h2v1h-2zM1 6h2v1h-2zM7 6h2v1h-2zM13 6h2v1h-2zM1 7h2v1h-2zM7 7h2v1h-2zM13 7h2v1h-2zM1 8h2v1h-2zM7 8h2v1h-2zM13 8h2v1h-2zM1 9h2v1h-2zM13 9h2v1h-2zM1 10h2v1h-2zM7 10h2v1h-2zM13 10h2v1h-2zM2 11h2v1h-2zM7 11h2v1h-2zM12 11h2v1h-2zM2 12h3v1h-3zM11 12h3v1h-3zM3 13h10v1h-10zM5 14h6v1h-6z"/></symbol>
+	<symbol id="i-home" viewBox="0 0 16 16"><path d="M7 1h2v1h-2zM6 2h4v1h-4zM5 3h2v1h-2zM9 3h2v1h-2zM4 4h2v1h-2zM10 4h2v1h-2zM3 5h2v1h-2zM11 5h2v1h-2zM2 6h2v1h-2zM12 6h2v1h-2zM1 7h2v1h-2zM13 7h2v1h-2zM2 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM6 10h4v1h-4zM12 10h2v1h-2zM2 11h2v1h-2zM6 11h4v1h-4zM12 11h2v1h-2zM2 12h2v1h-2zM6 12h4v1h-4zM12 12h2v1h-2zM2 13h12v1h-12zM2 14h12v1h-12z"/></symbol>
+	<symbol id="i-playing" viewBox="0 0 16 16"><path d="M7 1h3v1h-3zM7 2h3v1h-3zM7 3h3v1h-3zM7 4h3v1h-3zM12 4h3v1h-3zM7 5h3v1h-3zM12 5h3v1h-3zM2 6h3v1h-3zM7 6h3v1h-3zM12 6h3v1h-3zM2 7h3v1h-3zM7 7h3v1h-3zM12 7h3v1h-3zM2 8h3v1h-3zM7 8h3v1h-3zM12 8h3v1h-3zM2 9h3v1h-3zM7 9h3v1h-3zM12 9h3v1h-3zM2 10h3v1h-3zM7 10h3v1h-3zM12 10h3v1h-3zM2 11h3v1h-3zM7 11h3v1h-3zM12 11h3v1h-3zM2 12h3v1h-3zM7 12h3v1h-3zM12 12h3v1h-3zM2 13h3v1h-3zM7 13h3v1h-3zM12 13h3v1h-3zM2 14h3v1h-3zM7 14h3v1h-3zM12 14h3v1h-3z"/></symbol>
+	<symbol id="i-settings" viewBox="0 0 16 16"><path d="M6 1h4v1h-4zM2 2h2v1h-2zM6 2h4v1h-4zM12 2h2v1h-2zM2 3h12v1h-12zM3 4h10v1h-10zM3 5h3v1h-3zM10 5h3v1h-3zM1 6h4v1h-4zM11 6h4v1h-4zM1 7h4v1h-4zM11 7h4v1h-4zM1 8h4v1h-4zM11 8h4v1h-4zM1 9h4v1h-4zM11 9h4v1h-4zM3 10h3v1h-3zM10 10h3v1h-3zM3 11h10v1h-10zM2 12h12v1h-12zM2 13h2v1h-2zM6 13h4v1h-4zM12 13h2v1h-2zM6 14h4v1h-4z"/></symbol>
+	<symbol id="i-play" viewBox="0 0 16 16"><path d="M3 2h2v1h-2zM3 3h4v1h-4zM3 4h6v1h-6zM3 5h8v1h-8zM3 6h10v1h-10zM3 7h12v1h-12zM3 8h12v1h-12zM3 9h10v1h-10zM3 10h8v1h-8zM3 11h6v1h-6zM3 12h4v1h-4zM3 13h2v1h-2z"/></symbol>
+	<symbol id="i-pause" viewBox="0 0 16 16"><path d="M2 2h4v1h-4zM10 2h4v1h-4zM2 3h4v1h-4zM10 3h4v1h-4zM2 4h4v1h-4zM10 4h4v1h-4zM2 5h4v1h-4zM10 5h4v1h-4zM2 6h4v1h-4zM10 6h4v1h-4zM2 7h4v1h-4zM10 7h4v1h-4zM2 8h4v1h-4zM10 8h4v1h-4zM2 9h4v1h-4zM10 9h4v1h-4zM2 10h4v1h-4zM10 10h4v1h-4zM2 11h4v1h-4zM10 11h4v1h-4zM2 12h4v1h-4zM10 12h4v1h-4zM2 13h4v1h-4zM10 13h4v1h-4z"/></symbol>
+	<symbol id="i-prev" viewBox="0 0 16 16"><path d="M2 2h2v1h-2zM12 2h2v1h-2zM2 3h2v1h-2zM10 3h4v1h-4zM2 4h2v1h-2zM8 4h6v1h-6zM2 5h2v1h-2zM6 5h8v1h-8zM2 6h12v1h-12zM2 7h12v1h-12zM2 8h12v1h-12zM2 9h12v1h-12zM2 10h2v1h-2zM6 10h8v1h-8zM2 11h2v1h-2zM8 11h6v1h-6zM2 12h2v1h-2zM10 12h4v1h-4zM2 13h2v1h-2zM12 13h2v1h-2z"/></symbol>
+	<symbol id="i-next" viewBox="0 0 16 16"><path d="M2 2h2v1h-2zM12 2h2v1h-2zM2 3h4v1h-4zM12 3h2v1h-2zM2 4h6v1h-6zM12 4h2v1h-2zM2 5h8v1h-8zM12 5h2v1h-2zM2 6h12v1h-12zM2 7h12v1h-12zM2 8h12v1h-12zM2 9h12v1h-12zM2 10h8v1h-8zM12 10h2v1h-2zM2 11h6v1h-6zM12 11h2v1h-2zM2 12h4v1h-4zM12 12h2v1h-2zM2 13h2v1h-2zM12 13h2v1h-2z"/></symbol>
+</svg>
+
+<a class="skip btn btn--secundario" href="#contenido" data-i18n="skip">Skip to content</a>
+
+<header class="topbar">
+	<div class="wrap">
+		<a class="marca" href="#">
+			<img src="assets/icon.png" alt="" width="42" height="42">
+			<span>3DSpotify</span>
+		</a>
+		<button type="button" class="btn btn--secundario" id="idioma" lang="es">
+			<span class="glyph glyph--sys" aria-hidden="true">SELECT</span>
+			<span id="idioma-nombre">Español</span>
+		</button>
+	</div>
+</header>
+
+<main id="contenido">
+
+	<!-- 1. Cabecera: texto a la izquierda y la consola, que se puede usar, a la derecha -->
+	<section class="wrap" aria-labelledby="titulo">
+		<div class="hero">
+			<div class="hero__texto">
+				<h1 id="titulo"><img class="hero__logo" src="assets/logo.png" alt="3DSpotify" width="256" height="128"></h1>
+				<p class="hero__lema" data-i18n="hero_lema">Spotify on your Nintendo 3DS.</p>
+				<p class="hero__frase" data-i18n="hero_frase">Search for songs and play them on the console itself, with no PC in between.</p>
+				<div class="acciones">
+					<a class="btn btn--primario btn--grande" href="https://github.com/davidabejon/3DSpotify/releases/latest">
+						<svg class="icon" aria-hidden="true"><use href="#i-next"/></svg>
+						<span data-i18n="download">Download</span>
+					</a>
+					<a class="btn btn--secundario btn--grande" href="https://github.com/davidabejon/3DSpotify">
+						<span data-i18n="repo">Source code</span>
+					</a>
+				</div>
+				<p class="meta version" data-i18n="release_note">Latest release on GitHub: .3dsx and .cia.</p>
+			</div>
+
+			<div>
+				<div class="consola" id="consola" role="group" aria-label="Interactive mock-up of the app" data-i18n-aria="console_label">
+					<div class="consola__in">
+						<!-- Superior 400×240. main.js dibuja aquí; sin JS queda el logotipo. -->
+						<div class="pantalla pantalla--sup" id="m-sup">
+							<img class="m-abs m-logo" src="assets/logo.png" alt="">
+						</div>
+						<div class="bisagra" aria-hidden="true"></div>
+						<!-- Inferior 320×240 -->
+						<div class="pantalla pantalla--inf" id="m-inf"></div>
+					</div>
+				</div>
+				<p class="meta consola__pista" id="consola-pista" hidden data-i18n="console_hint">Try it: tap the tabs, the songs and the buttons.</p>
+			</div>
+		</div>
+	</section>
+
+	<!-- 2. QR para FBI -->
+	<section class="wrap" id="qr" aria-labelledby="qr-titulo">
+		<div class="seccion-cabeza">
+			<h2 id="qr-titulo" data-i18n="qr_title">Install with FBI</h2>
+			<p data-i18n="qr_lead">Scan this code from the console to install the latest .cia straight from the release.</p>
+		</div>
+		<div class="qr panel">
+			<div class="qr__caja">
+				<img src="assets/qr-cia.svg" alt="QR code with the download link of spotify3ds.cia" width="180" height="180" data-i18n-alt="qr_alt">
+			</div>
+			<div class="qr__pasos">
+				<ol class="pasos">
+					<li data-i18n-html="qr_step1">Open <strong>FBI</strong> on a console with custom firmware.</li>
+					<li data-i18n-html="qr_step2">Choose <strong>Remote Install</strong> → <strong>Scan QR Code</strong>.</li>
+					<li data-i18n-html="qr_step3">Point the camera at the code and confirm the install.</li>
+				</ol>
+				<p class="meta"><span data-i18n="qr_link">The code links to:</span><br>
+					<a class="enlace-cia" href="https://github.com/davidabejon/3DSpotify/releases/latest/download/spotify3ds.cia">github.com/davidabejon/3DSpotify/releases/latest/download/spotify3ds.cia</a>
+				</p>
+			</div>
+		</div>
+	</section>
+
+	<!-- 4. Características y controles -->
+	<section class="wrap" id="caracteristicas" aria-labelledby="caract-titulo">
+		<div class="seccion-cabeza">
+			<h2 id="caract-titulo" data-i18n="features_title">Features</h2>
+		</div>
+		<div class="rejilla rejilla--3">
+			<article class="panel caracteristica">
+				<div class="tesela tesela--clorofila relieve" aria-hidden="true"><svg class="icon icon--2x" viewBox="0 0 16 16"><use href="#i-note"/></svg></div>
+				<h3 data-i18n="f1_title">Straight to Spotify</h3>
+				<p data-i18n="f1_text">The console connects to Spotify over HTTPS by itself. No PC, proxy or phone app in between.</p>
+			</article>
+			<article class="panel caracteristica">
+				<div class="tesela tesela--coral relieve" aria-hidden="true"><svg class="icon icon--2x" viewBox="0 0 16 16"><use href="#i-search"/></svg></div>
+				<h3 data-i18n="f2_title">Search songs</h3>
+				<p data-i18n="f2_text">Type with the system keyboard and browse results four at a time, with cover thumbnails. The search runs in the background.</p>
+			</article>
+			<article class="panel caracteristica">
+				<div class="tesela tesela--ambar relieve" aria-hidden="true"><svg class="icon icon--2x" viewBox="0 0 16 16"><use href="#i-play"/></svg></div>
+				<h3 data-i18n="f3_title">Plays on the console</h3>
+				<p data-i18n="f3_text">Audio is decoded and played locally, with the rest of the results as the queue, the album art and its own volume.</p>
+			</article>
+			<article class="panel caracteristica">
+				<div class="tesela tesela--clorofila relieve" aria-hidden="true"><svg class="icon icon--2x" viewBox="0 0 16 16"><use href="#i-playing"/></svg></div>
+				<h3 data-i18n="f4_title">Music never stops</h3>
+				<p data-i18n="f4_text">Four tabs (Home, Search, Playing and Settings) and the track keeps playing whichever one you open.</p>
+			</article>
+			<article class="panel caracteristica">
+				<div class="tesela tesela--coral relieve" aria-hidden="true"><svg class="icon icon--2x" viewBox="0 0 16 16"><use href="#i-settings"/></svg></div>
+				<h3 data-i18n="f5_title">Sign in without typing passwords</h3>
+				<p data-i18n="f5_text">Link your account with a short code on spotify.com/pair or by scanning a QR code with your phone.</p>
+			</article>
+			<article class="panel caracteristica">
+				<div class="tesela tesela--ambar relieve" aria-hidden="true"><svg class="icon icon--2x" viewBox="0 0 16 16"><use href="#i-language"/></svg></div>
+				<h3 data-i18n="f6_title">English and Spanish</h3>
+				<p data-i18n="f6_text">Switch the language at any moment with SELECT, on any screen.</p>
+			</article>
+		</div>
+
+		<div class="aviso aviso--ambar relieve requisitos" role="note">
+			<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><use href="#i-error"/></svg>
+			<div>
+				<h3 data-i18n="req_title">You will need</h3>
+				<p data-i18n="req_text">A Spotify Premium account and a Nintendo 3DS with Wi-Fi and the Homebrew Launcher. Installing the .cia also requires custom firmware.</p>
+			</div>
+		</div>
+
+		<div class="controles">
+			<h3 data-i18n="controls_title">Controls</h3>
+			<table class="tabla">
+				<thead>
+					<tr>
+						<th scope="col" data-i18n="col_button">Button</th>
+						<th scope="col" data-i18n="col_action">What it does</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td><span class="glyph glyph--a">A</span></td>
+						<td data-i18n="c_a">Confirm: open the keyboard, play the highlighted song, pause or resume.</td>
+					</tr>
+					<tr>
+						<td><span class="glyph glyph--b">B</span></td>
+						<td data-i18n="c_b">Go back, or cancel a pending search or pairing.</td>
+					</tr>
+					<tr>
+						<td><span class="glyph glyph--y">Y</span></td>
+						<td data-i18n="c_y">New search from the results; pair again after a sign-in error.</td>
+					</tr>
+					<tr>
+						<td><span class="glyph" data-i18n="dpad">D-Pad</span></td>
+						<td data-i18n="c_dpad">Move the focus. In results, left/right jump four songs; in the player, left/right change track and up/down set the volume.</td>
+					</tr>
+					<tr>
+						<td><span class="glyph">L</span><span class="glyph">R</span></td>
+						<td data-i18n="c_lr">Previous or next tab (ZL/ZR too on New 3DS).</td>
+					</tr>
+					<tr>
+						<td><span class="glyph glyph--sys">SELECT</span></td>
+						<td data-i18n="c_select">Switch between English and Spanish.</td>
+					</tr>
+					<tr>
+						<td><span class="glyph glyph--sys">START</span></td>
+						<td data-i18n="c_start">Exit the app.</td>
+					</tr>
+					<tr>
+						<td><span class="glyph" data-i18n="touch">Touch</span></td>
+						<td data-i18n="c_touch">Tap tabs, buttons and songs; the action runs when you lift the stylus inside. Drag lists to scroll.</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</section>
+
+	<!-- 5. Instalación -->
+	<section class="wrap" id="instalacion" aria-labelledby="inst-titulo">
+		<div class="seccion-cabeza">
+			<h2 id="inst-titulo" data-i18n="install_title">Installation</h2>
+			<p data-i18n="install_lead">Pick one of the two formats from the latest release.</p>
+		</div>
+		<div class="rejilla">
+			<article class="panel metodo">
+				<div class="metodo__cabeza">
+					<h3><code>.3dsx</code></h3>
+					<span class="etiqueta" data-i18n="m3dsx_tag">Homebrew Launcher</span>
+				</div>
+				<ol class="pasos">
+					<li data-i18n-html="m3dsx_1">Download <code>spotify3ds.3dsx</code>.</li>
+					<li data-i18n-html="m3dsx_2">Copy it to <code>SD:/3ds/spotify3ds/</code>.</li>
+					<li data-i18n-html="m3dsx_3">Open it from the <strong>Homebrew Launcher</strong>.</li>
+				</ol>
+				<a class="btn btn--secundario" href="https://github.com/davidabejon/3DSpotify/releases/latest/download/spotify3ds.3dsx">
+					<span data-i18n="get_3dsx">Download .3dsx</span>
+				</a>
+			</article>
+			<article class="panel metodo">
+				<div class="metodo__cabeza">
+					<h3><code>.cia</code></h3>
+					<span class="etiqueta" data-i18n="mcia_tag">FBI · HOME Menu</span>
+				</div>
+				<ol class="pasos">
+					<li data-i18n-html="mcia_1">Scan the <a href="#qr">QR code</a> from FBI, or download <code>spotify3ds.cia</code> and copy it to the SD card.</li>
+					<li data-i18n-html="mcia_2">Install it with <strong>FBI</strong> (requires custom firmware).</li>
+					<li data-i18n-html="mcia_3">Open it from the <strong>HOME Menu</strong>. Settings are kept in <code>SD:/3ds/spotibacan/</code>.</li>
+				</ol>
+				<a class="btn btn--secundario" href="https://github.com/davidabejon/3DSpotify/releases/latest/download/spotify3ds.cia">
+					<span data-i18n="get_cia">Download .cia</span>
+				</a>
+			</article>
+		</div>
+		<div class="panel primer-arranque">
+			<h3 data-i18n="first_title">First launch</h3>
+			<p data-i18n-html="first_1">The console shows a code on the top screen. Open <strong>spotify.com/pair</strong> on your phone or computer, sign in, enter the code and accept, or scan the QR code on the bottom screen.</p>
+			<p data-i18n="first_2">The credential is saved to the SD card, so later launches connect on their own.</p>
+		</div>
+	</section>
+
+</main>
+
+<!-- 6. Pie -->
+<footer class="pie">
+	<div class="wrap">
+		<p data-i18n-html="foot_disclaimer"><strong>3DSpotify is an unofficial, independent project.</strong> It is not affiliated with, endorsed by or associated with Spotify AB. Spotify is a trademark of Spotify AB, named here only to describe the service the app connects to.</p>
+		<p data-i18n-html="foot_license">Released under the <a href="https://github.com/davidabejon/3DSpotify/blob/main/LICENSE">Apache License 2.0</a>. Based on <a href="https://github.com/ohquebacan/spotibacan">SpotiBacan</a> by ohquebacan.</p>
+		<p data-i18n-html="foot_author">Made by David Abejón · <a href="https://github.com/davidabejon/3DSpotify">GitHub</a></p>
+	</div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>
