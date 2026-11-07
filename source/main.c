@@ -19,7 +19,6 @@
 #include "power_logic.h"
 #include "spclient.h"
 #include "tabbar.h"
-#include "textscreen.h"
 #include "thumbs.h"
 #include "track.h"
 #include "tls3ds.h"
@@ -90,10 +89,9 @@ static artwork_state cover_art;
 /* The last confirmed query, for the home view's repeat button. */
 static char home_query[SEARCH_QUERY_SIZE];
 /* Who owns the screens: the login view for the session start-up, pairing
- * and errors; the tabs once the session is up. The text screen (bottom)
- * and the artwork (top) are what is left of the old start-up screens. */
-typedef enum { VIEW_TEXT, VIEW_LOGIN, VIEW_TABS } screen_view;
-static screen_view active_view = VIEW_TEXT;
+ * and errors; the tabs once the session is up. */
+typedef enum { VIEW_LOGIN, VIEW_TABS } screen_view;
+static screen_view active_view = VIEW_LOGIN;
 static app_tab active_tab = TAB_HOME;
 /* An applet (the keyboard) drew over both screens. */
 static bool screens_lost;
@@ -942,8 +940,8 @@ static player_info player_snapshot(void)
  * With the tabs, top.h draws the top screen (logo, card or big cover, and
  * the search bubble), the active tab's view draws the bottom one and the
  * tab bar goes over it; the artwork's own changes only count while the
- * cover is on screen, and switching tabs always repaints. The text screens
- * keep the artwork on top, as before. */
+ * cover is on screen, and switching tabs always repaints. Before the
+ * session, view_login.h draws both screens. */
 /* Called every frame: keeps the console awake while music is due, and
  * darkens the screens while the lid is shut over it. */
 static void power_poll(void)
@@ -975,8 +973,7 @@ static void power_poll(void)
 
 static void frame(void)
 {
-	/* 0: the text screen; 1 + tab: that tab; LOGIN_SCREEN: the login. */
-	enum { LOGIN_SCREEN = -2 };
+	/* 0: the login view; 1 + tab: that tab. */
 	static int drawn_screen = -1;
 	artwork_poll(&cover_art);
 	power_poll();
@@ -989,13 +986,10 @@ static void frame(void)
 	bool restored = ui_take_restored() || screens_lost;
 	screens_lost = false;
 	bool tabs = active_view == VIEW_TABS;
-	bool login_view = active_view == VIEW_LOGIN;
-	int screen = tabs ? 1 + (int)active_tab : login_view ? LOGIN_SCREEN : 0;
+	int screen = tabs ? 1 + (int)active_tab : 0;
 	bool changed;
-	if (login_view) {
+	if (!tabs) {
 		changed = view_login_dirty();
-	} else if (!tabs) {
-		changed = artwork_dirty(&cover_art) || textscreen_dirty();
 	} else {
 		player_info info = player_snapshot();
 		view_player_set(&info);
@@ -1022,17 +1016,13 @@ static void frame(void)
 	}
 	ui_begin();
 	ui_scene(GFX_TOP);
-	if (login_view)
+	if (!tabs)
 		view_login_draw_top();
-	else if (!tabs)
-		artwork_draw(&cover_art);
 	else
 		top_draw(active_tab, &cover_art);
 	ui_scene(GFX_BOTTOM);
-	if (login_view) {
+	if (!tabs) {
 		view_login_draw_bottom();
-	} else if (!tabs) {
-		textscreen_draw();
 	} else {
 		switch (active_tab) {
 		case TAB_HOME:
@@ -1191,7 +1181,6 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 		memcpy(query, typed, sizeof(typed));
 	/* The keyboard applet takes over both screens. */
 	artwork_invalidate(&cover_art);
-	textscreen_invalidate();
 	screens_lost = true;
 	return confirmed;
 }
@@ -1399,7 +1388,7 @@ static void stop_tabs(void)
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();
 	tls_set_abort(false);
-	active_view = VIEW_TEXT;
+	active_view = VIEW_LOGIN;
 }
 
 /* --- Session start-up ---------------------------------------------------- */
@@ -1420,31 +1409,23 @@ typedef struct {
 	volatile bool done;
 	bool ok;
 	startup_error error;
-	/* What the pairing screen shows, copied under `lock`; `version` moves
-	 * on every change. Never the device code, which is secret. */
+	/* What the pairing screen shows, copied under `lock`. Never the
+	 * device code, which is secret. */
 	LightLock lock;
-	volatile unsigned version;
 	char user_code[16];
 	char verification_uri[128];
 	char qr_url[192];
-	time_t expires_at;
-	int interval;
-	str_id note;                    /* STR_PAIR_WAITING, _STILL_..., _SLOW_... */
-	char note_detail[192];          /* a poll's network error, or empty */
+	bool offline;                   /* the last poll did not reach Spotify */
 	Thread thread;
 } session_job;
 
 /* A consistent copy of the pairing data, for drawing. */
 typedef struct {
-	unsigned version;
 	bool reason_expired;
+	bool offline;
 	char user_code[16];
 	char verification_uri[128];
 	char qr_url[192];
-	time_t expires_at;
-	int interval;
-	str_id note;
-	char note_detail[192];
 } pair_view;
 
 static session_job login;
@@ -1465,8 +1446,7 @@ static void session_stage(str_id stage)
 	login.stage = stage;
 }
 
-static void pair_publish(const pair_request *req, int interval,
-                         time_t expires_at, str_id note, const char *detail)
+static void pair_publish(const pair_request *req, bool offline)
 {
 	LightLock_Lock(&login.lock);
 	snprintf(login.user_code, sizeof(login.user_code), "%s", req->user_code);
@@ -1474,28 +1454,19 @@ static void pair_publish(const pair_request *req, int interval,
 	         req->verification_uri);
 	login_qr_url(req->verification_uri, req->verification_uri_complete,
 	             req->user_code, login.qr_url, sizeof(login.qr_url));
-	login.expires_at = expires_at;
-	login.interval = interval;
-	login.note = note;
-	snprintf(login.note_detail, sizeof(login.note_detail), "%s",
-	         detail ? detail : "");
-	login.version++;
+	login.offline = offline;
 	LightLock_Unlock(&login.lock);
 }
 
 static void pair_snapshot(pair_view *out)
 {
 	LightLock_Lock(&login.lock);
-	out->version = login.version;
 	out->reason_expired = login.reason_expired;
+	out->offline = login.offline;
 	memcpy(out->user_code, login.user_code, sizeof(out->user_code));
 	memcpy(out->verification_uri, login.verification_uri,
 	       sizeof(out->verification_uri));
 	memcpy(out->qr_url, login.qr_url, sizeof(out->qr_url));
-	out->expires_at = login.expires_at;
-	out->interval = login.interval;
-	out->note = login.note;
-	memcpy(out->note_detail, login.note_detail, sizeof(out->note_detail));
 	LightLock_Unlock(&login.lock);
 }
 
@@ -1531,7 +1502,7 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 
 	int interval = req->interval_s > 0 ? req->interval_s : 5;
 	time_t deadline = time(NULL) + req->expires_in_s;
-	pair_publish(req, interval, deadline, STR_PAIR_WAITING, NULL);
+	pair_publish(req, false);
 	__sync_synchronize();
 	login.pairing = true;
 	bool ok = false;
@@ -1556,15 +1527,15 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 			pair_cancelled(error);
 			break;
 		}
+		/* Still pending: with a detail, the poll never reached Spotify
+		 * (pair_poll keeps the code good and says why). */
 		if (result == PAIR_PENDING) {
-			pair_publish(req, interval, deadline, STR_PAIR_STILL_WAITING,
-			             detail);
+			pair_publish(req, detail[0] != '\0');
 			continue;
 		}
 		if (result == PAIR_SLOW_DOWN) {
 			interval += 5;
-			pair_publish(req, interval, deadline, STR_PAIR_SLOW_DOWN_FMT,
-			             NULL);
+			pair_publish(req, false);
 			continue;
 		}
 		login.pairing = false;
@@ -1779,10 +1750,7 @@ static void show_login(void)
 	pair_snapshot(&pair);
 	login_pair_info info = {
 		.reason_expired = pair.reason_expired,
-		/* A poll that failed to reach Spotify: still pending, with the
-		 * transport's error as its detail. */
-		.offline = pair.note == STR_PAIR_STILL_WAITING &&
-		           pair.note_detail[0] != '\0',
+		.offline = pair.offline,
 		.user_code = pair.user_code,
 		.verification_uri = pair.verification_uri,
 		.qr_url = pair.qr_url,
@@ -1889,7 +1857,7 @@ int main(int argc, char **argv)
 	thumbs_init();
 	if (romfs_ready)
 		logo_load();
-	if (!textscreen_init() || !view_home_init() || !view_results_init() ||
+	if (!view_home_init() || !view_results_init() ||
 	    !view_player_init() || !view_settings_init() || !view_login_init() ||
 	    !top_init()) {
 		top_exit();
@@ -1901,7 +1869,6 @@ int main(int argc, char **argv)
 		logo_free();
 		thumbs_exit();
 		icons_exit();
-		textscreen_exit();
 		ui_exit();
 		if (romfs_ready)
 			romfsExit();
@@ -1993,7 +1960,6 @@ done:
 	logo_free();
 	thumbs_exit();
 	icons_exit();
-	textscreen_exit();
 	if (screens_dark)
 		GSPLCD_PowerOnAllBacklights();
 	if (ndsp_up)

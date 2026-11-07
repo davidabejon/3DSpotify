@@ -3,10 +3,8 @@
  * The tables live in lang_en.c and lang_es.c, indexed by str_id. Entries that
  * end in _FMT are printf formats: every language must use the same conversion
  * specifiers in the same order (tests/native_logic_test.c checks this).
- * Entries that start with STR_KEYS_ are button hints for the text screens and
- * must fit one line of the 40-column grid. STR_HINT_ entries label one
- * action each in the button bar of the redesigned views (docs/STYLES.md
- * 5.6), next to the button's glyph; there the limit is the width in pixels.
+ * STR_HINT_ entries label one action each in the button bar (docs/STYLES.md
+ * 5.6), next to the button's glyph; the limit is the width in pixels.
  * Capitals only start a sentence (STYLES.md 3.3).
  * The tables stay ASCII (no accents in Spanish) until that restriction is
  * lifted on purpose; citro2d itself could draw them.
@@ -33,13 +31,7 @@ typedef enum {
 	STR_UNKNOWN_ARTIST,
 	STR_NO_VALID_RESPONSE,
 	STR_CHECK_SD_SPACE,
-	STR_APP_CLOSING,
-	STR_LABEL_CODE,
 
-	/* Button hints (one text-screen line each). */
-	STR_KEYS_LANGUAGE,
-	STR_KEYS_EXIT,
-	STR_KEYS_STARTUP_RETRY, /* the last STR_KEYS_ entry */
 
 	/* Home view. */
 	STR_HOME_SEARCH,
@@ -65,11 +57,8 @@ typedef enum {
 	STR_SETTINGS_PAIR,
 
 	/* Session start-up. */
-	STR_LOGIN_TITLE,
 	STR_LOGIN_CONNECTING,
 	STR_CREDENTIAL_RENEWING,
-	STR_CREDENTIAL_EXPIRED,
-	STR_PAIR_AGAIN_NEEDED,
 	STR_AP_SEARCHING,
 	STR_AP_AUTHENTICATING,
 	STR_LIBRARY_OPENING,
@@ -80,7 +69,6 @@ typedef enum {
 	STR_INVALID_SERVER_RESPONSE,
 	STR_CHECK_WIFI_CONNECTED,
 	STR_PS_ENTROPY,
-	STR_SESSION_FAILED_TITLE,
 
 	/* Start-up error categories. */
 	STR_CAT_NO_NETWORK,
@@ -99,18 +87,11 @@ typedef enum {
 	STR_CAT_PAIR_EXPIRED,
 	STR_CAT_PAIR_DENIED,
 	STR_CAT_PAIR_FAILED,
-	STR_CAT_PAIR_INTERRUPTED,
 	STR_CAT_SAVE_CREDENTIALS,
 
 	/* Pairing. */
-	STR_PAIR_TITLE,
-	STR_PAIR_OPEN_URL,
-	STR_PAIR_DIRECT_LINK,
-	STR_PAIR_POLL_FMT,
 	STR_PAIR_REQUESTING,
 	STR_PAIR_WAITING,
-	STR_PAIR_STILL_WAITING,
-	STR_PAIR_SLOW_DOWN_FMT,
 	STR_PAIR_CREDENTIALS_UNCHANGED,
 	STR_PAIR_RETRY_NEW_CODE,
 	/* The login screens (feature_plan.md, phase 4). */

@@ -30,8 +30,8 @@ python source\build.py --fetch-deps
 ```
 
 The default and only full-client target is `spotify3ds`. The pinned downloads
-verify mbedTLS 3.6.7 and
-`stb_vorbis`; the Vorbis header is generated from that same verified source.
+verify mbedTLS 3.6.7, `stb_vorbis` and `qrcodegen` 1.8.0 (the pairing QR code);
+the Vorbis header is generated from that same verified source.
 Once dependencies have been downloaded, builds can omit `--fetch-deps`.
 
 Run the build and integration tests from the repository root with:
@@ -77,9 +77,32 @@ Without a usable logo the top screen shows the app name as text instead.
 
 The target starts a direct session: it refreshes the stored credential, offers
 pairing when needed, and checks the access-point and library-session
-connections. If no credential is stored, follow the pairing code shown on the
-console from another device and authorize the account with Spotify. The refresh
-token is saved to the SD card for later launches.
+connections. The refresh token is saved to the SD card for later launches.
+
+### Signing in
+
+While it connects, the top screen shows the logo and a spinner, and the bottom
+screen shows the current step ("Step n of N"). **SELECT** switches the language
+on every sign-in screen.
+
+If no credential is stored, or it has expired, the console asks you to link the
+account:
+
+- **Type the code:** open `spotify.com/pair` on a phone or computer, log in,
+  enter the code shown on the top screen and accept.
+- **Or scan the QR code** on the bottom screen: it opens the same page with the
+  code already filled in.
+- **B** cancels pairing and leaves the stored credential untouched.
+
+If the session cannot start, the bottom screen explains why:
+
+- **A** (or the **Retry** button) tries again with the stored credential. **A**
+  presses whichever button has the focus; left/right moves the focus.
+- **Y** (or the **Pair** button) pairs again with a new code.
+- **START** exits.
+
+Without a network (Wi-Fi off, or the console's network or TLS setup failing),
+only **START** and **SELECT** remain.
 
 ### Tabs
 

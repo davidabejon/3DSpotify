@@ -143,9 +143,13 @@ class BuildTests(unittest.TestCase):
         ui_dir = build.ROOT / "ui"
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
         artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
-        for name in ("ui.c", "ui.h", "textscreen.c", "textscreen.h",
-                     "image_util.h", "worker_priority.h"):
+        for name in ("ui.c", "ui.h", "image_util.h", "worker_priority.h"):
             self.assertTrue((ui_dir / name).is_file(), name)
+        # The 40-column text screen is gone: every screen is a view.
+        for name in ("textscreen.c", "textscreen.h"):
+            self.assertFalse((ui_dir / name).exists(), name)
+        self.assertNotIn("textscreen", app)
+        self.assertNotIn("VIEW_TEXT", app)
         # No libctru console and no direct framebuffer writes: a console and
         # a citro3d target cannot share a screen.
         for source in (app, artwork):
@@ -161,8 +165,7 @@ class BuildTests(unittest.TestCase):
         # Render on demand: a GPU frame only when something changed.
         frame = app[app.index("static void frame(void)"):
                     app.index("/* --- Search ---")]
-        self.assertIn("textscreen_dirty()", frame)
-        self.assertIn("artwork_dirty(&cover_art)", frame)
+        self.assertIn("view_login_dirty()", frame)
         self.assertIn("gspWaitForVBlank();", frame)
         # Workers that can overlap playback stay below the decoder.
         self.assertIn("background_priority()", artwork)
@@ -763,11 +766,12 @@ class BuildTests(unittest.TestCase):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
         frame = app[app.index("static void frame(void)"):
                     app.index("/* --- Search ---")]
-        # One compositor for the tabs; the text screens keep the artwork.
+        # One compositor for the tabs; before the session, the login view.
         self.assertIn("top_set(&info);", frame)
         self.assertIn("top_dirty(active_tab, &cover_art)", frame)
         self.assertIn("top_draw(active_tab, &cover_art);", frame)
-        self.assertIn("artwork_draw(&cover_art);", frame)
+        self.assertIn("view_login_draw_top();", frame)
+        self.assertNotIn("artwork_draw(", app)
         self.assertNotIn("view_player_dirty() || artwork_dirty", frame)
         for gone in ("view_home_draw_top", "view_results_draw_top",
                      "view_settings_draw_top"):

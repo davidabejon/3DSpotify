@@ -9,13 +9,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_UNKNOWN_ARTIST] = "(unknown artist)",
 	[STR_NO_VALID_RESPONSE] = "No valid response was received.",
 	[STR_CHECK_SD_SPACE] = "Check the free space on the SD card.",
-	[STR_APP_CLOSING] = "The application is closing.",
-	[STR_LABEL_CODE] = "Code",
-
-	/* Button hints. */
-	[STR_KEYS_LANGUAGE] = "SELECT: Espanol",
-	[STR_KEYS_EXIT] = "START: exit",
-	[STR_KEYS_STARTUP_RETRY] = "A: retry   Y: pair",
 
 	/* Home view. */
 	[STR_HOME_SEARCH] = "Search songs",
@@ -41,11 +34,8 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_SETTINGS_PAIR] = "Pair another account",
 
 	/* Session start-up. */
-	[STR_LOGIN_TITLE] = "3DSpotify - direct sign-in",
 	[STR_LOGIN_CONNECTING] = "Renewing credentials and connecting...",
 	[STR_CREDENTIAL_RENEWING] = "Renewing the Spotify credential...",
-	[STR_CREDENTIAL_EXPIRED] = "The saved credential has expired.",
-	[STR_PAIR_AGAIN_NEEDED] = "You need to pair again.",
 	[STR_AP_SEARCHING] = "Looking up Spotify access points...",
 	[STR_AP_AUTHENTICATING] = "Authenticating with the access point...",
 	[STR_LIBRARY_OPENING] = "Opening the library session...",
@@ -56,7 +46,6 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_INVALID_SERVER_RESPONSE] = "Invalid server response.",
 	[STR_CHECK_WIFI_CONNECTED] = "Make sure the console's Wi-Fi is connected.",
 	[STR_PS_ENTROPY] = "Could not enable the console's entropy source.",
-	[STR_SESSION_FAILED_TITLE] = "Could not start the session",
 
 	/* Start-up error categories. */
 	[STR_CAT_NO_NETWORK] = "No network service",
@@ -75,18 +64,11 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_CAT_PAIR_EXPIRED] = "Pairing code expired",
 	[STR_CAT_PAIR_DENIED] = "Pairing denied",
 	[STR_CAT_PAIR_FAILED] = "Pairing failed",
-	[STR_CAT_PAIR_INTERRUPTED] = "Pairing interrupted",
 	[STR_CAT_SAVE_CREDENTIALS] = "Could not save the credentials",
 
 	/* Pairing. */
-	[STR_PAIR_TITLE] = "3DSpotify - pairing",
-	[STR_PAIR_OPEN_URL] = "Open this address on another device:",
-	[STR_PAIR_DIRECT_LINK] = "Direct link:",
-	[STR_PAIR_POLL_FMT] = "Checking every %d s. B cancels.",
 	[STR_PAIR_REQUESTING] = "Requesting a pairing code...",
 	[STR_PAIR_WAITING] = "Waiting for authorization...",
-	[STR_PAIR_STILL_WAITING] = "Still waiting for authorization.",
-	[STR_PAIR_SLOW_DOWN_FMT] = "Spotify asked to slow down; new interval: %d s.",
 	[STR_PAIR_CREDENTIALS_UNCHANGED] = "Saved credentials were not changed.",
 	[STR_PAIR_RETRY_NEW_CODE] = "Try again to get a new code.",
 	[STR_LOGIN_STEP_FMT] = "Step %d of %d",

@@ -2,8 +2,8 @@
  * plays, else the "now playing" card (top_now.h), or the big cover on the
  * Playing tab. top_logic.h decides which. While a track's download is
  * still at 0%, a spinner (spinner_logic.h) turns at the centre of the
- * screen, over any of them and on any tab. The text screens (start-up,
- * pairing, errors) keep artwork_draw.
+ * screen, over any of them and on any tab. Before the session (start-up,
+ * pairing, errors) the top screen is view_login.h's.
  *
  * Per STYLES.md 9 it only asks for a frame when what it shows changes: the
  * spinner adds one every LOADER_STEP frames while it turns. Main thread

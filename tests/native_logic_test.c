@@ -88,7 +88,7 @@ static void test_language_tables(void)
 			       strcmp(text, "Error") == 0 ||
 			       strcmp(text, "Album") == 0 ||
 			       strcmp(text, "3DSpotify") == 0);
-			/* The console font is ASCII only. */
+			/* The tables stay ASCII until lifted on purpose (lang.h). */
 			for (const char *p = text; *p; p++)
 				assert((unsigned char)*p >= 0x20 &&
 				       (unsigned char)*p < 0x7f);
@@ -98,9 +98,6 @@ static void test_language_tables(void)
 			format_signature(text, actual, sizeof(actual));
 			assert(strcmp(expected, actual) == 0);
 		}
-		/* Button hints fit one 40-column console line without wrapping. */
-		for (int id = STR_KEYS_LANGUAGE; id <= STR_KEYS_STARTUP_RETRY; id++)
-			assert(strlen(lang_text((lang_id)lang, (str_id)id)) < 40);
 	}
 }
 
