@@ -3,12 +3,6 @@
 Cliente no oficial de Spotify para Nintendo 3DS. La aplicación se conecta
 directamente a Spotify por HTTPS.
 
-**Web:** [davidabejon.github.io/3DSpotify](https://davidabejon.github.io/3DSpotify/)
-(descarga, código QR para FBI, características y controles). Su código está en
-[site/](site/) y se publica en GitHub Pages con
-[.github/workflows/pages.yml](.github/workflows/pages.yml) en cada push a
-`main` que la modifique.
-
 <div style="display: flex; gap: 10px">
   <img src="assets/playing.png" alt="Now playing" width="350">
   <img src="assets/results.png" alt="Search results" width="350">

@@ -5,12 +5,6 @@ Nota: Esta documentación también está disponible en español: `README_es.md`
 Unofficial Spotify client for the Nintendo 3DS. The app connects directly to
 Spotify over HTTPS.
 
-**Website:** [davidabejon.github.io/3DSpotify](https://davidabejon.github.io/3DSpotify/)
-(download, FBI QR code, features and controls). Its source lives in
-[site/](site/) and is published to GitHub Pages by
-[.github/workflows/pages.yml](.github/workflows/pages.yml) on every push to
-`main` that changes it.
-
 <div style="display: flex; gap: 10px">
   <img src="assets/playing.png" alt="Now playing" width="350">
   <img src="assets/results.png" alt="Search results" width="350">
