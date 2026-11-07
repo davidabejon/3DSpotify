@@ -10,8 +10,8 @@ directamente a Spotify por HTTPS.
 `main` que la modifique.
 
 <div style="display: flex; gap: 10px">
-  <img src="https://i.imgur.com/BiwIS82.png" alt="Top playing" width="350">
-  <img src="https://i.imgur.com/ppvuOb7.png" alt="Bottom playing" width="350">
+  <img src="assets/playing.png" alt="Now playing" width="350">
+  <img src="assets/results.png" alt="Search results" width="350">
 </div>
 
 ## Resumen
