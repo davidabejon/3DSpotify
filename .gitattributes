@@ -1,1 +1,3 @@
 include/stb_image.h linguist-language=ignore
+source/deps/*.c -text
+source/deps/*.h -text

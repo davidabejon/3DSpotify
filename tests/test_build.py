@@ -833,6 +833,65 @@ class BuildTests(unittest.TestCase):
                     build.stb_vorbis_source(True)
         self.assertFalse((self.root / "deps").exists())
 
+    def test_qrcodegen_is_pinned_and_built_without_warnings(self):
+        _, _, _, extra_sources = build.APPS["spotify3ds"]
+        self.assertIn("deps/qrcodegen.c", extra_sources)
+        # The committed copies are the pinned ones, so an offline build works.
+        source = build.qrcodegen_source(False)
+        self.assertEqual(source, build.ROOT / "deps" / "qrcodegen.c")
+        self.assertTrue((build.ROOT / "deps" / "qrcodegen.h").is_file())
+        # A CRLF checkout would change the bytes the checksum pins.
+        attributes = (build.ROOT.parent / ".gitattributes").read_text(
+            encoding="utf-8")
+        self.assertIn("source/deps/*.c -text", attributes)
+        self.assertIn("source/deps/*.h -text", attributes)
+        notice = (build.ROOT.parent / "NOTICE").read_text(encoding="utf-8")
+        self.assertIn("QR-Code-generator", notice)
+
+    def test_missing_qrcodegen_offline_has_actionable_error(self):
+        with patch.object(build, "ROOT", self.root):
+            with self.assertRaisesRegex(SystemExit, "--fetch-deps"):
+                build.qrcodegen_source(False)
+
+    def test_local_qrcodegen_must_match_pinned_checksum(self):
+        deps = self.root / "deps"
+        deps.mkdir()
+        (deps / "qrcodegen.c").write_bytes(b"modified source")
+        with patch.object(build, "ROOT", self.root):
+            with self.assertRaisesRegex(SystemExit, "qrcodegen.c checksum"):
+                build.qrcodegen_source(False)
+
+    def test_qrcodegen_download_is_verified(self):
+        files = {"qrcodegen.c": b"/* impl */", "qrcodegen.h": b"/* api */"}
+        def answer(url, timeout):
+            return io.BytesIO(files[url.rsplit("/", 1)[1]])
+        with patch.object(build, "ROOT", self.root):
+            with patch.multiple(
+                    build,
+                    QRCODEGEN_SHA256_C=hashlib.sha256(files["qrcodegen.c"]).hexdigest(),
+                    QRCODEGEN_SHA256_H=hashlib.sha256(files["qrcodegen.h"]).hexdigest()):
+                with patch.object(build.urllib.request, "urlopen",
+                                  side_effect=answer) as fetch:
+                    source = build.qrcodegen_source(True)
+        self.assertEqual(source.read_bytes(), files["qrcodegen.c"])
+        self.assertEqual((self.root / "deps" / "qrcodegen.h").read_bytes(),
+                         files["qrcodegen.h"])
+        for call in fetch.call_args_list:
+            self.assertIn(f"/v{build.QRCODEGEN_VERSION}/c/", call.args[0])
+
+    def test_qrcodegen_download_writes_nothing_unless_both_match(self):
+        payload = b"/* impl */"
+        with patch.object(build, "ROOT", self.root):
+            with patch.object(build, "QRCODEGEN_SHA256_C",
+                              hashlib.sha256(payload).hexdigest()):
+                with patch.object(build.urllib.request, "urlopen",
+                                  side_effect=lambda url, timeout:
+                                  io.BytesIO(payload)):
+                    with self.assertRaisesRegex(SystemExit,
+                                                "qrcodegen.h checksum"):
+                        build.qrcodegen_source(True)
+        self.assertFalse((self.root / "deps").exists())
+
     def test_missing_mbedtls_offline_has_actionable_error(self):
         with patch.object(build, "ROOT", self.root):
             with self.assertRaisesRegex(SystemExit, "--fetch-deps"):
