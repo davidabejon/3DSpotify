@@ -83,6 +83,12 @@ typedef struct {
 	uint8_t    key[16];
 	sp_storage storage;
 
+	/* What storage-resolve needs to hand out fresh CDN URLs mid-download:
+	 * they are signed and expire, and an edge refuses a stale one. */
+	uint8_t    file_id[20];
+	char       sp_host[128];
+	char       token[1024];
+
 	/* Running AES-CTR state, owned by track_stream_download for its
 	 * lifetime: pieces arrive in file order, so one context decrypts them
 	 * as they land and the watermark never exposes encrypted bytes. */

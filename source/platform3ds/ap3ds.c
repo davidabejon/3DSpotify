@@ -3,6 +3,7 @@
 #include "http3ds.h"
 #include "proto3ds.h"
 #include "shannon.h"
+#include "tls3ds.h"
 
 #include <3ds.h>
 #include <errno.h>
@@ -93,11 +94,29 @@ const char *ap_login_error_text(int code)
 
 /* ----------------------------------------------------------------- sockets */
 
-/* As in tls3ds, waits go through poll(): SOC has no usable SO_RCVTIMEO. */
+/* As in tls3ds, waits go through poll(): SOC has no usable SO_RCVTIMEO.
+ * In slices, so tls_set_abort can cut them short (-1 then). */
+static int poll_abortable(struct pollfd *p, int timeout_ms)
+{
+	int waited = 0;
+	for (;;) {
+		if (tls_aborting())
+			return -1;
+		int left = timeout_ms - waited;
+		int slice = left < TLS_ABORT_SLICE_MS ? left : TLS_ABORT_SLICE_MS;
+		if (slice < 0)
+			slice = 0;
+		int n = poll(p, 1, slice);
+		if (n != 0 || left <= TLS_ABORT_SLICE_MS)
+			return n;
+		waited += slice;
+	}
+}
+
 static bool wait_io(int fd, short events, int timeout_ms)
 {
 	struct pollfd p = { .fd = fd, .events = events };
-	return poll(&p, 1, timeout_ms) == 1;
+	return poll_abortable(&p, timeout_ms) == 1;
 }
 
 static bool write_all(int fd, const void *buf, size_t len, int timeout_ms)
@@ -568,7 +587,7 @@ int ap_wait(ap_session *s, int timeout_ms)
 	if (!s)
 		return -1;
 	struct pollfd p = { .fd = s->fd, .events = POLLIN };
-	int n = poll(&p, 1, timeout_ms);
+	int n = poll_abortable(&p, timeout_ms);
 	if (n == 0)
 		return 0;
 	if (n < 0)

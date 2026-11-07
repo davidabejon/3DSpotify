@@ -64,16 +64,55 @@ This writes `source\dist\3ds\spotify3ds\spotify3ds.cia`; copy it to the SD
 card and install it with FBI or a similar CIA installer (requires custom
 firmware). The CIA keeps its settings in `SD:/3ds/spotibacan/`.
 
+Both the `.3dsx` and the `.cia` pack the repository's `romfs/` directory,
+which the app reads as `romfs:/`; the build stops if it is missing. It holds
+the logo of the top screen, `romfs/gfx/logo.png`:
+
+- your own artwork, with no Spotify name or logo;
+- an 8-bit RGBA PNG of at most 256×128 px, drawn 1:1 without scaling (a
+  larger image is not loaded); its alpha channel is kept, soft edges
+  included.
+
+Without a usable logo the top screen shows the app name as text instead.
+
 The target starts a direct session: it refreshes the stored credential, offers
 pairing when needed, and checks the access-point and library-session
 connections. If no credential is stored, follow the pairing code shown on the
 console from another device and authorize the account with Spotify. The refresh
 token is saved to the SD card for later launches.
 
-### Home screen
+### Tabs
 
-On the home screen, tap **"Search songs"** or press **A** to open the keyboard. Your last search
-appears below as a secondary button; tap it or move to it with up/down and press **A**.
+Once the session is up, the top of the bottom screen is a bar of four tabs, each shown by its
+icon:
+
+| Icon | Tab | What it holds |
+|---|---|---|
+| House | **Home** | Search for songs and repeat the last search. |
+| Magnifying glass | **Search** | The latest results, the search in progress, or its error. |
+| Equalizer | **Playing** | The current track and its controls. |
+| Gear | **Settings** | Language, reconnect and pair another account. |
+
+- Tap a tab to open it (it switches when you lift the stylus inside it).
+- **L/R** move to the previous or next tab from any screen; **ZL/ZR** (New 3DS only) do the
+  same.
+- Music keeps playing on every tab, and a search runs in the background while you move
+  between them.
+- **SELECT** switches the language from any tab and **START** exits.
+
+### Top screen
+
+- With nothing playing, or after a playback error, every tab shows the logo.
+- While a track loads, plays (paused too) or has just finished, **Home**,
+  **Search** and **Settings** show the now-playing card: cover, title, artist,
+  album, the time and the progress bar with the download ahead of it. The
+  **Playing** tab shows the cover large instead.
+- While a search runs, the **Search** tab adds a floating "Searching…" bubble
+  with the loading indicator over the logo or the card.
+
+### Home
+
+Tap **"Search songs"** or press **A** to open the keyboard. Your last search appears below as a secondary button; tap it or move to it with up/down and press **A**. Once confirmed, the app moves to the **Search** tab.
 
 **Touch controls:**
 - Tap a button to highlight it; the button shows a pressed state when you lift the stylus inside it.
@@ -81,56 +120,60 @@ appears below as a secondary button; tap it or move to it with up/down and press
 
 **Button hints:** Glyphs with colored backgrounds show available actions:
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — opens the search keyboard
-- <span style="background-color: #3FA2FF; color: white; padding: 2px 4px; border-radius: 2px;">X</span> — reconnects to Spotify
-- <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — pairs another account
-- **SELECT** — switches the language
-- **START** — exits
 
-### Search results
+While the keyboard is open, the playing track pauses; it resumes once the keyboard closes.
 
-Results show four songs at a time. The **top screen** displays the song card: title, artist, album,
-and duration of the highlighted song. The **bottom screen** shows the list with thumbnails.
+### Search
+
+Results show four songs at a time. The **bottom screen** shows the list with thumbnails under the tab bar; the top screen follows [Top screen](#top-screen).
 
 **Navigation:**
-- Use up/down to move through songs; the highlighted one gains a green border (`lima`) and a
-  brighter background.
-- Press L/R to jump four songs at a time.
-- Tap a song to highlight it; tap it again (or press **A**) to play it directly.
+- Use up/down to move through songs; the highlighted one gets a brighter green background.
+- Press left/right to jump four songs at a time.
+- Tap a song to highlight it; tap it again (or press **A**) to play it: the app moves to the **Playing** tab.
 - Drag the list with the stylus to scroll; the bar on the right edge shows your position.
 
 **Button hints:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — plays the highlighted song
-- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to the home screen
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to the Home tab
 - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — enters a new search
-- L/R — jump four songs at a time
+- Left/right — jump four songs at a time
 
 **Touch gestures:**
-- **Tap a row:** selects the song; the row highlights and its card appears on the top screen.
+- **Tap a row:** selects the song; the row highlights.
 - **Tap again:** plays immediately with the remaining results as the queue.
-- **Drag vertically:** scrolls the list; rows can be cut off by the screen edges. The highlighted
-  song and its card remain visible on the top screen while you scroll.
+- **Drag vertically:** scrolls the list; rows can be cut off by the tab bar and the button bar.
 - **Drag beyond 8 pixels from the starting point:** commits to scrolling; the row tap is cancelled.
 
 **Search status:**
+- Before the first search, the tab offers a **"Search songs"** button.
 - If the search fails, press **A** (or tap the on-screen button) to retry.
 - Press **B** to cancel a pending search after the current network request finishes.
+- While the queue from these results plays, the highlighted row follows the playing track.
 
-### Playback
+### Playing
 
-The chosen track plays locally with the rest of the results as the queue. During playback:
-- The **top screen** shows the album artwork (or a neutral background if unavailable) with the title,
-  artist, and album on the right.
-- The **bottom screen** shows track number, progress bar, and volume control.
+The chosen track plays locally with the rest of the results as the queue, and keeps playing when you switch tabs.
+- The **top screen** shows the album artwork large (a note placeholder until it arrives).
+- The **bottom screen** shows the title, artist and place in the queue ("3 of 24"), the previous, play/pause and next buttons, the time, the progress bar (with the download ahead of it) and the volume bar.
 
 **Playback controls:**
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pauses/resumes
-- Left/right — changes track
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pauses/resumes; once the track has finished, plays it again; after an error, retries
+- Left/right, or the on-screen buttons — changes track
 - Up/down — adjusts local volume
-- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to results
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to the Search tab without stopping the music
 - **START** — stops and exits
 
-The queue follows search-result order and does not wrap at either end. Complete playback, artwork,
+The queue follows search-result order and does not wrap at either end: there, the previous or next button shows as disabled. Complete playback, artwork,
 and controls still need validation on real hardware. The probes remain available as separate targets.
+
+### Settings
+
+- **Language** — shows the current language and switches it (so does **SELECT** from any tab).
+- **Reconnect** — opens the session again with the saved credential.
+- **Pair another account** — starts pairing with a new code.
+
+Choose with up/down and **A**, or by tapping the button. Reconnecting and pairing stop playback. **B** returns to the Home tab.
 
 ## Probes
 

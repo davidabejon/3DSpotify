@@ -38,8 +38,14 @@ static bool stop_requested;
  * main thread only once it is THUMB_DECODED. */
 static u8 staging[THUMBS_MAX][THUMB_TEXEL_BYTES];
 
+/* Set by the worker as it returns: joining it then costs nothing. */
+static volatile bool worker_done;
+
 /* Main thread only. */
 static Thread worker;
+/* Whether the worker should be running: thumbs_stop only asks it to stop,
+ * and a stopping worker is reaped once it has returned. */
+static bool want_worker;
 static C3D_Tex textures[THUMBS_MAX];
 static Tex3DS_SubTexture subtex[THUMBS_MAX];
 static int pool_size;   /* textures made by thumbs_init */
@@ -64,9 +70,21 @@ bool thumbs_init(void)
 	return true;
 }
 
-void thumbs_exit(void)
+void thumbs_wait(void)
 {
 	thumbs_stop();
+	if (worker) {
+		threadJoin(worker, U64_MAX);
+		threadFree(worker);
+		worker = NULL;
+	}
+	worker_done = false;
+	stop_requested = false;
+}
+
+void thumbs_exit(void)
+{
+	thumbs_wait();
 	for (int i = 0; i < pool_size; i++)
 		C3D_TexDelete(&textures[i]);
 	pool_size = 0;
@@ -156,17 +174,53 @@ static void worker_main(void *arg)
 	}
 	if (session)
 		http_session_close(session);
+	__sync_synchronize();
+	worker_done = true;
 }
 
 /* --- Main thread ------------------------------------------------------- */
 
+/* Joins a worker that has already returned; true when it did. */
+static bool reap_worker(void)
+{
+	if (!worker || !worker_done)
+		return false;
+	__sync_synchronize();
+	threadJoin(worker, U64_MAX);
+	threadFree(worker);
+	worker = NULL;
+	worker_done = false;
+	stop_requested = false;
+	return true;
+}
+
 static void start_worker(void)
 {
-	if (worker || pool_size == 0)
+	want_worker = true;
+	if (pool_size == 0)
 		return;
+	reap_worker();
+	if (worker) {
+		/* Still running, or still finishing the request it had when it
+		 * was asked to stop: it goes on. If it had already left its loop,
+		 * it is reaped and started again by thumbs_poll. */
+		LightLock_Lock(&lock);
+		stop_requested = false;
+		LightLock_Unlock(&lock);
+		LightEvent_Signal(&wake);
+		return;
+	}
 	stop_requested = false;
+	worker_done = false;
 	worker = threadCreate(worker_main, NULL, 32 * 1024,
 	                      background_priority(), -2, false);
+}
+
+/* Reaps a worker that has returned, and starts it again if it is wanted. */
+static void settle_worker(void)
+{
+	if (reap_worker() && want_worker)
+		start_worker();
 }
 
 void thumbs_set_tracks(const sp_track *tracks, int n)
@@ -214,6 +268,7 @@ bool thumbs_poll(void)
 {
 	if (pool_size == 0)
 		return false;
+	settle_worker();
 	bool changed = false;
 	LightLock_Lock(&lock);
 	for (int i = 0; i < count; i++) {
@@ -252,6 +307,7 @@ bool thumbs_image(int index, C2D_Image *out)
 
 void thumbs_stop(void)
 {
+	want_worker = false;
 	if (!worker)
 		return;
 	LightLock_Lock(&lock);
@@ -263,8 +319,13 @@ void thumbs_stop(void)
 			states[i] = THUMB_WAITING;
 	LightLock_Unlock(&lock);
 	LightEvent_Signal(&wake);
-	threadJoin(worker, U64_MAX);
-	threadFree(worker);
-	worker = NULL;
-	stop_requested = false;
+	/* No join: it would block the main thread, and the audio and the
+	 * input with it, for the whole request in flight. */
+	reap_worker();
+}
+
+bool thumbs_stopping(void)
+{
+	settle_worker();
+	return worker && !want_worker;
 }

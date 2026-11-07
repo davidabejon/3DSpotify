@@ -3,10 +3,10 @@
  * Every measure comes from theme.h (docs/STYLES.md 4), in whole pixels.
  *
  * Bottom screen, 320 x 240, 8 px side margins:
- *   header    0..24   panel with the view title
- *   search   40..72   the primary button (A, or tap), hugging its content
- *   label    88..104  "Last search", only when there is one
- *   repeat  108..140  secondary button that runs the last search again
+ *   tabs      0..32   the tab bar (tabs_logic.h)
+ *   search   48..80   the primary button (A, or tap), hugging its content
+ *   label    96..112  "Last search", only when there is one
+ *   repeat  116..148  secondary button that runs the last search again
  *   bubble  180..208  transient message (SELECT), centred
  *   hints   216..240  button bar */
 #ifndef HOME_LOGIC_H
@@ -41,12 +41,6 @@ static inline int home_button_width(float content_width)
 	return w;
 }
 
-static inline ui_rect home_header_rect(void)
-{
-	ui_rect r = { 0, 0, SCREEN_BOTTOM_W, BAR_H };
-	return r;
-}
-
 static inline ui_rect home_hints_rect(void)
 {
 	ui_rect r = { 0, SCREEN_H - BAR_H, SCREEN_BOTTOM_W, BAR_H };
@@ -56,7 +50,7 @@ static inline ui_rect home_hints_rect(void)
 /* `content_width`: icon, gap and label of the button. */
 static inline ui_rect home_search_rect(float content_width)
 {
-	ui_rect r = { SP_2, BAR_H + SP_4, home_button_width(content_width),
+	ui_rect r = { SP_2, TAB_H + SP_4, home_button_width(content_width),
 	              TOUCH_MIN };
 	return r;
 }
