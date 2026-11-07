@@ -66,8 +66,12 @@ void ui_begin(void)
 void ui_scene(gfxScreen_t screen)
 {
 	C3D_RenderTarget *target = screen == GFX_TOP ? top_target : bottom_target;
-	C2D_TargetClear(target, UI_COLOR_BG);
+	float width = screen == GFX_TOP ? SCREEN_TOP_W : SCREEN_BOTTOM_W;
+	C2D_TargetClear(target, COL_FONDO_INF);
 	C2D_SceneBegin(target);
+	/* One rectangle: free for the CPU. */
+	C2D_DrawRectangle(0, 0, 0, width, SCREEN_H, COL_FONDO_SUP, COL_FONDO_SUP,
+	                  COL_FONDO_INF, COL_FONDO_INF);
 }
 
 void ui_end(void)

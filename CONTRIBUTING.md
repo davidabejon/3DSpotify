@@ -52,8 +52,8 @@ python source\build.py --cia                 # also package the CIA
 python -m unittest discover -s tests         # run the test suite
 ```
 
-`--fetch-deps` downloads mbedTLS and `stb_vorbis` and verifies them against
-pinned checksums. Do not commit anything under `source/dist/`,
+`--fetch-deps` downloads mbedTLS, `stb_vorbis` and `qrcodegen` and verifies
+them against pinned checksums. Do not commit anything under `source/dist/`,
 `source/deps/mbedtls-*` or other build output; `.gitignore` already covers it.
 
 ## Project layout

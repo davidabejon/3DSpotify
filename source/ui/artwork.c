@@ -1,7 +1,10 @@
 #include "artwork.h"
 
+#include "art_url.h"
+#include "draw.h"
 #include "http3ds.h"
 #include "image_util.h"
+#include "ui.h"
 #include "worker_priority.h"
 
 #include <stdio.h>
@@ -14,29 +17,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "../../include/stb_image.h"
 
-#define TOP_WIDTH 400.0f
-#define TOP_HEIGHT 240.0f
-/* The cover's box on the top screen, and the white frame around it. */
-#define ART_MAX_WIDTH 372.0f
-#define ART_MAX_HEIGHT 212.0f
-#define ART_BORDER 4.0f
-
 #define TEXEL_BYTES ((size_t)ARTWORK_TEX_SIZE * ARTWORK_TEX_SIZE * 4)
-
-static bool artwork_url_allowed(const char *url)
-{
-	static const char prefix[] = "https://i.scdn.co/";
-	const size_t prefix_len = sizeof(prefix) - 1;
-	if (!url || strncmp(url, prefix, prefix_len) != 0 ||
-	    url[prefix_len] == '\0')
-		return false;
-
-	for (const unsigned char *p = (const unsigned char *)url + prefix_len;
-	     *p; p++)
-		if (*p <= 0x20 || *p > 0x7e || *p == '\\' || *p == '#')
-			return false;
-	return true;
-}
 
 /* Pure CPU work only: no citro3d and no linearAlloc off the main thread. */
 static void artwork_worker(void *arg)
@@ -76,23 +57,57 @@ static void artwork_worker(void *arg)
 	artwork->done = true;
 }
 
-void artwork_request(artwork_state *artwork, const char *url)
+/* Joins a worker that has returned (free then) and drops its result. */
+static void drop_finished_worker(artwork_state *artwork)
 {
-	artwork_close(artwork);
-	artwork->dirty = true;
-	if (!artwork_url_allowed(url) || strlen(url) >= sizeof(artwork->url))
-		return;
+	__sync_synchronize();
+	threadJoin(artwork->thread, U64_MAX);
+	threadFree(artwork->thread);
+	artwork->thread = NULL;
+	free(artwork->worker_texels);
+	artwork->worker_texels = NULL;
+	artwork->worker_width = artwork->worker_height = 0;
+	artwork->done = false;
+}
 
+static void start_fetch(artwork_state *artwork, const char *url)
+{
+	if (!art_url_allowed(url) || strlen(url) >= sizeof(artwork->url))
+		return;
 	snprintf(artwork->url, sizeof(artwork->url), "%s", url);
+	artwork->done = false;
 	artwork->thread = threadCreate(artwork_worker, artwork, 32 * 1024,
 	                               background_priority(), -2, false);
 	if (!artwork->thread)
 		artwork->url[0] = '\0';
 }
 
+void artwork_request(artwork_state *artwork, const char *url)
+{
+	if (!url)
+		url = "";
+	/* The old cover goes now, whatever the worker is doing. */
+	if (artwork->has_texture) {
+		C3D_TexDelete(&artwork->tex);
+		artwork->has_texture = false;
+	}
+	artwork->dirty = true;
+	artwork->has_next = false;
+	if (artwork->thread && !artwork->done) {
+		/* Joining would block the main thread, and the input with it,
+		 * for the whole download: the request waits its turn. */
+		snprintf(artwork->next_url, sizeof(artwork->next_url), "%s", url);
+		artwork->has_next = true;
+		return;
+	}
+	if (artwork->thread)
+		drop_finished_worker(artwork);
+	start_fetch(artwork, url);
+}
+
 bool artwork_pending(const artwork_state *artwork)
 {
-	return artwork->thread && !artwork->done;
+	return (artwork->thread && !artwork->done) || artwork->has_next;
 }
 
 static void upload(artwork_state *artwork)
@@ -119,6 +134,13 @@ void artwork_poll(artwork_state *artwork)
 {
 	if (!artwork->thread || !artwork->done)
 		return;
+	if (artwork->has_next) {
+		/* A newer request was waiting for this download to end. */
+		drop_finished_worker(artwork);
+		artwork->has_next = false;
+		start_fetch(artwork, artwork->next_url);
+		return;
+	}
 
 	__sync_synchronize();
 	threadJoin(artwork->thread, U64_MAX);
@@ -143,31 +165,13 @@ bool artwork_dirty(const artwork_state *artwork)
 	return artwork->dirty;
 }
 
-void artwork_draw(artwork_state *artwork)
+void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow)
 {
-	const u32 top = C2D_Color32(40, 80, 30, 0xFF);
-	const u32 bottom = C2D_Color32(55, 200, 70, 0xFF);
-	C2D_DrawRectangle(0, 0, 0, TOP_WIDTH, TOP_HEIGHT,
-	                  top, top, bottom, bottom);
 	artwork->dirty = false;
-	if (!artwork->has_texture)
-		return;
-
-	float width = artwork->subtex.width;
-	float height = artwork->subtex.height;
-	float scale_x = ART_MAX_WIDTH / width;
-	float scale_y = ART_MAX_HEIGHT / height;
-	float scale = scale_x < scale_y ? scale_x : scale_y;
-	float shown_width = width * scale;
-	float shown_height = height * scale;
-	float x = (TOP_WIDTH - shown_width) / 2.0f;
-	float y = (TOP_HEIGHT - shown_height) / 2.0f;
-	C2D_DrawRectSolid(x - ART_BORDER, y - ART_BORDER, 0,
-	                  shown_width + 2 * ART_BORDER,
-	                  shown_height + 2 * ART_BORDER,
-	                  C2D_Color32(255, 255, 255, 255));
+	if (shadow > 0)
+		ui_fill(ui_rect_offset(box, shadow, shadow), COL_SOMBRA);
 	C2D_Image image = { &artwork->tex, &artwork->subtex };
-	C2D_DrawImageAt(image, x, y, 0, NULL, scale, scale);
+	ui_art(box, artwork->has_texture ? &image : NULL);
 }
 
 void artwork_invalidate(artwork_state *artwork)

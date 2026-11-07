@@ -1,7 +1,10 @@
 #include "track.h"
 #include "http3ds.h"
+#include "http_logic.h"
+#include "cfg3ds.h"
 
 #include <3ds.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -172,6 +175,9 @@ static int track_stream_begin_internal(const char *sp_host, const char *token,
 		return -1;
 	}
 	out->format = file->format;
+	memcpy(out->file_id, file->id, sizeof(out->file_id));
+	snprintf(out->sp_host, sizeof(out->sp_host), "%s", sp_host);
+	snprintf(out->token, sizeof(out->token), "%s", token);
 
 	if (progress) progress("storage-resolve");
 	if (sp_storage_resolve(sp_host, token, file->id, &out->storage,
@@ -272,6 +278,77 @@ static void stream_rewind(track_stream *ts, size_t at)
 	ts->downloaded = at;
 }
 
+/* download.log beside the config: one line per attempt of the current
+ * track, so a failure seen on the console can be explained afterwards.
+ * Hosts and statuses only; never a URL's signature or a token. */
+static FILE *dl_log_open(const track_stream *ts)
+{
+	char path[256];
+	cfg_dir(path, sizeof(path));
+	size_t n = strlen(path);
+	snprintf(path + n, sizeof(path) - n, "download.log");
+	FILE *f = fopen(path, "w");
+	if (f) {
+		fprintf(f, "track %s, %u bytes, %d url(s)\n", ts->meta.uri,
+		        (unsigned)ts->len, ts->storage.count);
+		fflush(f);
+	}
+	return f;
+}
+
+static void dl_log(FILE *f, const char *fmt, ...)
+{
+	if (!f)
+		return;
+	fprintf(f, "[%llu ms] ", (unsigned long long)osGetTime());
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(f, fmt, args);
+	va_end(args);
+	fputc('\n', f);
+	fflush(f);
+}
+
+static void url_host(const char *url, char *out, size_t outlen)
+{
+	const char *p = strncmp(url, "https://", 8) == 0 ? url + 8 : url;
+	size_t n = strcspn(p, "/?");
+	if (n >= outlen)
+		n = outlen - 1;
+	memcpy(out, p, n);
+	out[n] = '\0';
+}
+
+/* Asks storage-resolve again for this file: the edges answer stale signed
+ * URLs with a redirect or a refusal, and a resume after a long stall (a
+ * closed lid) meets exactly that. */
+static bool refresh_urls(track_stream *ts, FILE *log)
+{
+	if (!ts->token[0] || !ts->sp_host[0])
+		return false;
+	sp_storage fresh;
+	char err[160];
+	if (sp_storage_resolve(ts->sp_host, ts->token, ts->file_id, &fresh,
+	                       err, sizeof(err)) <= 0) {
+		dl_log(log, "refresh failed: %s", err);
+		return false;
+	}
+	ts->storage = fresh;
+	dl_log(log, "refreshed: %d url(s)", fresh.count);
+	return true;
+}
+
+/* Sleeps before the next pass, in slices, so a skip or a seek is not kept
+ * waiting. */
+static void retry_wait(track_stream *ts, unsigned ms)
+{
+	for (unsigned waited = 0; waited < ms; waited += 100) {
+		if ((ts->stop && *ts->stop) || ts->dl_restart_at >= 0)
+			return;
+		svcSleepThread(100 * 1000000LL);
+	}
+}
+
 int track_stream_download(track_stream *ts, volatile bool *stop)
 {
 	ts->stop = stop;
@@ -287,29 +364,76 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 	ts->nc_off = 0;
 	ts->aes = &aes;
 
-	/* Two passes over the URL list: a Wi-Fi blip at 90% should not cost
-	 * the track, and every attempt resumes where the last one stopped. A
-	 * reposition earns two fresh passes from the new offset. */
-	for (int pass = 0; pass < 2 && !ts->dl_done && !ts->cb_fatal; pass++) {
+	/* Passes over the URL list until the file is whole, every attempt
+	 * resuming where the last one stopped. A closed lid sleeps the console
+	 * and drops Wi-Fi mid-request; on waking, the network takes a while to
+	 * come back, so empty passes back off and the download only gives up
+	 * after several in a row. Any byte gained, or a reposition, resets the
+	 * count. */
+	FILE *log = dl_log_open(ts);
+	int failures = 0;
+	int refreshes = 0;
+	while (!ts->dl_done && !ts->cb_fatal && !(stop && *stop)) {
 		if (ts->dl_restart_at >= 0) {
 			size_t at = (size_t)ts->dl_restart_at;
 			ts->dl_restart_at = -1;
 			stream_rewind(ts, at);
-			pass = -1;
+			dl_log(log, "seek to %u", (unsigned)at);
+			failures = 0;
 			continue;
 		}
+		size_t before = ts->write_pos;
+		bool refused = false;   /* an edge answered, but not with bytes */
 		for (int i = 0; i < ts->storage.count; i++) {
 			if ((stop && *stop) || ts->cb_fatal || ts->dl_restart_at >= 0)
 				break;
 			int status = 0;
-			http_get_url_stream(ts->storage.urls[i], ts->write_pos,
-			                    stream_cb, ts, &ts->total, &status,
-			                    ts->dl_err, sizeof(ts->dl_err));
+			size_t from = ts->write_pos;
+			ts->dl_err[0] = '\0';
+			int rc = http_get_url_stream(ts->storage.urls[i], from,
+			                             stream_cb, ts, &ts->total,
+			                             &status, ts->dl_err,
+			                             sizeof(ts->dl_err));
+			char host[96];
+			url_host(ts->storage.urls[i], host, sizeof(host));
+			dl_log(log, "url %d %s from %u: rc %d, status %d, got %u%s%s",
+			       i, host, (unsigned)from, rc, status,
+			       (unsigned)(ts->write_pos - from),
+			       rc ? ", " : "", rc ? ts->dl_err : "");
+			if (rc != 0 && status != 0 && status != 206 &&
+			    ts->write_pos == from)
+				refused = true;
 			if (ts->len && ts->write_pos >= ts->len)
 				ts->dl_done = true;
 			if (ts->dl_done || (stop && *stop))
 				break;
 		}
+		if (ts->dl_done || ts->cb_fatal || (stop && *stop) ||
+		    ts->dl_restart_at >= 0)
+			continue;
+		if (ts->write_pos != before) {
+			failures = 0;
+			refreshes = 0;
+		} else if (++failures >= DOWNLOAD_MAX_FAILED_PASSES) {
+			break;
+		}
+		/* The network is up but the URLs are refused: fresh ones, then
+		 * straight back to it. */
+		if (refused && refreshes < DOWNLOAD_MAX_REFRESHES) {
+			refreshes++;
+			if (refresh_urls(ts, log))
+				continue;
+		}
+		retry_wait(ts, download_retry_delay_ms(failures));
+	}
+	if (log) {
+		dl_log(log, "end: %s, %u of %u bytes%s%s",
+		       ts->dl_done ? "done" : (stop && *stop) ? "stopped"
+		                                             : "failed",
+		       (unsigned)ts->write_pos, (unsigned)ts->len,
+		       ts->dl_done ? "" : ", last error: ",
+		       ts->dl_done ? "" : ts->dl_err);
+		fclose(log);
 	}
 	ts->aes = NULL;
 	mbedtls_aes_free(&aes);
@@ -335,6 +459,7 @@ void track_stream_free(track_stream *ts)
 	ts->len = ts->total = ts->write_pos = 0;
 	ts->downloaded = 0;
 	memset(ts->key, 0, sizeof(ts->key));
+	memset(ts->token, 0, sizeof(ts->token));
 	memset(ts->nonce, 0, sizeof(ts->nonce));
 	memset(ts->stream_block, 0, sizeof(ts->stream_block));
 }

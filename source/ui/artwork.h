@@ -17,6 +17,8 @@
 
 #include <stdbool.h>
 
+#include "layout.h"
+
 #include <3ds/thread.h>
 
 /* 256 is enough: the cover is shown at about 212 px. */
@@ -36,17 +38,27 @@ typedef struct {
 	Tex3DS_SubTexture subtex;
 	bool has_texture;
 	bool dirty;
+	/* A request made while the worker was still busy: it starts once the
+	 * worker returns, so requesting never waits for a download. */
+	char next_url[128];
+	bool has_next;
 } artwork_state;
 
-/* Drops the current image and starts loading `url` (i.scdn.co only). */
+/* Drops the current image and starts loading `url` (i.scdn.co only). It
+ * never waits: with a download still running, `url` is queued and starts
+ * from artwork_poll once that one has returned (its result is dropped). */
 void artwork_request(artwork_state *artwork, const char *url);
 bool artwork_pending(const artwork_state *artwork);
 /* Uploads a finished download. Call once per frame on the main thread. */
 void artwork_poll(artwork_state *artwork);
 bool artwork_dirty(const artwork_state *artwork);
-/* Draws into the current scene (the top screen): the background, and the
- * cover when there is one. */
-void artwork_draw(artwork_state *artwork);
+/* Draws the cover into `box` on the top screen (7.5): a `sombra` hard
+ * shadow `shadow` px to the right and down (0: none), a 1 px `tinta`
+ * outline and the image fitted inside. Without an image, the `capa_alta`
+ * square with the note icon, the same size, so nothing moves when it
+ * arrives (ui_art). Clears the dirty flag: only check artwork_dirty while
+ * something draws the cover with it. */
+void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow);
 /* Forces a repaint, for when something else (an applet such as the software
  * keyboard) may have drawn over the top screen. */
 void artwork_invalidate(artwork_state *artwork);

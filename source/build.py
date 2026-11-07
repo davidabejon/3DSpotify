@@ -28,10 +28,18 @@ MBEDTLS_VERSION = "3.6.7"
 MBEDTLS_SHA256 = "a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6"
 STB_VORBIS_COMMIT = "d14d46f6b44456eb88beac58cba833a4135d4c89"
 STB_VORBIS_SHA256 = "4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636"
+# Draws the pairing QR on the login screen. Two files, each pinned on its own:
+# the header is included by the app's sources, not only by qrcodegen.c.
+QRCODEGEN_VERSION = "1.8.0"
+QRCODEGEN_SHA256_C = "300eff07ee25baaa7578f20284411638154716379437391e7e689c0e6ce81403"
+QRCODEGEN_SHA256_H = "e82df4bff37d18b5863b9e7486fe6bda1b6cda8c3b9ecebfec473907265cb589"
 
 # Icon, banner and makerom settings for the installable app, kept in assets/
 # at the repository root.
 ASSETS = ROOT.parent / "assets"
+# Files the app reads at run time as romfs:/ (the logo), packed into both the
+# .3dsx and the .cia of spotify3ds.
+ROMFS = ROOT.parent / "romfs"
 APP_TITLE = "3DSpotify"
 APP_DESCRIPTION = "Native Spotify client for Nintendo 3DS"
 APP_PUBLISHER = "David Abejon"
@@ -44,7 +52,7 @@ BANNER_FADE_SECONDS = 0.4
 #          extra single sources relative to this script)
 APPS = {
     "spotify3ds": (["ui", "lang", "platform3ds"], [], "release",
-                   ["main.c", "deps/stb_vorbis.c"]),
+                   ["main.c", "deps/stb_vorbis.c", "deps/qrcodegen.c"]),
     "probe_tls": (["probe_tls", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
     "probe_pair": (["probe_pair", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
     "probe_ap": (["probe_ap", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
@@ -100,6 +108,38 @@ def stb_vorbis_source(fetch: bool) -> Path:
     header = source.with_name("stb_vorbis.h")
     header.write_bytes(data[:header_end].rstrip() + b"\n")
     return source
+
+
+def qrcodegen_source(fetch: bool) -> Path:
+    """Returns deps/qrcodegen.c, with qrcodegen.h beside it, both verified.
+
+    Nothing is written unless both files match: a half-updated pair would
+    compile against the wrong header."""
+    deps = ROOT / "deps"
+    pinned = {"qrcodegen.c": QRCODEGEN_SHA256_C,
+              "qrcodegen.h": QRCODEGEN_SHA256_H}
+    contents = {}
+    for name, digest in pinned.items():
+        path = deps / name
+        if path.is_file():
+            data = path.read_bytes()
+        else:
+            if not fetch:
+                raise SystemExit(f"{name} is missing; rerun with --fetch-deps")
+            url = ("https://raw.githubusercontent.com/nayuki/QR-Code-generator/"
+                   f"v{QRCODEGEN_VERSION}/c/{name}")
+            print(f"Downloading {name}...", flush=True)
+            with urllib.request.urlopen(url, timeout=90) as response:
+                data = response.read()
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise SystemExit(f"{name} checksum mismatch")
+        contents[name] = data
+    for name, data in contents.items():
+        path = deps / name
+        if not path.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+    return deps / "qrcodegen.c"
 
 
 def mbedtls_tree(fetch: bool) -> Path:
@@ -182,18 +222,45 @@ def make_smdh(bannertool: Path, out: Path) -> Path:
     return smdh
 
 
+def require_romfs(romfs: Path) -> Path:
+    if not romfs.is_dir():
+        raise SystemExit(f"The romfs directory is missing: {romfs}. Create it "
+                         "at the repository root with gfx/logo.png inside.")
+    return romfs.resolve()
+
+
+def pack_command(packer: Path, elf: Path, dest: Path,
+                 smdh: Path | None, romfs: Path | None) -> list[str]:
+    command = [str(packer), str(elf), str(dest)]
+    if smdh is not None:
+        command.append(f"--smdh={smdh}")
+    if romfs is not None:
+        command.append(f"--romfs={romfs}")
+    return command
+
+
+def makerom_command(makerom: Path, elf: Path, smdh: Path, banner: Path,
+                    dest: Path, romfs: Path) -> list[str]:
+    # The RSF reads the romfs root from $(APP_ROMFS): an absolute path, so
+    # it does not depend on the working directory. Forward slashes keep
+    # makerom's YAML parser away from Windows backslashes.
+    return [str(makerom), "-f", "cia", "-o", str(dest),
+            "-target", "t", "-exefslogo",
+            "-elf", str(elf), "-rsf", str(ASSETS / "template.rsf"),
+            "-icon", str(smdh), "-banner", str(banner),
+            f"-DAPP_ROMFS={romfs.as_posix()}"]
+
+
 def make_cia(sdk: Path, bannertool: Path, elf: Path, smdh: Path,
-             out: Path, dest: Path) -> Path:
+             out: Path, dest: Path, romfs: Path) -> Path:
     makerom = require_tool(sdk / "tools" / "bin", "makerom")
     audio = banner_audio(ASSETS / "banner.wav", out / "banner.wav")
     banner = out / "banner.bnr"
     subprocess.run([str(bannertool), "makebanner",
                     "-i", str(ASSETS / "banner.png"), "-a", str(audio),
                     "-o", str(banner)], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run([str(makerom), "-f", "cia", "-o", str(dest),
-                    "-target", "t", "-exefslogo",
-                    "-elf", str(elf), "-rsf", str(ASSETS / "template.rsf"),
-                    "-icon", str(smdh), "-banner", str(banner)], check=True)
+    subprocess.run(makerom_command(makerom, elf, smdh, banner, dest, romfs),
+                   check=True)
     return dest
 
 
@@ -204,7 +271,8 @@ def main():
     ap.add_argument("--devkitpro", "--toolchain", dest="devkitpro", type=Path,
                     help="devkitPro root (not a Melee shim)")
     ap.add_argument("--fetch-deps", action="store_true",
-                    help="download and verify pinned mbedTLS/stb_vorbis dependencies")
+                    help="download and verify pinned mbedTLS/stb_vorbis/qrcodegen "
+                         "dependencies")
     ap.add_argument("--debug", action="store_true", help="-O0 with assertions")
     ap.add_argument("--cia", action="store_true",
                     help="also build an installable .cia (spotify3ds only)")
@@ -220,6 +288,8 @@ def main():
     app = args.app
     if args.cia and app != "spotify3ds":
         raise SystemExit("--cia is only supported for spotify3ds")
+    # Checked before compiling, so a missing romfs fails fast.
+    romfs = require_romfs(ROMFS) if app == "spotify3ds" else None
     srcdirs, defines, mbed, extra_sources = APPS[app]
     sources = []
     for directory in srcdirs:
@@ -227,9 +297,11 @@ def main():
         if not files:
             raise SystemExit(f"No sources under {ROOT / directory}")
         sources.extend((directory, src) for src in files)
+    pinned_sources = {"deps/stb_vorbis.c": stb_vorbis_source,
+                      "deps/qrcodegen.c": qrcodegen_source}
     for rel in extra_sources:
-        path = (stb_vorbis_source(args.fetch_deps)
-                if rel == "deps/stb_vorbis.c" else ROOT / rel)
+        path = (pinned_sources[rel](args.fetch_deps)
+                if rel in pinned_sources else ROOT / rel)
         if not path.is_file():
             raise SystemExit(f"Required source is missing: {path}")
         sources.append((path.parent.name, path))
@@ -271,17 +343,15 @@ def main():
 
     dest = ROOT / "dist" / "3ds" / app / f"{app}.3dsx"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    pack = [str(packer), str(elf), str(dest)]
     bannertool = smdh = None
     if app == "spotify3ds":
         bannertool = require_tool(sdk / "tools" / "bin", "bannertool")
         smdh = make_smdh(bannertool, out)
-        pack.append(f"--smdh={smdh}")
-    subprocess.run(pack, check=True)
+    subprocess.run(pack_command(packer, elf, dest, smdh, romfs), check=True)
     print(f"\nBuilt {dest}  ({dest.stat().st_size:,} bytes)")
     if args.cia:
         cia = make_cia(sdk, bannertool, elf, smdh, out,
-                       dest.with_suffix(".cia"))
+                       dest.with_suffix(".cia"), romfs)
         print(f"Built {cia}  ({cia.stat().st_size:,} bytes)")
         print("Copy it to the SD card and install it with FBI or a similar "
               "CIA installer.")
