@@ -1,6 +1,6 @@
 #include "lang.h"
 
-/* Sin tildes ni enyes: la fuente de la consola de la 3DS es solo ASCII. */
+/* Sin tildes ni enyes: las tablas siguen en ASCII (lang.h). */
 const char *const lang_strings_es[STR_COUNT] = {
 	/* Generico. */
 	[STR_ERROR] = "Error",
@@ -10,13 +10,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_UNKNOWN_ARTIST] = "(artista desconocido)",
 	[STR_NO_VALID_RESPONSE] = "No se recibio una respuesta valida.",
 	[STR_CHECK_SD_SPACE] = "Comprueba el espacio disponible en la tarjeta SD.",
-	[STR_APP_CLOSING] = "La aplicacion se esta cerrando.",
-	[STR_LABEL_CODE] = "Codigo",
-
-	/* Botones. */
-	[STR_KEYS_LANGUAGE] = "SELECT: English",
-	[STR_KEYS_EXIT] = "START: salir",
-	[STR_KEYS_STARTUP_RETRY] = "A: reintentar   Y: emparejar",
 
 	/* Vista de inicio. */
 	[STR_HOME_SEARCH] = "Buscar canciones",
@@ -33,6 +26,8 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_RETRY] = "Reintentar",
 	[STR_HINT_PAUSE] = "Pausa",
 	[STR_HINT_CHOOSE] = "Elegir",
+	[STR_HINT_PAIR] = "Emparejar",
+	[STR_HINT_EXIT] = "Salir",
 
 	/* Pestana de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",
@@ -40,11 +35,8 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_SETTINGS_PAIR] = "Emparejar otra cuenta",
 
 	/* Inicio de sesion. */
-	[STR_LOGIN_TITLE] = "3DSpotify - iniciando sesion directa",
 	[STR_LOGIN_CONNECTING] = "Renovando credenciales y conectando...",
 	[STR_CREDENTIAL_RENEWING] = "Renovando la credencial de Spotify...",
-	[STR_CREDENTIAL_EXPIRED] = "La credencial guardada ha caducado.",
-	[STR_PAIR_AGAIN_NEEDED] = "Se necesita emparejar de nuevo.",
 	[STR_AP_SEARCHING] = "Buscando los access points de Spotify...",
 	[STR_AP_AUTHENTICATING] = "Autenticando con el access point...",
 	[STR_LIBRARY_OPENING] = "Abriendo la sesion de biblioteca...",
@@ -55,7 +47,6 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_INVALID_SERVER_RESPONSE] = "Respuesta de servidor no valida.",
 	[STR_CHECK_WIFI_CONNECTED] = "Comprueba que el Wi-Fi de la consola esta conectado.",
 	[STR_PS_ENTROPY] = "No se pudo habilitar la fuente de aleatoriedad de la consola.",
-	[STR_SESSION_FAILED_TITLE] = "No se pudo iniciar la sesion",
 
 	/* Categorias de error al iniciar. */
 	[STR_CAT_NO_NETWORK] = "No hay servicio de red",
@@ -74,20 +65,20 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_CAT_PAIR_EXPIRED] = "Codigo de emparejamiento caducado",
 	[STR_CAT_PAIR_DENIED] = "Emparejamiento rechazado",
 	[STR_CAT_PAIR_FAILED] = "Fallo de emparejamiento",
-	[STR_CAT_PAIR_INTERRUPTED] = "Emparejamiento interrumpido",
 	[STR_CAT_SAVE_CREDENTIALS] = "No se pudieron guardar las credenciales",
 
 	/* Emparejamiento. */
-	[STR_PAIR_TITLE] = "3DSpotify - emparejamiento",
-	[STR_PAIR_OPEN_URL] = "Abre esta direccion en otro dispositivo:",
-	[STR_PAIR_DIRECT_LINK] = "Enlace directo:",
-	[STR_PAIR_POLL_FMT] = "Comprobando cada %d s. B cancela.",
 	[STR_PAIR_REQUESTING] = "Solicitando un codigo de emparejamiento...",
 	[STR_PAIR_WAITING] = "Esperando autorizacion...",
-	[STR_PAIR_STILL_WAITING] = "Aun esperando autorizacion.",
-	[STR_PAIR_SLOW_DOWN_FMT] = "Spotify pidio esperar mas; nuevo intervalo: %d s.",
 	[STR_PAIR_CREDENTIALS_UNCHANGED] = "No se modificaron las credenciales guardadas.",
 	[STR_PAIR_RETRY_NEW_CODE] = "Vuelve a intentarlo para obtener un codigo nuevo.",
+	[STR_LOGIN_STEP_FMT] = "Paso %d de %d",
+	[STR_PAIR_HEADING] = "Vincula tu cuenta",
+	[STR_PAIR_HEADING_EXPIRED] = "Sesion caducada: vincula tu cuenta de nuevo",
+	[STR_PAIR_YOUR_CODE] = "Tu codigo",
+	[STR_PAIR_INSTRUCTIONS] = "Abrela en el movil o el ordenador, inicia sesion, escribe el codigo y acepta.",
+	[STR_PAIR_QR_BODY] = "Tambien puedes escanear el codigo QR para iniciar sesion.",
+	[STR_PAIR_OFFLINE] = "Sin conexion, reintentando...",
 
 	/* Busqueda. */
 	[STR_SEARCH_HINT] = "Nombre de cancion o artista",

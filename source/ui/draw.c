@@ -72,6 +72,13 @@ void ui_text_wrapped(const C2D_Text *text, int x, int y, float scale,
 	             scale, color, (float)width);
 }
 
+void ui_text_wrapped_centered(const C2D_Text *text, int cx, int y,
+                              float scale, u32 color, int width)
+{
+	C2D_DrawText(text, C2D_WithColor | C2D_WordWrap | C2D_AlignCenter,
+	             cx, y, 0.0f, scale, scale, color, (float)width);
+}
+
 float ui_text_width(const C2D_Text *text, float scale)
 {
 	float width = 0;
@@ -169,11 +176,15 @@ void ui_button(ui_rect r, ui_button_kind kind, ui_control_look look,
 	ui_text(label, x, cy, TXT_CUERPO, ink);
 }
 
-int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color, bool inverted)
+int ui_glyph_width(const C2D_Text *letter)
 {
 	int w = ui_px_ceil(ui_text_width(letter, TXT_META)) + SP_2;
-	if (w < GLYPH_H)
-		w = GLYPH_H;
+	return w < GLYPH_H ? GLYPH_H : w;
+}
+
+int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color, bool inverted)
+{
+	int w = ui_glyph_width(letter);
 	ui_rect r = { x, cy - GLYPH_H / 2, w, GLYPH_H };
 	/* 6.5: inverted, a `tinta` glyph with the letter in the button's
 	 * colour, 1 px lower. */
@@ -192,7 +203,12 @@ void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
 	int x = bar.x + SP_2;
 	for (int i = 0; i < count; i++) {
 		x += ui_glyph(x, cy, hints[i].letter, hints[i].color,
-		              hints[i].inverted) + SP_1;
+		              hints[i].inverted);
+		if (!hints[i].label) {
+			x += SP_3;
+			continue;
+		}
+		x += SP_1;
 		ui_text(hints[i].label, x, cy, TXT_META, COL_TEXTO_2);
 		x += ui_px_ceil(ui_text_width(hints[i].label, TXT_META)) + SP_3;
 	}
@@ -232,10 +248,15 @@ void ui_loader(int cx, int cy, int step)
 
 void ui_spinner(int cx, int cy, int step)
 {
-	int lit = spinner_lit(step);
-	int trail = spinner_lit(step - 1);
 	/* citro2d blends by alpha: the backdrop lets the screen show through. */
 	ui_fill(spinner_backdrop_rect(cx, cy), SCRIM_COLOR);
+	ui_spinner_ring(cx, cy, step);
+}
+
+void ui_spinner_ring(int cx, int cy, int step)
+{
+	int lit = spinner_lit(step);
+	int trail = spinner_lit(step - 1);
 	for (int i = 0; i < SPINNER_CELLS; i++) {
 		u32 fill = i == lit ? COL_CLOROFILA
 		         : i == trail ? COL_MUSGO : COL_CAPA_ALTA;

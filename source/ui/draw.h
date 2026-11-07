@@ -55,6 +55,8 @@ float ui_button_content_width(const C2D_Text *label, bool icon);
  * on `cy`. `inverted` while the button is held (6.5). Returns its width. */
 int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color,
              bool inverted);
+/* The width ui_glyph() will take for `letter`. */
+int ui_glyph_width(const C2D_Text *letter);
 
 /* One action of the button bar: the button's glyph and what it does. */
 typedef struct {
@@ -65,7 +67,8 @@ typedef struct {
 } ui_hint;
 
 /* The button bar (5.6): a `capa` panel with up to four actions, left to
- * right from the margin. */
+ * right from the margin. An action whose label is NULL shows its glyph
+ * alone, for a bar that would not fit otherwise. */
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count);
 
 /* A progress (5.4) or volume (5.5) bar in `r`: 1 px `tinta` outline,
@@ -85,6 +88,9 @@ void ui_loader(int cx, int cy, int step);
  * square blocks whose lit block moves clockwise, on a translucent grey
  * square; `step` advances every LOADER_STEP frames. */
 void ui_spinner(int cx, int cy, int step);
+/* The ring alone, for a flat background with nothing to veil: the login
+ * screens (feature_plan.md, decision 1). */
+void ui_spinner_ring(int cx, int cy, int step);
 
 /* A notice (5.8): raised `coral` (error) or `ambar` (warning) surface with
  * an icon, a title and an explanation that wraps inside it, all `tinta`. */
@@ -115,6 +121,9 @@ float ui_text_width(const C2D_Text *text, float scale);
  * `y`. */
 void ui_text_wrapped(const C2D_Text *text, int x, int y, float scale,
                      u32 color, int width);
+/* The same, every line centred on `cx`. Single-message screens (3.3). */
+void ui_text_wrapped_centered(const C2D_Text *text, int cx, int y,
+                              float scale, u32 color, int width);
 /* Height of one line of the system font at `scale`, in whole pixels. */
 int ui_line_height(float scale);
 

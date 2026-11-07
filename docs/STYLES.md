@@ -76,6 +76,8 @@ Todos los colores son opacos (alfa 255).
 | `capa`                                  | `texto`, `texto_2`, `texto_off`, `clorofila`, `lima` |
 | `capa_alta`                             | `texto`, `texto_2`                      |
 | `clorofila`, `musgo`, `lima`, `coral`, `coral_osc`, `ambar`, glifos A/B/X/Y | `tinta` |
+| `texto`: solo el código QR (§5.13)      | `tinta`                                 |
+| `texto_2`: solo los glifos START y SELECT (§5.6) | `tinta`                        |
 
 Todas las combinaciones de la tabla tienen un contraste ≥ 4.5:1, también en estado pulsado
 (`musgo`, `capa` y `coral_osc` con su texto). Cualquier otra combinación está prohibida.
@@ -87,7 +89,11 @@ Todas las combinaciones de la tabla tienen un contraste ≥ 4.5:1, también en e
 - No usar transparencias ni mezclas alfa en ningún elemento. Excepciones: el logotipo
   (`romfs/gfx/logo.png`) se dibuja con su propio canal alfa, y el spinner de descarga de la
   pantalla superior va sobre un velo gris `#404040` al ~70 % de opacidad (`SCRIM_*` en
-  `theme.h`), 8 px más grande que el spinner por cada lado.
+  `theme.h`), 8 px más grande que el spinner por cada lado. En las pantallas de arranque
+  (§7.2) el spinner va sin velo, porque no hay nada debajo que tapar.
+- `texto` no se usa como relleno, salvo en el código QR (§5.13): un QR necesita módulos
+  oscuros sobre fondo claro para que lo lea una cámara, y es la única superficie blanca de la
+  aplicación.
 - No usar `#1DB954` ni `#1ED760`.
 
 ---
@@ -231,8 +237,9 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
   `tinta`.
 - Cada acción: glifo + etiqueta `t_meta` · `texto_2`.
 - Glifo: rectángulo de 14 px de alto, relleno con el color del botón (§2.5), contorno 1 px
-  `tinta`, letra en `tinta`.
-- Máximo cuatro acciones.
+  `tinta`, letra en `tinta`. START y SELECT no tienen color propio: relleno `texto_2`.
+- Máximo cuatro acciones. Si no caben en el ancho, se quitan etiquetas desde la última y
+  quedan solo sus glifos.
 
 ```
  [A] Pausa   [◀▶] Pista   [▲▼] Vol.   [SELECT] Idioma
@@ -327,6 +334,23 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
   La pestaña nueva se activa en el mismo frame y muestra el estado pulsado.
 - No da la vuelta: en la primera y la última pestaña, el botón hacia fuera no hace nada.
 - Se dibuja después de la vista: las filas arrastradas pasan por debajo.
+
+### 5.13 Código QR
+
+- Módulos `tinta` sobre un cuadrado `texto` (excepción de §2.6 y §2.7), con contorno 1 px
+  `tinta` y sombra dura (§4.3). Sin logotipo en el centro: no se sacrifica corrección de
+  errores por decoración.
+- Zona tranquila de 4 módulos por cada lado, dentro del cuadrado blanco.
+- Escala entera: cada módulo mide un número exacto de píxeles, nunca se reescala.
+  - Caja de 148×148 px (`LOGIN_QR_BOX`): 37 módulos × 4 px, es decir, la versión 3 del código
+    (29 módulos) más la zona tranquila.
+  - Escala mínima de 3 px por módulo (`LOGIN_QR_MIN_SCALE`). Una URL que no quepa a esa escala
+    no se muestra como QR, solo como texto.
+- Corrección de errores: la más alta que quepa en la versión más pequeña que admite la URL.
+- Se codifica una vez por URL (`qrcodegen`, `source/deps/`) y se pinta por tramos: un
+  `C2D_DrawRectSolid` por cada racha horizontal de módulos oscuros.
+- Solo lleva la URL de verificación con el código de usuario, nunca el código de dispositivo,
+  que es secreto.
 
 ---
 
@@ -438,27 +462,97 @@ Ambas pantallas: degradado vertical `fondo_sup` → `fondo_inf` a pantalla compl
 
 ### 7.2 Arranque / sesión
 
+Conectando:
+
 ```
  SUPERIOR 400×240                          INFERIOR 320×240
  ┌────────────────────────────────┐        ┌──────────────────────────┐
  │                                │        │                          │
- │          [logotipo]            │        │  Renovando credenciales  │
- │                                │        │  y conectando...         │
- │          (indicador)           │        │                          │
- │                                │        │──────────────────────────│
- └────────────────────────────────┘        │ [A] Reintentar [Y] Empar.│
+ │          [logotipo]            │        │  Autenticando con el     │ t_cuerpo · texto
+ │          (cy 96)               │        │  access point...         │
+ │                                │        │       Paso 3 de 5        │ t_meta · texto_2
+ │            ▣ ▣ ▣               │        │                          │
+ │            ▣   ▣  (cy 196)     │        │──────────────────────────│
+ │            ▣ ▣ ▣               │        │ [SELECT] English         │
+ └────────────────────────────────┘        └──────────────────────────┘
+```
+
+- Superior: logotipo centrado en y 96 y, debajo, el spinner de anillo (`ui_spinner_ring`)
+  centrado en y 196, sin velo (§2.7). Es el mismo spinner que la descarga de una pista, para
+  que «cargando» se vea igual en toda la aplicación.
+- Inferior: la etapa actual en `t_cuerpo` · `texto` y «Paso n de N» en `t_meta` · `texto_2`,
+  centrados (pantalla de un único mensaje, §3.3). Son 5 pasos con la credencial guardada y 6
+  si hay que emparejar.
+- Solo se redibuja cuando avanza el spinner (cada `LOADER_STEP` frames) o cuando cambia la
+  etapa o el idioma.
+- La sesión arranca en un hilo de trabajo: la pantalla sigue animándose y respondiendo a
+  SELECT durante los handshakes TLS.
+
+Error:
+
+```
+ SUPERIOR 400×240                          INFERIOR 320×240
+ ┌────────────────────────────────┐        ┌──────────────────────────┐
+ │                                │        │ ┌──────────────────────┐ │
+ │          [logotipo]            │        │ │ ! Categoria          │ │ aviso coral (§5.8)
+ │                                │        │ │ Detalle del error,   │ │
+ │            ┌─────┐             │        │ │ ajustado.            │ │
+ │            │  !  │  coral      │        │ └──────────────────────┘ │
+ │            └─────┘             │        │ [ Reintentar ][Emparejar]│ 32 px
+ └────────────────────────────────┘        │──────────────────────────│
+                                           │ [A] Reintentar [Y] Empar.│
                                            └──────────────────────────┘
 ```
 
-- Superior: logotipo y, debajo, indicador de carga, centrados.
-- Inferior: paso actual en `t_cuerpo` · `texto`, centrado.
-- Al fallar: sustituir el indicador por el icono de error y mostrar un aviso abajo.
+- Superior: el spinner se sustituye por un cuadrado en relieve `coral` del mismo tamaño
+  (44 px) con el icono de error en `tinta`.
+- Inferior: un aviso de error (§5.8) a todo el ancho útil, con la categoría como título y el
+  detalle como cuerpo ajustado. El aviso crece con el texto hasta el espacio disponible.
+- Debajo, dos botones de 32 px en una fila: **Reintentar** (primario) y **Emparejar**
+  (secundario), separados por `e4`. La cruceta mueve el foco entre ellos y el táctil los activa
+  al levantar el lápiz.
+- Barra de botones: `[A]` pulsa el botón con el foco y su etiqueta dice cuál, `[Y]` empareja,
+  `[START]` sale y `[SELECT]` cambia de idioma. Si la barra no cabe, se quitan etiquetas
+  desde la última y quedan solo los glifos (en español pierden la etiqueta START y SELECT).
+- Error fatal (sin red: `socInit`, `psInit` o TLS): sin botones; la barra solo tiene START y
+  SELECT.
 
 ### 7.3 Emparejamiento
 
-- Superior: código en `t_titulo` × 1.5 · `texto` dentro de un panel `capa` centrado; URL
-  debajo, dentro del mismo panel, en `t_cuerpo` · `lima`.
-- Inferior: estado del sondeo y barra de botones con B.
+```
+ SUPERIOR 400×240
+ ┌──────────────────────────────────────┐
+ │          Vincula tu cuenta           │ t_cabeza · texto, centrado
+ │ ┌──────────────────────────────────┐ │ panel capa, x 12..388
+ │ │            Tu codigo             │ │ t_meta · texto_2
+ │ │              JDDHV3              │ │ t_titulo × 1.5 · texto
+ │ │         spotify.com/pair         │ │ t_cabeza · lima
+ │ │  Abrela en el movil o el         │ │ t_cuerpo · texto_2, centrado
+ │ │  ordenador, inicia sesion,       │ │
+ │ │  escribe el codigo y acepta.     │ │
+ │ └──────────────────────────────────┘ │
+ └──────────────────────────────────────┘
+
+ INFERIOR 320×240
+ ┌──────────────────────────────┐
+ │ ┌────────────┐ Tambien puedes│ t_cuerpo · texto, ajustado a 144 px
+ │ │ ▀▄█▀▄ ▄▀█▄ │ escanear el   │
+ │ │ █▄▀ QR ▄▀█ │ codigo QR para│
+ │ │ ▄▀█▄▀▄█▀▄▀ │ iniciar sesion│
+ │ └────────────┘ ▮▮▮ Esperando │ indicador §5.7 + t_meta · texto_2
+ │──────────────────────────────│
+ │ [B] Cancelar [SELECT] English│
+ └──────────────────────────────┘
+```
+
+- Superior: el código grande es la vía principal. La URL corta sale de `verification_uri`
+  quitando el esquema y el `www.`, y va en `lima` dentro del panel `capa` (§2.6).
+- Si la credencial guardada caducó, el título pasa a «Sesion caducada: vincula tu cuenta de
+  nuevo».
+- Inferior: el QR (§5.13) en x 8, y 34, centrado en la altura útil, y a la derecha una frase y
+  el estado del sondeo con el indicador de carga. Si un sondeo no llega a Spotify, el estado
+  pasa a «Sin conexion, reintentando...».
+- B cancela el emparejamiento sin tocar la credencial guardada y lleva a la pantalla de error.
 
 ### 7.4 Resultados
 

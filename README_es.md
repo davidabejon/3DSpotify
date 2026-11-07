@@ -28,7 +28,8 @@ python source\build.py --fetch-deps
 ```
 
 El target predeterminado y único cliente completo es `spotify3ds`. La descarga
-fija y verifica mbedTLS 3.6.7 y `stb_vorbis`; también genera la cabecera de
+fija y verifica mbedTLS 3.6.7, `stb_vorbis` y `qrcodegen` 1.8.0 (el código QR
+del emparejamiento); también genera la cabecera de
 Vorbis desde esa misma fuente verificada. Tras descargar las dependencias, se
 puede compilar sin `--fetch-deps`.
 
@@ -76,10 +77,33 @@ texto.
 
 El target inicia la sesión directa: renueva la credencial guardada, permite
 emparejar si hace falta y comprueba la conexión al access point y a la sesión
-de biblioteca. Si no hay una credencial guardada, sigue el código de
-emparejamiento que aparece en la consola desde otro dispositivo y autoriza la
-cuenta en Spotify. El refresh token se guarda en la SD para los siguientes
+de biblioteca. El refresh token se guarda en la SD para los siguientes
 arranques.
+
+### Inicio de sesión
+
+Mientras conecta, la pantalla superior muestra el logo y un spinner, y la
+inferior el paso actual («Paso n de N»). **SELECT** cambia el idioma en todas
+las pantallas de inicio de sesión.
+
+Si no hay una credencial guardada, o ha caducado, la consola pide vincular la
+cuenta:
+
+- **Escribe el código:** abre `spotify.com/pair` en el móvil o el ordenador,
+  inicia sesión, escribe el código de la pantalla superior y acepta.
+- **O escanea el código QR** de la pantalla inferior: abre la misma página con
+  el código ya escrito.
+- **B** cancela el emparejamiento sin tocar la credencial guardada.
+
+Si la sesión no puede iniciarse, la pantalla inferior explica por qué:
+
+- **A** (o el botón **Reintentar**) vuelve a intentarlo con la credencial
+  guardada. **A** pulsa el botón que tenga el foco; izquierda/derecha lo mueve.
+- **Y** (o el botón **Emparejar**) empareja de nuevo con un código nuevo.
+- **START** sale.
+
+Sin red (Wi-Fi apagado, o un fallo al preparar la red o TLS de la consola),
+solo quedan **START** y **SELECT**.
 
 ### Pestañas
 

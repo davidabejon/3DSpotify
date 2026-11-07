@@ -143,9 +143,13 @@ class BuildTests(unittest.TestCase):
         ui_dir = build.ROOT / "ui"
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
         artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
-        for name in ("ui.c", "ui.h", "textscreen.c", "textscreen.h",
-                     "image_util.h", "worker_priority.h"):
+        for name in ("ui.c", "ui.h", "image_util.h", "worker_priority.h"):
             self.assertTrue((ui_dir / name).is_file(), name)
+        # The 40-column text screen is gone: every screen is a view.
+        for name in ("textscreen.c", "textscreen.h"):
+            self.assertFalse((ui_dir / name).exists(), name)
+        self.assertNotIn("textscreen", app)
+        self.assertNotIn("VIEW_TEXT", app)
         # No libctru console and no direct framebuffer writes: a console and
         # a citro3d target cannot share a screen.
         for source in (app, artwork):
@@ -160,9 +164,8 @@ class BuildTests(unittest.TestCase):
                         app.index("ui_exit();", app.index("done:")))
         # Render on demand: a GPU frame only when something changed.
         frame = app[app.index("static void frame(void)"):
-                    app.index("static void show_progress(")]
-        self.assertIn("textscreen_dirty()", frame)
-        self.assertIn("artwork_dirty(&cover_art)", frame)
+                    app.index("/* --- Search ---")]
+        self.assertIn("view_login_dirty()", frame)
         self.assertIn("gspWaitForVBlank();", frame)
         # Workers that can overlap playback stay below the decoder.
         self.assertIn("background_priority()", artwork)
@@ -187,7 +190,7 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("#include <citro", source)
         # The home view joins the on-demand render: a frame only when dirty.
         frame = app[app.index("static void frame(void)"):
-                    app.index("static void show_progress(")]
+                    app.index("/* --- Search ---")]
         self.assertIn("view_home_dirty()", frame)
         self.assertIn("view_home_draw_bottom()", frame)
         # The repeat button runs the last query without the keyboard, and a
@@ -290,7 +293,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn("ICON_NOTE", draw)
         # On-demand render and view switching.
         frame = app[app.index("static void frame(void)"):
-                    app.index("static void show_progress(")]
+                    app.index("/* --- Search ---")]
         self.assertIn("view_results_dirty()", frame)
         self.assertIn("view_results_draw_bottom()", frame)
         self.assertIn("view_results_init()", app)
@@ -512,7 +515,7 @@ class BuildTests(unittest.TestCase):
         # 9: the player only costs frames on its own tab, and the download
         # share follows the clock.
         frame = app[app.index("static void frame(void)"):
-                    app.index("static void show_progress(")]
+                    app.index("/* --- Search ---")]
         self.assertIn("changed |= view_player_dirty()", frame)
         self.assertIn("tabbar_draw();", frame)
         self.assertIn("player_sample_download(&download, tick,", player)
@@ -643,16 +646,132 @@ class BuildTests(unittest.TestCase):
         theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
         self.assertIn("ART_BIG = 216", theme)
 
+    def test_session_start_up_runs_in_a_worker(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        # One global job, never on a stack: the worker holds its address.
+        self.assertIn("static session_job login;", app)
+        self.assertIn("#define SESSION_STACK (64 * 1024)", app)
+        self.assertIn("threadCreate(session_worker, NULL, SESSION_STACK,\n"
+                      "\t                            background_priority()",
+                      app)
+        # The worker's large locals live off its stack.
+        for name in ("static spotify_tokens login_tokens;",
+                     "static pair_request login_request;",
+                     "static ap_info login_ap;",
+                     "static login5_token login_library;"):
+            self.assertIn(name, app)
+        # What runs in the worker never draws nor reads the buttons.
+        worker = app[app.index("static bool pair_account("):
+                     app.index("static void session_worker(")]
+        for main_only in ("frame()", "hidScanInput", "hidKeysDown",
+                          "textscreen_", "show_progress", "aptMainLoop"):
+            self.assertNotIn(main_only, worker)
+        self.assertIn("session_stage(STR_AP_AUTHENTICATING);", worker)
+        # The wait between polls notices a cancel within a slice.
+        pair = app[app.index("static bool pair_account("):
+                   app.index("static bool resolve_and_login(")]
+        self.assertIn("session_wait(interval)", pair)
+        self.assertIn("secure_clear(req, sizeof(*req));", pair)
+        # A cancel that races an approval saves nothing.
+        self.assertLess(pair.index("if (login.cancel) {"),
+                        pair.index("cfg_save_refresh_token("))
+        # The device code is secret: it never reaches the screen's copy.
+        shared = app[app.index("typedef struct {\n\tbool force_pair;"):
+                     app.index("static session_job login;")]
+        self.assertNotIn("device_code", shared)
+        publish = app[app.index("static void pair_publish("):
+                      app.index("static void pair_snapshot(")]
+        self.assertNotIn("device_code", publish)
+        self.assertIn("LightLock_Lock(&login.lock);", publish)
+        # Cancelling is stop_tabs()'s pattern: abort, join, un-abort.
+        cancel = app[app.index("static void session_cancel(void)"):
+                     app.index("typedef enum {\n\tLOGIN_READY")]
+        self.assertLess(cancel.index("tls_set_abort(true);"),
+                        cancel.index("threadJoin(login.thread"))
+        self.assertLess(cancel.index("threadFree(login.thread);"),
+                        cancel.index("tls_set_abort(false);"))
+        # The main thread keeps drawing; B cancels only a pairing, and
+        # closing the app cancels whatever runs.
+        loop = app[app.index("static login_result run_login("):
+                   app.index("static login_action run_error(")]
+        self.assertIn("while (!login.done)", loop)
+        self.assertIn("frame();", loop)
+        self.assertIn("action == LOGIN_ACTION_CANCEL && login.pairing", loop)
+        self.assertLess(loop.index("if (!aptMainLoop()) {"),
+                        loop.index("return LOGIN_QUIT;"))
+        self.assertIn("session_cancel();", loop)
+        self.assertIn("run_login(force_pair, &session, &error)", app)
+        # The 90-frame "credential expired" screen is gone: the worker
+        # goes straight to pairing and says why.
+        self.assertNotIn("i < 90", app)
+        self.assertIn("login.reason_expired = true;", app)
+
+    def test_login_view_owns_both_screens_before_the_session(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        view = (ui_dir / "view_login.c").read_text(encoding="utf-8")
+        for name in ("view_login.c", "view_login.h", "login_logic.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        # Pure logic stays free of 3DS headers for the host tests.
+        logic = (ui_dir / "login_logic.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", logic)
+        self.assertNotIn("#include <citro", logic)
+        # On-demand render: the view joins frame() for both screens.
+        frame = app[app.index("static void frame(void)"):
+                    app.index("/* --- Search ---")]
+        self.assertIn("changed = view_login_dirty();", frame)
+        self.assertIn("view_login_draw_top();", frame)
+        self.assertIn("view_login_draw_bottom();", frame)
+        self.assertIn("!view_login_init()", app)
+        done = app.index("done:")
+        self.assertLess(app.index("view_login_exit();", done),
+                        app.index("ui_exit();", done))
+        # Connecting, pairing and both errors are the view's, not text.
+        self.assertIn("active_view = VIEW_LOGIN;", app)
+        for gone in ("show_error(", "show_pair_screen(", "show_progress(",
+                     "language_toggled("):
+            self.assertNotIn(gone, app)
+        self.assertIn("run_error(&error, true);", app)
+        # Style guide 6: presses show, touch acts on lift, and actions wait
+        # for their press; the spinner animates without a veil (7.2).
+        self.assertIn("press_shown(pending_press)", view)
+        self.assertIn("touch_track_update(", view)
+        self.assertIn("ui_spinner_ring(", view)
+        self.assertNotIn("ui_spinner(", view)
+        self.assertIn("anim_frames / LOADER_STEP", view)
+        # The QR: encoded once per URL, drawn in runs, `tinta` on `texto`;
+        # the secret device code never reaches the view.
+        self.assertIn("if (strcmp(qr_encoded, qr_url) == 0)", view)
+        self.assertIn("qrcodegen_encodeText(", view)
+        self.assertNotIn("qrcodegen_encodeText(", view[
+            view.index("void view_login_draw_bottom(void)"):])
+        self.assertIn("ui_fill(box, COL_TEXTO);", view)
+        self.assertIn("ui_fill(run, COL_TINTA);", view)
+        self.assertNotIn("device_code", view)
+        self.assertNotIn("device_code",
+                         (ui_dir / "view_login.h").read_text(encoding="utf-8"))
+        # The URL in `lima` is only allowed on `capa` (2.6): inside the
+        # panel, drawn after it.
+        top = view[view.index("static void draw_pair_top(void)"):
+                   view.index("void view_login_draw_top(void)")]
+        self.assertLess(top.index("ui_panel(panel);"), top.index("COL_LIMA"))
+        # One primary button per screen (5.2).
+        self.assertEqual(view.count("UI_BUTTON_PRIMARY"), 1)
+        # The fatal error only exits: no buttons to retry or pair.
+        self.assertIn("case LOGIN_FATAL:", view)
+        self.assertIn("if (!buttons)\n\t\treturn;", view)
+
     def test_top_screen_is_composed_by_top(self):
         ui_dir = build.ROOT / "ui"
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
         frame = app[app.index("static void frame(void)"):
-                    app.index("static void show_progress(")]
-        # One compositor for the tabs; the text screens keep the artwork.
+                    app.index("/* --- Search ---")]
+        # One compositor for the tabs; before the session, the login view.
         self.assertIn("top_set(&info);", frame)
         self.assertIn("top_dirty(active_tab, &cover_art)", frame)
         self.assertIn("top_draw(active_tab, &cover_art);", frame)
-        self.assertIn("artwork_draw(&cover_art);", frame)
+        self.assertIn("view_login_draw_top();", frame)
+        self.assertNotIn("artwork_draw(", app)
         self.assertNotIn("view_player_dirty() || artwork_dirty", frame)
         for gone in ("view_home_draw_top", "view_results_draw_top",
                      "view_settings_draw_top"):
@@ -748,7 +867,7 @@ class BuildTests(unittest.TestCase):
         # before the app frees TLS and the sockets: one left running would
         # use them freed (it crashed the console on START).
         tabs_stop = app[app.index("static void stop_tabs(void)"):
-                        app.index("static void show_pair_screen(")]
+                        app.index("/* --- Session start-up")]
         for wait in ("player_stop();", "search_stop();", "thumbs_wait();"):
             self.assertIn(wait, tabs_stop)
         self.assertNotIn("thumbs_stop();", tabs_stop)
@@ -799,7 +918,12 @@ class BuildTests(unittest.TestCase):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
         self.assertIn('#include "lang.h"', app)
         self.assertIn("language_init();", app)
-        self.assertIn("down & KEY_SELECT", app)
+        # SELECT: in the tabs' views and in the login view, which hands it
+        # back to main.c to switch.
+        login = (build.ROOT / "ui" / "view_login.c").read_text(encoding="utf-8")
+        self.assertIn("down & KEY_SELECT", login)
+        self.assertIn("if (action == LOGIN_ACTION_LANGUAGE)\n"
+                      "\t\t\tswitch_language();", app)
         self.assertIn('cfg_set("language", lang_code(lang_get()))', app)
         for spanish in ("Reproduccion local", "Resultados de Spotify",
                         "Sesion Spotify lista", "emparejamiento"):
@@ -831,6 +955,65 @@ class BuildTests(unittest.TestCase):
                               return_value=io.BytesIO(b"corrupt")):
                 with self.assertRaisesRegex(SystemExit, "checksum mismatch"):
                     build.stb_vorbis_source(True)
+        self.assertFalse((self.root / "deps").exists())
+
+    def test_qrcodegen_is_pinned_and_built_without_warnings(self):
+        _, _, _, extra_sources = build.APPS["spotify3ds"]
+        self.assertIn("deps/qrcodegen.c", extra_sources)
+        # The committed copies are the pinned ones, so an offline build works.
+        source = build.qrcodegen_source(False)
+        self.assertEqual(source, build.ROOT / "deps" / "qrcodegen.c")
+        self.assertTrue((build.ROOT / "deps" / "qrcodegen.h").is_file())
+        # A CRLF checkout would change the bytes the checksum pins.
+        attributes = (build.ROOT.parent / ".gitattributes").read_text(
+            encoding="utf-8")
+        self.assertIn("source/deps/*.c -text", attributes)
+        self.assertIn("source/deps/*.h -text", attributes)
+        notice = (build.ROOT.parent / "NOTICE").read_text(encoding="utf-8")
+        self.assertIn("QR-Code-generator", notice)
+
+    def test_missing_qrcodegen_offline_has_actionable_error(self):
+        with patch.object(build, "ROOT", self.root):
+            with self.assertRaisesRegex(SystemExit, "--fetch-deps"):
+                build.qrcodegen_source(False)
+
+    def test_local_qrcodegen_must_match_pinned_checksum(self):
+        deps = self.root / "deps"
+        deps.mkdir()
+        (deps / "qrcodegen.c").write_bytes(b"modified source")
+        with patch.object(build, "ROOT", self.root):
+            with self.assertRaisesRegex(SystemExit, "qrcodegen.c checksum"):
+                build.qrcodegen_source(False)
+
+    def test_qrcodegen_download_is_verified(self):
+        files = {"qrcodegen.c": b"/* impl */", "qrcodegen.h": b"/* api */"}
+        def answer(url, timeout):
+            return io.BytesIO(files[url.rsplit("/", 1)[1]])
+        with patch.object(build, "ROOT", self.root):
+            with patch.multiple(
+                    build,
+                    QRCODEGEN_SHA256_C=hashlib.sha256(files["qrcodegen.c"]).hexdigest(),
+                    QRCODEGEN_SHA256_H=hashlib.sha256(files["qrcodegen.h"]).hexdigest()):
+                with patch.object(build.urllib.request, "urlopen",
+                                  side_effect=answer) as fetch:
+                    source = build.qrcodegen_source(True)
+        self.assertEqual(source.read_bytes(), files["qrcodegen.c"])
+        self.assertEqual((self.root / "deps" / "qrcodegen.h").read_bytes(),
+                         files["qrcodegen.h"])
+        for call in fetch.call_args_list:
+            self.assertIn(f"/v{build.QRCODEGEN_VERSION}/c/", call.args[0])
+
+    def test_qrcodegen_download_writes_nothing_unless_both_match(self):
+        payload = b"/* impl */"
+        with patch.object(build, "ROOT", self.root):
+            with patch.object(build, "QRCODEGEN_SHA256_C",
+                              hashlib.sha256(payload).hexdigest()):
+                with patch.object(build.urllib.request, "urlopen",
+                                  side_effect=lambda url, timeout:
+                                  io.BytesIO(payload)):
+                    with self.assertRaisesRegex(SystemExit,
+                                                "qrcodegen.h checksum"):
+                        build.qrcodegen_source(True)
         self.assertFalse((self.root / "deps").exists())
 
     def test_missing_mbedtls_offline_has_actionable_error(self):

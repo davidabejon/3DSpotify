@@ -17,13 +17,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "../../include/stb_image.h"
 
-#define TOP_WIDTH 400.0f
-#define TOP_HEIGHT 240.0f
-/* The cover's box on the top screen, and the white frame around it. */
-#define ART_MAX_WIDTH 372.0f
-#define ART_MAX_HEIGHT 212.0f
-#define ART_BORDER 4.0f
-
 #define TEXEL_BYTES ((size_t)ARTWORK_TEX_SIZE * ARTWORK_TEX_SIZE * 4)
 
 /* Pure CPU work only: no citro3d and no linearAlloc off the main thread. */
@@ -170,29 +163,6 @@ void artwork_poll(artwork_state *artwork)
 bool artwork_dirty(const artwork_state *artwork)
 {
 	return artwork->dirty;
-}
-
-void artwork_draw(artwork_state *artwork)
-{
-	artwork->dirty = false;
-	if (!artwork->has_texture)
-		return;
-
-	float width = artwork->subtex.width;
-	float height = artwork->subtex.height;
-	float scale_x = ART_MAX_WIDTH / width;
-	float scale_y = ART_MAX_HEIGHT / height;
-	float scale = scale_x < scale_y ? scale_x : scale_y;
-	float shown_width = width * scale;
-	float shown_height = height * scale;
-	float x = (TOP_WIDTH - shown_width) / 2.0f;
-	float y = (TOP_HEIGHT - shown_height) / 2.0f;
-	C2D_DrawRectSolid(x - ART_BORDER, y - ART_BORDER, 0,
-	                  shown_width + 2 * ART_BORDER,
-	                  shown_height + 2 * ART_BORDER,
-	                  COL_TEXTO);
-	C2D_Image image = { &artwork->tex, &artwork->subtex };
-	C2D_DrawImageAt(image, x, y, 0, NULL, scale, scale);
 }
 
 void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow)

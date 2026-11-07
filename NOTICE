@@ -20,3 +20,13 @@ originate from that project and have been modified for 3DSpotify:
   - source/build.py
 
 All credit for the original work in those files goes to ohquebacan.
+
+This project includes the QR Code generator library (C), version 1.8.0,
+by Project Nayuki (https://github.com/nayuki/QR-Code-generator), used to draw
+the pairing QR code. It is distributed under the MIT License, whose text is
+kept at the top of each file:
+
+  - source/deps/qrcodegen.c
+  - source/deps/qrcodegen.h
+
+Copyright (c) Project Nayuki.

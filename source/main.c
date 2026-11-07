@@ -11,6 +11,7 @@
 #include "cfg3ds.h"
 #include "icons.h"
 #include "lang.h"
+#include "login_logic.h"
 #include "login5.h"
 #include "logo.h"
 #include "pair3ds.h"
@@ -18,13 +19,13 @@
 #include "power_logic.h"
 #include "spclient.h"
 #include "tabbar.h"
-#include "textscreen.h"
 #include "thumbs.h"
 #include "track.h"
 #include "tls3ds.h"
 #include "top.h"
 #include "ui.h"
 #include "view_home.h"
+#include "view_login.h"
 #include "view_player.h"
 #include "view_results.h"
 #include "view_settings.h"
@@ -87,11 +88,10 @@ static float playback_volume = 0.7f;
 static artwork_state cover_art;
 /* The last confirmed query, for the home view's repeat button. */
 static char home_query[SEARCH_QUERY_SIZE];
-/* Who owns the screens: the text screen (bottom) and the artwork (top)
- * for the session start-up, pairing and errors; the tabs once the session
- * is up. */
-typedef enum { VIEW_TEXT, VIEW_TABS } screen_view;
-static screen_view active_view = VIEW_TEXT;
+/* Who owns the screens: the login view for the session start-up, pairing
+ * and errors; the tabs once the session is up. */
+typedef enum { VIEW_LOGIN, VIEW_TABS } screen_view;
+static screen_view active_view = VIEW_LOGIN;
 static app_tab active_tab = TAB_HOME;
 /* An applet (the keyboard) drew over both screens. */
 static bool screens_lost;
@@ -157,16 +157,6 @@ static void switch_language(void)
 {
 	lang_set(lang_next(lang_get()));
 	cfg_set("language", lang_code(lang_get()));
-}
-
-/* The text screens: SELECT switches the language. Returns true when the
- * caller has to redraw its screen. */
-static bool language_toggled(u32 down)
-{
-	if (!(down & KEY_SELECT))
-		return false;
-	switch_language();
-	return true;
 }
 
 static void download_worker(void *arg)
@@ -950,8 +940,8 @@ static player_info player_snapshot(void)
  * With the tabs, top.h draws the top screen (logo, card or big cover, and
  * the search bubble), the active tab's view draws the bottom one and the
  * tab bar goes over it; the artwork's own changes only count while the
- * cover is on screen, and switching tabs always repaints. The text screens
- * keep the artwork on top, as before. */
+ * cover is on screen, and switching tabs always repaints. Before the
+ * session, view_login.h draws both screens. */
 /* Called every frame: keeps the console awake while music is due, and
  * darkens the screens while the lid is shut over it. */
 static void power_poll(void)
@@ -983,7 +973,7 @@ static void power_poll(void)
 
 static void frame(void)
 {
-	/* 0: the text screen; 1 + tab: that tab. */
+	/* 0: the login view; 1 + tab: that tab. */
 	static int drawn_screen = -1;
 	artwork_poll(&cover_art);
 	power_poll();
@@ -999,7 +989,7 @@ static void frame(void)
 	int screen = tabs ? 1 + (int)active_tab : 0;
 	bool changed;
 	if (!tabs) {
-		changed = artwork_dirty(&cover_art) || textscreen_dirty();
+		changed = view_login_dirty();
 	} else {
 		player_info info = player_snapshot();
 		view_player_set(&info);
@@ -1027,12 +1017,12 @@ static void frame(void)
 	ui_begin();
 	ui_scene(GFX_TOP);
 	if (!tabs)
-		artwork_draw(&cover_art);
+		view_login_draw_top();
 	else
 		top_draw(active_tab, &cover_art);
 	ui_scene(GFX_BOTTOM);
 	if (!tabs) {
-		textscreen_draw();
+		view_login_draw_bottom();
 	} else {
 		switch (active_tab) {
 		case TAB_HOME:
@@ -1052,13 +1042,6 @@ static void frame(void)
 	}
 	ui_end();
 	drawn_screen = screen;
-}
-
-static void show_progress(const char *message)
-{
-	textscreen_clear();
-	textscreen_printf("%s\n\n%s\n", tr(STR_LOGIN_TITLE), message);
-	frame();
 }
 
 /* --- Search ------------------------------------------------------------ */
@@ -1198,7 +1181,6 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 		memcpy(query, typed, sizeof(typed));
 	/* The keyboard applet takes over both screens. */
 	artwork_invalidate(&cover_art);
-	textscreen_invalidate();
 	screens_lost = true;
 	return confirmed;
 }
@@ -1406,94 +1388,169 @@ static void stop_tabs(void)
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();
 	tls_set_abort(false);
-	active_view = VIEW_TEXT;
+	active_view = VIEW_LOGIN;
 }
 
-static void show_pair_screen(const pair_request *req, int interval,
-                             const char *status)
+/* --- Session start-up ---------------------------------------------------- */
+
+/* The start-up runs in a worker so the main thread keeps drawing and reading
+ * the buttons while it blocks in TLS handshakes for seconds at a time. The
+ * worker never touches the screens: it publishes how far it got, and the
+ * main thread draws that. One at a time; global, never on a stack, because
+ * the worker holds its address. */
+typedef struct {
+	bool force_pair;                /* in: skip the stored credential */
+	spotify_session *session;       /* out, filled on success */
+	volatile str_id stage;          /* what it is doing now */
+	volatile bool pairing;          /* a code is on screen, being polled */
+	volatile bool paired;           /* pairing ran: one more step */
+	volatile bool reason_expired;   /* pairing because the credential died */
+	volatile bool cancel;           /* main thread: give up */
+	volatile bool done;
+	bool ok;
+	startup_error error;
+	/* What the pairing screen shows, copied under `lock`. Never the
+	 * device code, which is secret. */
+	LightLock lock;
+	char user_code[16];
+	char verification_uri[128];
+	char qr_url[192];
+	bool offline;                   /* the last poll did not reach Spotify */
+	Thread thread;
+} session_job;
+
+/* A consistent copy of the pairing data, for drawing. */
+typedef struct {
+	bool reason_expired;
+	bool offline;
+	char user_code[16];
+	char verification_uri[128];
+	char qr_url[192];
+} pair_view;
+
+static session_job login;
+/* The worker's large locals, off its stack and cleared after each use. */
+static spotify_tokens login_tokens;
+static pair_request login_request;
+static ap_info login_ap;
+static login5_token login_library;
+static ap_candidate login_candidates[AP_MAX_CANDIDATES];
+static char login_stored[512];
+/* As PREPARE_STACK, which already logs in to an access point over TLS. */
+#define SESSION_STACK (64 * 1024)
+#define SESSION_SLICE_MS 100
+
+static void session_stage(str_id stage)
 {
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_PAIR_TITLE));
-	textscreen_printf("%s\n%s\n\n", tr(STR_PAIR_OPEN_URL), req->verification_uri);
-	textscreen_printf("%s: %s\n", tr(STR_LABEL_CODE), req->user_code);
-	if (req->verification_uri_complete[0])
-		textscreen_printf("\n%s\n%s\n", tr(STR_PAIR_DIRECT_LINK),
-		                  req->verification_uri_complete);
-	textscreen_printf("\n%s\n", status);
-	textscreen_printf(tr(STR_PAIR_POLL_FMT), interval);
-	textscreen_printf("\n%s\n", tr(STR_KEYS_LANGUAGE));
+	__sync_synchronize();
+	login.stage = stage;
 }
 
+static void pair_publish(const pair_request *req, bool offline)
+{
+	LightLock_Lock(&login.lock);
+	snprintf(login.user_code, sizeof(login.user_code), "%s", req->user_code);
+	snprintf(login.verification_uri, sizeof(login.verification_uri), "%s",
+	         req->verification_uri);
+	login_qr_url(req->verification_uri, req->verification_uri_complete,
+	             req->user_code, login.qr_url, sizeof(login.qr_url));
+	login.offline = offline;
+	LightLock_Unlock(&login.lock);
+}
+
+static void pair_snapshot(pair_view *out)
+{
+	LightLock_Lock(&login.lock);
+	out->reason_expired = login.reason_expired;
+	out->offline = login.offline;
+	memcpy(out->user_code, login.user_code, sizeof(out->user_code));
+	memcpy(out->verification_uri, login.verification_uri,
+	       sizeof(out->verification_uri));
+	memcpy(out->qr_url, login.qr_url, sizeof(out->qr_url));
+	LightLock_Unlock(&login.lock);
+}
+
+/* Waits `seconds` in slices, so a cancel is seen within one. True when it
+ * was cancelled. */
+static bool session_wait(int seconds)
+{
+	for (int ms = 0; ms < seconds * 1000 && !login.cancel;
+	     ms += SESSION_SLICE_MS)
+		svcSleepThread((s64)SESSION_SLICE_MS * 1000000LL);
+	return login.cancel;
+}
+
+static void pair_cancelled(startup_error *error)
+{
+	error->category = STR_CAT_PAIR_CANCELLED;
+	snprintf(error->detail, sizeof(error->detail), "%s",
+	         tr(STR_PAIR_CREDENTIALS_UNCHANGED));
+}
+
+/* Worker thread. */
 static bool pair_account(spotify_tokens *tokens, startup_error *error)
 {
-	pair_request req;
+	pair_request *req = &login_request;
 	char detail[192] = {0};
-	show_progress(tr(STR_PAIR_REQUESTING));
-	if (pair_begin(&req, detail, sizeof(detail)) != 0) {
+	session_stage(STR_PAIR_REQUESTING);
+	if (pair_begin(req, detail, sizeof(detail)) != 0) {
 		error->category = STR_CAT_PAIRING;
 		snprintf(error->detail, sizeof(error->detail), "%s", detail);
-		secure_clear(&req, sizeof(req));
+		secure_clear(req, sizeof(*req));
 		return false;
 	}
 
-	int interval = req.interval_s > 0 ? req.interval_s : 5;
-	time_t deadline = time(NULL) + req.expires_in_s;
-	char status[192];
-	snprintf(status, sizeof(status), "%s", tr(STR_PAIR_WAITING));
-	while (aptMainLoop()) {
-		show_pair_screen(&req, interval, status);
-		for (int i = 0; i < interval * 60; i++) {
-			hidScanInput();
-			u32 down = hidKeysDown();
-			if (down & KEY_B) {
-				error->category = STR_CAT_PAIR_CANCELLED;
-				snprintf(error->detail, sizeof(error->detail), "%s",
-				         tr(STR_PAIR_CREDENTIALS_UNCHANGED));
-				secure_clear(&req, sizeof(req));
-				return false;
-			}
-			if (language_toggled(down))
-				show_pair_screen(&req, interval, status);
-			frame();
-			if (!aptMainLoop()) {
-				secure_clear(&req, sizeof(req));
-				return false;
-			}
+	int interval = req->interval_s > 0 ? req->interval_s : 5;
+	time_t deadline = time(NULL) + req->expires_in_s;
+	pair_publish(req, false);
+	__sync_synchronize();
+	login.pairing = true;
+	bool ok = false;
+	for (;;) {
+		if (session_wait(interval)) {
+			pair_cancelled(error);
+			break;
 		}
 		if (time(NULL) >= deadline) {
 			error->category = STR_CAT_PAIR_EXPIRED;
 			snprintf(error->detail, sizeof(error->detail), "%s",
 			         tr(STR_PAIR_RETRY_NEW_CODE));
-			secure_clear(&req, sizeof(req));
-			return false;
+			break;
 		}
 
 		detail[0] = '\0';
-		pair_status result = pair_poll(&req, tokens, detail, sizeof(detail));
+		pair_status result = pair_poll(req, tokens, detail, sizeof(detail));
+		/* A cancel wins even over an approval that raced it: nothing is
+		 * saved, and the stored credential stays as it was. */
+		if (login.cancel) {
+			secure_clear(tokens, sizeof(*tokens));
+			pair_cancelled(error);
+			break;
+		}
+		/* Still pending: with a detail, the poll never reached Spotify
+		 * (pair_poll keeps the code good and says why). */
 		if (result == PAIR_PENDING) {
-			snprintf(status, sizeof(status), "%s%s%s",
-			         tr(STR_PAIR_STILL_WAITING), detail[0] ? " " : "",
-			         detail);
+			pair_publish(req, detail[0] != '\0');
 			continue;
 		}
 		if (result == PAIR_SLOW_DOWN) {
 			interval += 5;
-			snprintf(status, sizeof(status), tr(STR_PAIR_SLOW_DOWN_FMT),
-			         interval);
+			pair_publish(req, false);
 			continue;
 		}
+		login.pairing = false;
 		if (result == PAIR_OK) {
+			login.paired = true;
 			if (!tokens->refresh_token[0] ||
 			    !cfg_save_refresh_token(tokens->refresh_token, tokens->scope)) {
 				error->category = STR_CAT_SAVE_CREDENTIALS;
 				snprintf(error->detail, sizeof(error->detail), "%s",
 				         tr(STR_CHECK_SD_SPACE));
 				secure_clear(tokens, sizeof(*tokens));
-				secure_clear(&req, sizeof(req));
-				return false;
+				break;
 			}
-			secure_clear(&req, sizeof(req));
-			return true;
+			ok = true;
+			break;
 		}
 
 		error->category = result == PAIR_DENIED
@@ -1504,16 +1561,14 @@ static bool pair_account(spotify_tokens *tokens, startup_error *error)
 		snprintf(error->detail, sizeof(error->detail), "%s",
 		         detail[0] ? detail : tr(STR_NO_VALID_RESPONSE));
 		secure_clear(tokens, sizeof(*tokens));
-		secure_clear(&req, sizeof(req));
-		return false;
+		break;
 	}
-	secure_clear(&req, sizeof(req));
-	error->category = STR_CAT_PAIR_INTERRUPTED;
-	snprintf(error->detail, sizeof(error->detail), "%s",
-	         tr(STR_APP_CLOSING));
-	return false;
+	login.pairing = false;
+	secure_clear(req, sizeof(*req));
+	return ok;
 }
 
+/* Worker thread. */
 static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
                               spotify_session *session)
 {
@@ -1521,8 +1576,8 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	char device_id[64];
 	ap_device_id(device_id, sizeof(device_id));
 
-	ap_candidate candidates[AP_MAX_CANDIDATES];
-	show_progress(tr(STR_AP_SEARCHING));
+	ap_candidate *candidates = login_candidates;
+	session_stage(STR_AP_SEARCHING);
 	int count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
 	                            detail, sizeof(detail));
 	if (count < 1) {
@@ -1533,12 +1588,12 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 		return false;
 	}
 
-	ap_info info;
-	memset(&info, 0, sizeof(info));
+	ap_info *info = &login_ap;
+	memset(info, 0, sizeof(*info));
 	int tried = 0;
-	show_progress(tr(STR_AP_AUTHENTICATING));
+	session_stage(STR_AP_AUTHENTICATING);
 	ap_session *ap = ap_login_any(candidates, count, tokens->access_token,
-	                              device_id, &info, &tried,
+	                              device_id, info, &tried,
 	                              detail, sizeof(detail));
 	if (ap) {
 		snprintf(session->oauth_token, sizeof(session->oauth_token), "%s",
@@ -1552,82 +1607,85 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	}
 	secure_clear(tokens, sizeof(*tokens));
 	if (!ap) {
-		error->category = info.login_error
+		error->category = info->login_error
 		                  ? STR_CAT_AP_REJECTED
 		                  : STR_CAT_AP_CONNECT;
-		if (info.login_error)
+		if (info->login_error)
 			snprintf(error->detail, sizeof(error->detail),
 			         tr(STR_ERROR_CODE_FMT),
-			         ap_login_error_text(info.login_error), info.login_error);
+			         ap_login_error_text(info->login_error),
+			         info->login_error);
 		else
 			snprintf(error->detail, sizeof(error->detail), "%s",
 			         detail[0] ? detail : tr(STR_NO_AP_RESPONDED));
-		secure_clear(&info, sizeof(info));
+		secure_clear(info, sizeof(*info));
 		return false;
 	}
 
-	login5_token library;
-	show_progress(tr(STR_LIBRARY_OPENING));
-	int rc = login5_from_credentials(info.username, info.reusable,
-	                                 info.reusable_len, device_id,
-	                                 &library, detail, sizeof(detail));
+	login5_token *library = &login_library;
+	session_stage(STR_LIBRARY_OPENING);
+	int rc = login5_from_credentials(info->username, info->reusable,
+	                                 info->reusable_len, device_id,
+	                                 library, detail, sizeof(detail));
 	ap_close(ap);
-	secure_clear(&info, sizeof(info));
+	secure_clear(info, sizeof(*info));
 	secure_clear(device_id, sizeof(device_id));
 	if (rc != 0) {
 		error->category = strstr(detail, "login5 refused:")
 		                  ? STR_CAT_LOGIN_REFUSED
 		                  : STR_CAT_LOGIN_FAILED;
 		snprintf(error->detail, sizeof(error->detail), "%s", detail);
-		secure_clear(&library, sizeof(library));
+		secure_clear(library, sizeof(*library));
 		return false;
 	}
 
 	detail[0] = '\0';
-	show_progress(tr(STR_SERVER_RESOLVING));
+	session_stage(STR_SERVER_RESOLVING);
 	rc = sp_resolve(session->host, sizeof(session->host),
 	                 detail, sizeof(detail));
 	if (rc != 0 || !session->host[0]) {
 		error->category = STR_CAT_SERVER_RESOLVE;
 		snprintf(error->detail, sizeof(error->detail), "%s",
 		         detail[0] ? detail : tr(STR_INVALID_SERVER_RESPONSE));
-		secure_clear(&library, sizeof(library));
+		secure_clear(library, sizeof(*library));
 		return false;
 	}
-	snprintf(session->library_token, sizeof(session->library_token), "%s",
-	         library.access_token);
-	secure_clear(&library, sizeof(library));
+	/* Both are 1024 bytes; the bound only tells GCC so, now that the token
+	 * is a global it cannot see the end of. */
+	snprintf(session->library_token, sizeof(session->library_token), "%.*s",
+	         (int)sizeof(session->library_token) - 1, library->access_token);
+	secure_clear(library, sizeof(*library));
 	return true;
 }
 
+/* Worker thread. */
 static bool start_session(bool force_pair, startup_error *error,
                           spotify_session *session)
 {
-	char stored[512] = {0};
-	spotify_tokens tokens;
-	memset(&tokens, 0, sizeof(tokens));
+	char *stored = login_stored;
+	size_t stored_size = sizeof(login_stored);
+	spotify_tokens *tokens = &login_tokens;
+	memset(stored, 0, stored_size);
+	memset(tokens, 0, sizeof(*tokens));
 
-	if (force_pair || !cfg_load_refresh_token(stored, sizeof(stored))) {
-		secure_clear(stored, sizeof(stored));
-		if (!pair_account(&tokens, error))
+	if (force_pair || !cfg_load_refresh_token(stored, stored_size)) {
+		secure_clear(stored, stored_size);
+		if (!pair_account(tokens, error))
 			return false;
-		return resolve_and_login(&tokens, error, session);
+		return resolve_and_login(tokens, error, session);
 	}
 
 	char detail[192] = {0};
-	show_progress(tr(STR_CREDENTIAL_RENEWING));
-	if (token_refresh(stored, &tokens, detail, sizeof(detail)) != 0) {
-		secure_clear(stored, sizeof(stored));
-		secure_clear(&tokens, sizeof(tokens));
+	session_stage(STR_CREDENTIAL_RENEWING);
+	if (token_refresh(stored, tokens, detail, sizeof(detail)) != 0) {
+		secure_clear(stored, stored_size);
+		secure_clear(tokens, sizeof(*tokens));
 		if (strstr(detail, "invalid_grant")) {
-			textscreen_clear();
-			textscreen_printf("%s\n", tr(STR_CREDENTIAL_EXPIRED));
-			textscreen_printf("%s\n", tr(STR_PAIR_AGAIN_NEEDED));
-			for (int i = 0; i < 90 && aptMainLoop(); i++)
-				frame();
-			if (!pair_account(&tokens, error))
+			/* Straight to pairing; the pairing screen says why. */
+			login.reason_expired = true;
+			if (!pair_account(tokens, error))
 				return false;
-			return resolve_and_login(&tokens, error, session);
+			return resolve_and_login(tokens, error, session);
 		}
 		error->category = STR_CAT_OAUTH_RENEW;
 		snprintf(error->detail, sizeof(error->detail), "%s",
@@ -1635,32 +1693,143 @@ static bool start_session(bool force_pair, startup_error *error,
 		return false;
 	}
 
-	if (tokens.refresh_token[0] &&
-	    strcmp(tokens.refresh_token, stored) != 0 &&
-	    !cfg_save_refresh_token(tokens.refresh_token, tokens.scope)) {
+	if (tokens->refresh_token[0] &&
+	    strcmp(tokens->refresh_token, stored) != 0 &&
+	    !cfg_save_refresh_token(tokens->refresh_token, tokens->scope)) {
 		error->category = STR_CAT_SAVE_RENEWED;
 		snprintf(error->detail, sizeof(error->detail), "%s",
 		         tr(STR_CHECK_SD_SPACE));
-		secure_clear(stored, sizeof(stored));
-		secure_clear(&tokens, sizeof(tokens));
+		secure_clear(stored, stored_size);
+		secure_clear(tokens, sizeof(*tokens));
 		return false;
 	}
-	if (!tokens.refresh_token[0])
-		snprintf(tokens.refresh_token, sizeof(tokens.refresh_token), "%s",
+	if (!tokens->refresh_token[0])
+		snprintf(tokens->refresh_token, sizeof(tokens->refresh_token), "%s",
 		         stored);
-	secure_clear(stored, sizeof(stored));
-	return resolve_and_login(&tokens, error, session);
+	secure_clear(stored, stored_size);
+	return resolve_and_login(tokens, error, session);
 }
 
-static void show_error(const startup_error *error)
+static void session_worker(void *arg)
 {
-	textscreen_clear();
-	textscreen_printf("%s\n\n", tr(STR_SESSION_FAILED_TITLE));
-	textscreen_printf("%s\n\n", tr(error->category));
-	textscreen_printf("%s\n\n", error->detail);
-	textscreen_printf("%s\n", tr(STR_KEYS_STARTUP_RETRY));
-	textscreen_printf("%s\n", tr(STR_KEYS_EXIT));
-	textscreen_printf("%s\n", tr(STR_KEYS_LANGUAGE));
+	(void)arg;
+	login.ok = start_session(login.force_pair, &login.error, login.session);
+	__sync_synchronize();
+	login.done = true;
+}
+
+/* Cuts the worker's network waits short and joins it: the same pattern as
+ * stop_tabs(). DNS is not cut (tls3ds.h), so this may take a moment. */
+static void session_cancel(void)
+{
+	login.cancel = true;
+	if (!login.thread)
+		return;
+	tls_set_abort(true);
+	threadJoin(login.thread, U64_MAX);
+	threadFree(login.thread);
+	login.thread = NULL;
+	tls_set_abort(false);
+}
+
+typedef enum {
+	LOGIN_READY,    /* *session is up */
+	LOGIN_FAILED,   /* *error says why */
+	LOGIN_QUIT      /* the app is closing */
+} login_result;
+
+/* Hands the worker's progress to the login view. Cheap enough for every
+ * frame: the view changes nothing when the content is the same. */
+static void show_login(void)
+{
+	if (!login.pairing) {
+		view_login_connecting(login.stage, login.paired);
+		return;
+	}
+	pair_view pair;
+	pair_snapshot(&pair);
+	login_pair_info info = {
+		.reason_expired = pair.reason_expired,
+		.offline = pair.offline,
+		.user_code = pair.user_code,
+		.verification_uri = pair.verification_uri,
+		.qr_url = pair.qr_url,
+	};
+	view_login_pairing(&info);
+	secure_clear(&pair, sizeof(pair));
+}
+
+/* Runs the session start-up in the worker and keeps drawing meanwhile. B
+ * cancels a pairing without touching the stored credential; SELECT
+ * switches the language. */
+static login_result run_login(bool force_pair, spotify_session *session,
+                              startup_error *error)
+{
+	secure_clear(&login, sizeof(login));
+	LightLock_Init(&login.lock);
+	login.force_pair = force_pair;
+	login.session = session;
+	login.stage = STR_LOGIN_CONNECTING;
+	active_view = VIEW_LOGIN;
+	show_login();
+	frame();
+
+	__sync_synchronize();
+	login.thread = threadCreate(session_worker, NULL, SESSION_STACK,
+	                            background_priority(), -2, false);
+	/* Without a thread, the start-up still works, only without a live
+	 * screen: as it always did. */
+	if (!login.thread)
+		session_worker(NULL);
+
+	while (!login.done) {
+		if (!aptMainLoop()) {
+			session_cancel();
+			secure_clear(&login, sizeof(login));
+			return LOGIN_QUIT;
+		}
+		hidScanInput();
+		show_login();
+		login_action action = view_login_update(hidKeysDown());
+		if (action == LOGIN_ACTION_LANGUAGE)
+			switch_language();
+		else if (action == LOGIN_ACTION_CANCEL && login.pairing)
+			session_cancel();
+		frame();
+	}
+
+	__sync_synchronize();
+	if (login.thread) {
+		threadJoin(login.thread, U64_MAX);
+		threadFree(login.thread);
+		login.thread = NULL;
+	}
+	login_result result = login.ok ? LOGIN_READY : LOGIN_FAILED;
+	if (!login.ok)
+		*error = login.error;
+	secure_clear(&login, sizeof(login));
+	return result;
+}
+
+/* The start-up error until the user picks: Retry (A) with the stored
+ * credential, Pair (Y) again, or Exit (START). A fatal error (no network
+ * to retry with) only exits. Closing the app counts as Exit. */
+static login_action run_error(const startup_error *error, bool fatal)
+{
+	active_view = VIEW_LOGIN;
+	view_login_error(error->category, error->detail, fatal);
+	while (aptMainLoop()) {
+		hidScanInput();
+		login_action action = view_login_update(hidKeysDown());
+		if (action == LOGIN_ACTION_LANGUAGE)
+			switch_language();
+		else if (action == LOGIN_ACTION_RETRY ||
+		         action == LOGIN_ACTION_PAIR ||
+		         action == LOGIN_ACTION_EXIT)
+			return action;
+		frame();
+	}
+	return LOGIN_ACTION_EXIT;
 }
 
 int main(int argc, char **argv)
@@ -1688,9 +1857,11 @@ int main(int argc, char **argv)
 	thumbs_init();
 	if (romfs_ready)
 		logo_load();
-	if (!textscreen_init() || !view_home_init() || !view_results_init() ||
-	    !view_player_init() || !view_settings_init() || !top_init()) {
+	if (!view_home_init() || !view_results_init() ||
+	    !view_player_init() || !view_settings_init() || !view_login_init() ||
+	    !top_init()) {
 		top_exit();
+		view_login_exit();
 		view_settings_exit();
 		view_player_exit();
 		view_results_exit();
@@ -1698,7 +1869,6 @@ int main(int argc, char **argv)
 		logo_free();
 		thumbs_exit();
 		icons_exit();
-		textscreen_exit();
 		ui_exit();
 		if (romfs_ready)
 			romfsExit();
@@ -1744,12 +1914,10 @@ int main(int argc, char **argv)
 
 	bool force_pair = false;
 	for (;;) {
-		active_view = VIEW_TEXT;
-		textscreen_clear();
-		textscreen_printf("%s\n\n", tr(STR_LOGIN_TITLE));
-		textscreen_printf("%s\n", tr(STR_LOGIN_CONNECTING));
-		frame();
-		if (start_session(force_pair, &error, &session)) {
+		login_result login_state = run_login(force_pair, &session, &error);
+		if (login_state == LOGIN_QUIT)
+			goto done;
+		if (login_state == LOGIN_READY) {
 			tabs_exit result = run_tabs(&session);
 			/* Reconnecting or pairing starts a new session from
 			 * scratch: nothing of this one survives. */
@@ -1760,40 +1928,15 @@ int main(int argc, char **argv)
 			force_pair = result == TABS_PAIR;
 		} else {
 			secure_clear(&session, sizeof(session));
-			show_error(&error);
-			for (;;) {
-				hidScanInput();
-				u32 down = hidKeysDown();
-				if (down & KEY_START)
-					goto done;
-				if (down & KEY_A) {
-					force_pair = false;
-					break;
-				}
-				if (down & KEY_Y) {
-					force_pair = true;
-					break;
-				}
-				if (language_toggled(down))
-					show_error(&error);
-				frame();
-				if (!aptMainLoop())
-					goto done;
-			}
+			login_action choice = run_error(&error, false);
+			if (choice == LOGIN_ACTION_EXIT)
+				goto done;
+			force_pair = choice == LOGIN_ACTION_PAIR;
 		}
 	}
 
 failed:
-	show_error(&error);
-	while (aptMainLoop()) {
-		hidScanInput();
-		u32 down = hidKeysDown();
-		if (down & KEY_START)
-			break;
-		if (language_toggled(down))
-			show_error(&error);
-		frame();
-	}
+	run_error(&error, true);
 
 done:
 	stop_tabs();
@@ -1809,6 +1952,7 @@ done:
 		socExit();
 	free(soc_buffer);
 	top_exit();
+	view_login_exit();
 	view_settings_exit();
 	view_player_exit();
 	view_results_exit();
@@ -1816,7 +1960,6 @@ done:
 	logo_free();
 	thumbs_exit();
 	icons_exit();
-	textscreen_exit();
 	if (screens_dark)
 		GSPLCD_PowerOnAllBacklights();
 	if (ndsp_up)
