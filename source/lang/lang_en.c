@@ -32,6 +32,8 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_RETRY] = "Retry",
 	[STR_HINT_PAUSE] = "Pause",
 	[STR_HINT_CHOOSE] = "Choose",
+	[STR_HINT_PAIR] = "Pair",
+	[STR_HINT_EXIT] = "Exit",
 
 	/* Settings tab. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",
@@ -87,6 +89,13 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_PAIR_SLOW_DOWN_FMT] = "Spotify asked to slow down; new interval: %d s.",
 	[STR_PAIR_CREDENTIALS_UNCHANGED] = "Saved credentials were not changed.",
 	[STR_PAIR_RETRY_NEW_CODE] = "Try again to get a new code.",
+	[STR_LOGIN_STEP_FMT] = "Step %d of %d",
+	[STR_PAIR_HEADING] = "Link your account",
+	[STR_PAIR_HEADING_EXPIRED] = "Session expired: link your account again",
+	[STR_PAIR_YOUR_CODE] = "Your code",
+	[STR_PAIR_INSTRUCTIONS] = "Open it on your phone or computer, log in, enter the code and accept.",
+	[STR_PAIR_QR_BODY] = "You can also scan the QR code to sign in.",
+	[STR_PAIR_OFFLINE] = "No connection, retrying...",
 
 	/* Search. */
 	[STR_SEARCH_HINT] = "Song or artist name",

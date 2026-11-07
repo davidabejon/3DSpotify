@@ -5,8 +5,10 @@
 #include "lang.h"
 #include "layout.h"
 #include "list_logic.h"
+#include "login_logic.h"
 #include "now_layout.h"
 #include "player_logic.h"
+#include "qrcodegen.h"
 #include "power_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
@@ -1276,8 +1278,257 @@ static void test_download_retry_delay(void)
 	assert(total >= 30000 && total <= 90000);
 }
 
+static void test_login_qr_url(void)
+{
+	char url[64];
+	/* Spotify's own link wins, as it is. */
+	assert(login_qr_url("https://spotify.com/pair",
+	                    "https://spotify.com/pair?code=JDDHV3", "JDDHV3",
+	                    url, sizeof(url)));
+	assert(strcmp(url, "https://spotify.com/pair?code=JDDHV3") == 0);
+	/* Without it, the base URL plus the user code. */
+	assert(login_qr_url("https://spotify.com/pair", "", "JDDHV3", url,
+	                    sizeof(url)));
+	assert(strcmp(url, "https://spotify.com/pair?code=JDDHV3") == 0);
+	assert(login_qr_url("https://x.example/pair?lang=es", NULL, "AB-12",
+	                    url, sizeof(url)));
+	assert(strcmp(url, "https://x.example/pair?lang=es&code=AB-12") == 0);
+	/* A code that would need escaping, or nothing at all: no QR. */
+	assert(!login_qr_url("https://spotify.com/pair", "", "a&b", url,
+	                     sizeof(url)) && url[0] == '\0');
+	assert(!login_qr_url("https://spotify.com/pair", "", "", url,
+	                     sizeof(url)));
+	assert(!login_qr_url("", "", "JDDHV3", url, sizeof(url)));
+	assert(!login_qr_url(NULL, NULL, NULL, url, sizeof(url)));
+	/* Exactly full fits; one byte short is refused, never cut. */
+	const char *full = "https://spotify.com/pair?code=JDDHV3";
+	char exact[37];
+	assert(strlen(full) + 1 == sizeof(exact));
+	assert(login_qr_url(NULL, full, NULL, exact, sizeof(exact)));
+	assert(strcmp(exact, full) == 0);
+	assert(!login_qr_url(NULL, full, NULL, exact, sizeof(exact) - 1));
+	assert(exact[0] == '\0');
+	assert(!login_qr_url("https://spotify.com/pair", "", "JDDHV3", exact,
+	                     sizeof(exact) - 1));
+	assert(!login_qr_url(NULL, full, NULL, url, 0));
+
+	/* The URL to type: no scheme, no www, no trailing slash. */
+	assert(login_short_url("https://spotify.com/pair", url, sizeof(url)));
+	assert(strcmp(url, "spotify.com/pair") == 0);
+	assert(login_short_url("http://www.spotify.com/pair/", url,
+	                       sizeof(url)));
+	assert(strcmp(url, "spotify.com/pair") == 0);
+	assert(login_short_url("spotify.com/pair", url, sizeof(url)));
+	assert(strcmp(url, "spotify.com/pair") == 0);
+	assert(!login_short_url("https://", url, sizeof(url)) && !url[0]);
+	assert(!login_short_url(NULL, url, sizeof(url)));
+	char small[16];
+	assert(!login_short_url("https://spotify.com/pair", small,
+	                        sizeof(small)));
+	char fits[17];
+	assert(login_short_url("https://spotify.com/pair", fits, sizeof(fits)));
+}
+
+static void test_login_qr_fits(void)
+{
+	/* 1 px per module and a 4 module margin, in whole pixels. */
+	assert(login_qr_modules(1) == 21 && login_qr_modules(3) == 29);
+	assert(login_qr_scale(29, LOGIN_QR_BOX) == 4);
+	assert(login_qr_scale(25, LOGIN_QR_BOX) == 4);
+	assert(login_qr_scale(33, LOGIN_QR_BOX) == 3);
+	assert(login_qr_scale(0, LOGIN_QR_BOX) == 0);
+	assert(login_qr_scale(200, LOGIN_QR_BOX) == 0);
+	int max_v = login_qr_max_version(LOGIN_QR_BOX, LOGIN_QR_MIN_SCALE);
+	assert(max_v >= 3);
+	assert(login_qr_scale(login_qr_modules(max_v), LOGIN_QR_BOX) >=
+	       LOGIN_QR_MIN_SCALE);
+	assert(max_v == 40 ||
+	       login_qr_scale(login_qr_modules(max_v + 1), LOGIN_QR_BOX) <
+	       LOGIN_QR_MIN_SCALE);
+
+	/* The real link (phase 0: 36 bytes) is a version 3 code at 4 px. */
+	static uint8_t qr[qrcodegen_BUFFER_LEN_MAX];
+	static uint8_t temp[qrcodegen_BUFFER_LEN_MAX];
+	assert(qrcodegen_encodeText("https://spotify.com/pair?code=JDDHV3",
+	                            temp, qr, qrcodegen_Ecc_LOW,
+	                            qrcodegen_VERSION_MIN, max_v,
+	                            qrcodegen_Mask_AUTO, true));
+	int modules = qrcodegen_getSize(qr);
+	assert(modules == login_qr_modules(3));
+	int scale = login_qr_scale(modules, LOGIN_QR_BOX);
+	assert(scale >= 4);
+	/* Centred in the box, with at least the quiet zone around it. */
+	ui_rect box = login_qr_rect();
+	int ox = login_qr_origin(box.x, modules, scale);
+	int oy = login_qr_origin(box.y, modules, scale);
+	assert(ox - box.x >= LOGIN_QR_QUIET * scale);
+	assert(oy - box.y >= LOGIN_QR_QUIET * scale);
+	assert((box.x + box.w) - (ox + modules * scale) >=
+	       LOGIN_QR_QUIET * scale);
+	assert((box.y + box.h) - (oy + modules * scale) >=
+	       LOGIN_QR_QUIET * scale);
+	/* A link too long for the minimum scale is refused, not shrunk. */
+	char huge[400];
+	memset(huge, 'a', sizeof(huge) - 1);
+	huge[sizeof(huge) - 1] = '\0';
+	assert(!qrcodegen_encodeText(huge, temp, qr, qrcodegen_Ecc_LOW,
+	                             qrcodegen_VERSION_MIN, max_v,
+	                             qrcodegen_Mask_AUTO, true));
+}
+
+static bool inside_screen(ui_rect r, int width)
+{
+	return r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 &&
+	       r.x + r.w <= width && r.y + r.h <= SCREEN_H;
+}
+
+static void test_login_layout(void)
+{
+	/* Top: the logo above the spinner, both centred, never touching. */
+	ui_rect logo = login_logo_rect(), status = login_status_rect();
+	assert(inside_screen(logo, SCREEN_TOP_W));
+	assert(inside_screen(status, SCREEN_TOP_W));
+	assert(logo.x * 2 + logo.w == SCREEN_TOP_W);
+	assert(status.x * 2 + status.w == SCREEN_TOP_W);
+	assert(logo.y + logo.h + SP_2 <= status.y);
+	assert(spinner_cell_rect(SCREEN_TOP_W / 2, LOGIN_STATUS_CY, 0).y ==
+	       status.y);
+	/* Pairing: heading, then the panel to the bottom margin. */
+	ui_rect heading = login_pair_heading_rect();
+	ui_rect panel = login_pair_panel_rect();
+	assert(inside_screen(heading, SCREEN_TOP_W));
+	assert(inside_screen(panel, SCREEN_TOP_W));
+	assert(heading.x == SP_3 && panel.x == SP_3);
+	assert(panel.x * 2 + panel.w == SCREEN_TOP_W);
+	assert(!overlaps(heading, panel));
+	assert(panel.y + panel.h == SCREEN_H - SP_3);
+
+	/* Bottom: nothing reaches the button bar, shadows included. */
+	ui_rect hints = login_hints_rect();
+	assert(hints.y + hints.h == SCREEN_H && hints.h == BAR_H);
+	assert(hints.w == SCREEN_BOTTOM_W);
+	ui_rect content = login_content_rect();
+	assert(inside_screen(content, SCREEN_BOTTOM_W));
+	assert(content.y + content.h <= hints.y);
+	ui_rect qr = login_qr_rect();
+	assert(qr.w == LOGIN_QR_BOX && qr.h == LOGIN_QR_BOX);
+	assert(qr.x == SP_2);
+	/* Its 1 px outline and hard shadow on screen and off the bar. */
+	assert(qr.x - OUTLINE_W >= 0 && qr.y - OUTLINE_W >= 0);
+	assert(qr.y + qr.h + OUTLINE_W + SHADOW_OFF + SP_1 <= hints.y);
+	/* Centred in the content height (feature_plan.md: y 34). */
+	assert(qr.y == 34 && qr.y * 2 + qr.h == hints.y);
+	ui_rect side = login_pair_side_rect();
+	assert(inside_screen(side, SCREEN_BOTTOM_W));
+	assert(side.x + side.w == SCREEN_BOTTOM_W - SP_2);
+	assert(side.x - (qr.x + qr.w + OUTLINE_W + SHADOW_OFF) >= SP_1);
+	assert(side.w == 144);
+	assert(side.y + side.h <= hints.y);
+
+	/* Error: two 32 px buttons, SP_4 apart, focus rings and shadows
+	 * clear of each other, of the notice and of the bar (4.4, 6.2). */
+	int ring = FOCUS_GAP + FOCUS_W;
+	int below = ring > SHADOW_OFF ? ring : SHADOW_OFF;
+	for (int i = 0; i < LOGIN_BUTTON_COUNT; i++) {
+		ui_rect b = login_button_rect(i);
+		assert(b.h >= TOUCH_MIN && b.w >= TOUCH_MIN);
+		assert(inside_screen(b, SCREEN_BOTTOM_W));
+		assert(b.x - ring >= 0);
+		assert(b.x + b.w + below + PRESS_SHIFT <= SCREEN_BOTTOM_W);
+		assert(b.y + b.h + below + PRESS_SHIFT <= hints.y);
+		assert(login_hit_test(b.x, b.y) == (login_button)i);
+		assert(login_hit_test(b.x + b.w - 1, b.y + b.h - 1) ==
+		       (login_button)i);
+	}
+	ui_rect retry = login_button_rect(LOGIN_BUTTON_RETRY);
+	ui_rect pair = login_button_rect(LOGIN_BUTTON_PAIR);
+	assert(retry.y == pair.y && retry.w == pair.w);
+	assert(retry.x == SP_2 && pair.x + pair.w == SCREEN_BOTTOM_W - SP_2);
+	assert((pair.x - ring) - (retry.x + retry.w + below) >= SP_1);
+	for (int with = 0; with <= 1; with++) {
+		ui_rect notice = login_notice_rect(with);
+		assert(inside_screen(notice, SCREEN_BOTTOM_W));
+		assert(notice.x == SP_2 && notice.w == SCREEN_BOTTOM_W - 2 * SP_2);
+		int notice_bottom = notice.y + notice.h + SHADOW_OFF;
+		assert(notice_bottom + SP_1 <= hints.y);
+		if (with)
+			assert(notice_bottom + SP_1 <= retry.y - ring);
+		/* Room for the title and three lines of body at least. */
+		assert(notice.h >= 64);
+	}
+	assert(login_notice_rect(false).h > login_notice_rect(true).h);
+	/* The gap between them, the notice and the bar are not buttons. */
+	assert(login_hit_test(retry.x + retry.w + 1, retry.y) ==
+	       LOGIN_BUTTON_NONE);
+	assert(login_hit_test(10, 10) == LOGIN_BUTTON_NONE);
+	assert(login_hit_test(10, 230) == LOGIN_BUTTON_NONE);
+	/* Focus stops at the ends; anything else falls back to Retry. */
+	assert(login_focus_move(LOGIN_BUTTON_RETRY, 1) == LOGIN_BUTTON_PAIR);
+	assert(login_focus_move(LOGIN_BUTTON_PAIR, 1) == LOGIN_BUTTON_PAIR);
+	assert(login_focus_move(LOGIN_BUTTON_RETRY, -1) == LOGIN_BUTTON_RETRY);
+	assert(login_focus_move(LOGIN_BUTTON_NONE, 0) == LOGIN_BUTTON_RETRY);
+}
+
+static void test_login_steps(void)
+{
+	/* Renewing the stored credential: five steps. */
+	assert(login_step_total(false) == 5);
+	assert(login_step(STR_CREDENTIAL_RENEWING, false) == 1);
+	assert(login_step(STR_AP_SEARCHING, false) == 2);
+	assert(login_step(STR_AP_AUTHENTICATING, false) == 3);
+	assert(login_step(STR_LIBRARY_OPENING, false) == 4);
+	assert(login_step(STR_SERVER_RESOLVING, false) == 5);
+	/* Pairing adds one: the user linking the account. */
+	assert(login_step_total(true) == 6);
+	assert(login_step(STR_PAIR_REQUESTING, true) == 1);
+	assert(login_step(STR_AP_SEARCHING, true) == 3);
+	assert(login_step(STR_SERVER_RESOLVING, true) ==
+	       login_step_total(true));
+	/* Not a step: no counter. */
+	assert(login_step(STR_LOGIN_CONNECTING, false) == 0);
+}
+
+static void test_login_notice_and_hints(void)
+{
+	/* One line of body; then one more than the division; capped. */
+	int base = login_notice_height(0, 280, 15, 1000);
+	assert(base == 2 * OUTLINE_W + 2 * SP_3 + ICON_S + SP_2 + 15);
+	assert(login_notice_height(100, 280, 15, 1000) == base + 15);
+	assert(login_notice_height(560, 280, 15, 1000) == base + 2 * 15);
+	assert(login_notice_height(561, 280, 15, 1000) == base + 3 * 15);
+	int cap = login_notice_rect(true).h;
+	assert(login_notice_height(100000, 280, 15, cap) == cap);
+	assert(login_notice_height(100, 0, 15, 1000) == base);
+
+	/* Everything fits: every label shows. */
+	int glyph[4] = { 14, 14, 40, 46 }, label[4] = { 30, 30, 20, 40 };
+	bool show[4];
+	assert(login_hints_fit(glyph, label, 4, SCREEN_BOTTOM_W, show));
+	for (int i = 0; i < 4; i++)
+		assert(show[i]);
+	/* Too wide: labels go from the last one back, glyphs stay. With
+	 * these: 8 + (14+4+60+12) + (14+4+54+12) + (40+4+30+12)
+	 * + (46+4+42) = 360 with every label, 314 without SELECT's, 280
+	 * without START's too, 222 with only A's; against width - SP_2. */
+	int wide[4] = { 60, 54, 30, 42 };
+	assert(login_hints_fit(glyph, wide, 4, 330, show));
+	assert(show[0] && show[1] && show[2] && !show[3]);
+	assert(login_hints_fit(glyph, wide, 4, SCREEN_BOTTOM_W, show));
+	assert(show[0] && show[1] && !show[2] && !show[3]);
+	assert(login_hints_fit(glyph, wide, 4, 270, show));
+	assert(show[0] && !show[1] && !show[2] && !show[3]);
+	/* Not even the glyphs: false. */
+	assert(!login_hints_fit(glyph, wide, 4, 100, show));
+	assert(login_hints_fit(glyph, wide, 0, 100, show));
+}
+
 int main(void)
 {
+	test_login_qr_url();
+	test_login_qr_fits();
+	test_login_layout();
+	test_login_steps();
+	test_login_notice_and_hints();
 	test_tabs();
 	test_settings_layout();
 	test_player_layout();

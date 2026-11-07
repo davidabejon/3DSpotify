@@ -33,6 +33,8 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_RETRY] = "Reintentar",
 	[STR_HINT_PAUSE] = "Pausa",
 	[STR_HINT_CHOOSE] = "Elegir",
+	[STR_HINT_PAIR] = "Emparejar",
+	[STR_HINT_EXIT] = "Salir",
 
 	/* Pestana de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",
@@ -88,6 +90,13 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_PAIR_SLOW_DOWN_FMT] = "Spotify pidio esperar mas; nuevo intervalo: %d s.",
 	[STR_PAIR_CREDENTIALS_UNCHANGED] = "No se modificaron las credenciales guardadas.",
 	[STR_PAIR_RETRY_NEW_CODE] = "Vuelve a intentarlo para obtener un codigo nuevo.",
+	[STR_LOGIN_STEP_FMT] = "Paso %d de %d",
+	[STR_PAIR_HEADING] = "Vincula tu cuenta",
+	[STR_PAIR_HEADING_EXPIRED] = "Sesion caducada: vincula tu cuenta de nuevo",
+	[STR_PAIR_YOUR_CODE] = "Tu codigo",
+	[STR_PAIR_INSTRUCTIONS] = "Abrela en el movil o el ordenador, inicia sesion, escribe el codigo y acepta.",
+	[STR_PAIR_QR_BODY] = "Tambien puedes escanear el codigo QR para iniciar sesion.",
+	[STR_PAIR_OFFLINE] = "Sin conexion, reintentando...",
 
 	/* Busqueda. */
 	[STR_SEARCH_HINT] = "Nombre de cancion o artista",
