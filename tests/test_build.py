@@ -105,7 +105,7 @@ class BuildTests(unittest.TestCase):
                 build.stb_vorbis_source(False)
 
     def test_native_target_has_root_entry_point_and_no_proxy_client(self):
-        source_dirs, _, mbedtls, extra_sources = build.APPS["spotify3ds"]
+        source_dirs, _, mbedtls, extra_sources = build.APPS["3dspotify"]
         source_names = {
             path.name
             for directory in source_dirs
@@ -126,8 +126,25 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(mbedtls, "release")
         self.assertIn("deps/stb_vorbis.c", extra_sources)
 
+    def test_native_target_name_and_distribution_path(self):
+        self.assertIn("3dspotify", build.APPS)
+        self.assertNotIn("spotify3ds", build.APPS)
+        self.assertEqual(build.APP_TITLE, "3DSpotify")
+        source = (build.ROOT / "build.py").read_text(encoding="utf-8")
+        self.assertIn('default="3dspotify"', source)
+        self.assertIn(
+            'output_name = APP_TITLE if app == "3dspotify" else app',
+            source,
+        )
+        self.assertIn(
+            'ROOT / "dist" / "3ds" / output_name / f"{output_name}.3dsx"',
+            source,
+        )
+        self.assertIn('dest.with_suffix(".cia")', source)
+        self.assertIn("launch {dest.name}", source)
+
     def test_native_target_uses_only_direct_artwork_pipeline(self):
-        source_dirs, _, _, _ = build.APPS["spotify3ds"]
+        source_dirs, _, _, _ = build.APPS["3dspotify"]
         ui_sources = list((build.ROOT / "ui").glob("*.c"))
         implementations = [
             source for source in ui_sources
@@ -601,7 +618,7 @@ class BuildTests(unittest.TestCase):
                               r"RootPath\s*:\s*\$\(APP_ROMFS\)")
         self.assertEqual(build.ROMFS, build.ROOT.parent / "romfs")
         source = (build.ROOT / "build.py").read_text(encoding="utf-8")
-        self.assertIn("require_romfs(ROMFS) if app == \"spotify3ds\"", source)
+        self.assertIn("require_romfs(ROMFS) if app == \"3dspotify\"", source)
 
     def test_romfs_is_mounted_around_the_renderer(self):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
@@ -981,7 +998,7 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((self.root / "deps").exists())
 
     def test_qrcodegen_is_pinned_and_built_without_warnings(self):
-        _, _, _, extra_sources = build.APPS["spotify3ds"]
+        _, _, _, extra_sources = build.APPS["3dspotify"]
         self.assertIn("deps/qrcodegen.c", extra_sources)
         # The committed copies are the pinned ones, so an offline build works.
         source = build.qrcodegen_source(False)
