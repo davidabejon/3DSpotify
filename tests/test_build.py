@@ -815,6 +815,29 @@ class BuildTests(unittest.TestCase):
                      "error_detail_text", "header_text"):
             self.assertNotIn(gone, results)
 
+    def test_player_preserves_audio_key_refusal_diagnostic(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        begin = app[app.index("static void player_begin_audio(void)"):
+                    app.index("static int free_wave_index(")]
+        self.assertLess(begin.index('"%s", prep.error'),
+                        begin.index("prepare_reap();"))
+        self.assertIn(
+            'if (!error[0])\n\t\t\tsnprintf(error, sizeof(error), "%s",',
+            begin,
+        )
+        self.assertNotIn("if (rc == AP_KEY_REFUSED)", begin)
+        self.assertIn("player_fail(error);", begin)
+        ap = (build.ROOT / "platform3ds" / "ap3ds.c").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Audio key refused (0x%04X)", ap)
+        self.assertIn("Audio key refused (no server code)", ap)
+        self.assertIn("packet=0x%02X len=%d\\nseq=%lu", ap)
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(track.count("out->key_refused_code = refused;"), 2)
+
     def test_loading_a_track_never_blocks_the_main_thread(self):
         ui_dir = build.ROOT / "ui"
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")

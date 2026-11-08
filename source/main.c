@@ -547,10 +547,10 @@ static void player_begin_audio(void)
 	memset(&prep.stream, 0, sizeof(prep.stream));
 	prepare_reap();
 	if (rc != 0) {
-		if (rc == AP_KEY_REFUSED)
-			snprintf(error, sizeof(error), "%s", tr(STR_ERR_KEY_REFUSED));
-		else if (!error[0])
-			snprintf(error, sizeof(error), "%s", tr(STR_ERR_AP_SESSION));
+		if (!error[0])
+			snprintf(error, sizeof(error), "%s",
+			         tr(rc == AP_KEY_REFUSED ? STR_ERR_KEY_REFUSED
+			                                 : STR_ERR_AP_SESSION));
 		player_fail(error);
 		return;
 	}

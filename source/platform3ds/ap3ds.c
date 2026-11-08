@@ -705,9 +705,17 @@ int ap_audio_key(ap_session *s, const uint8_t file_id[20],
 			int code = (n >= 6) ? ((buf[4] << 8) | buf[5]) : -1;
 			if (refused_code)
 				*refused_code = code;
-			snprintf(err, errlen,
-			         "Spotify no permite esta cancion (0x%04X): se "
-			         "requiere Premium o no esta disponible", code);
+			if (code >= 0)
+				snprintf(err, errlen,
+				         "Audio key refused (0x%04X)\n"
+				         "packet=0x%02X len=%d\nseq=%lu",
+				         (unsigned)code, (unsigned)cmd, n,
+				         (unsigned long)seq);
+			else
+				snprintf(err, errlen,
+				         "Audio key refused (no server code)\n"
+				         "packet=0x%02X len=%d\nseq=%lu",
+				         (unsigned)cmd, n, (unsigned long)seq);
 			return AP_KEY_REFUSED;
 		}
 		if (cmd == AP_PKT_PING)
