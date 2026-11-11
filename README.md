@@ -17,7 +17,7 @@ Spotify over HTTPS.
 > This is a Spotify-side restriction, not a bug in 3DSpotify or a problem with
 > your console or setup. It affects all librespot-based clients the same way;
 > see [librespot#1649](https://github.com/librespot-org/librespot/issues/1649).
-> No workaround is known yet. We are working on a fix, or at least an
+> No workaround is known yet. I am working on a fix, or at least an
 > alternative for affected accounts.
 
 <div style="display: flex; gap: 10px">

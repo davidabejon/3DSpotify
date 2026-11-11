@@ -17,7 +17,7 @@ directamente a Spotify por HTTPS.
 > consola o tu configuración. Afecta igual a todos los clientes basados en
 > librespot; consulta
 > [librespot#1649](https://github.com/librespot-org/librespot/issues/1649).
-> Todavía no se conoce ninguna solución. Estamos trabajando para solucionarlo
+> Todavía no se conoce ninguna solución. Estoy trabajando para solucionarlo
 > o, al menos, encontrar una alternativa para las cuentas afectadas.
 
 <div style="display: flex; gap: 10px">
