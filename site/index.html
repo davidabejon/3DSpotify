@@ -42,6 +42,17 @@
 
 <main id="contenido">
 
+	<!-- 0. Aviso: Spotify deniega la clave de audio a algunas cuentas -->
+	<section class="wrap" aria-labelledby="incidencia-titulo">
+		<div class="aviso aviso--rojo relieve incidencia" role="alert">
+			<svg class="icon icon--2x" viewBox="0 0 16 16" aria-hidden="true"><use href="#i-error"/></svg>
+			<div>
+				<h2 id="incidencia-titulo" data-i18n="issue_title">Known issue: some Premium accounts can’t play music</h2>
+				<p data-i18n-html="issue_text">Some Spotify Premium accounts get <code>Audio key refused (0x0001)</code> on every song. <strong>This is a Spotify problem, not a 3DSpotify bug:</strong> Spotify’s servers refuse the audio key for those accounts, and other unofficial clients hit the same error (<a href="https://github.com/librespot-org/librespot/issues/1649">librespot #1649</a>). There is no fix yet, but <strong>we are actively working on solving it, or at least on finding an alternative</strong>.</p>
+			</div>
+		</div>
+	</section>
+
 	<!-- 1. Cabecera: texto a la izquierda y la consola, que se puede usar, a la derecha -->
 	<section class="wrap" aria-labelledby="titulo">
 		<div class="hero">
