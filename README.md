@@ -5,6 +5,21 @@ Nota: Esta documentación también está disponible en español: `README_es.md`
 Unofficial Spotify client for the Nintendo 3DS. The app connects directly to
 Spotify over HTTPS.
 
+> [!WARNING]
+> **Spotify account compatibility**
+>
+> Spotify has changed how it delivers audio decryption keys. Some Premium
+> accounts, apparently those created after a cutoff date, can no longer obtain
+> the keys 3DSpotify needs. Sign-in and search still work, but every song fails
+> with `Audio key refused (0x0001)`. The same accounts play normally in the
+> official Spotify apps.
+>
+> This is a Spotify-side restriction, not a bug in 3DSpotify or a problem with
+> your console or setup. It affects all librespot-based clients the same way;
+> see [librespot#1649](https://github.com/librespot-org/librespot/issues/1649).
+> No workaround is known yet. We are working on a fix, or at least an
+> alternative for affected accounts.
+
 <div style="display: flex; gap: 10px">
   <img src="assets/playing.png" alt="Now playing" width="350">
   <img src="assets/results.png" alt="Search results" width="350">
