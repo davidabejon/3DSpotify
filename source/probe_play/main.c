@@ -168,7 +168,7 @@ int main(int argc, char **argv)
 	if (rc != 0) {
 		say("   %s\n", err);
 		if (rc == AP_KEY_REFUSED)
-			say("   (cuenta nueva: probar con una mas antigua)\n");
+			say("   (rechazo AP; la causa no se identifica solo por el codigo)\n");
 		goto hold;
 	}
 

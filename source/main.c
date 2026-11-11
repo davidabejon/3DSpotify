@@ -1835,6 +1835,7 @@ static login_action run_error(const startup_error *error, bool fatal)
 int main(int argc, char **argv)
 {
 	(void)argc;
+	(void)argv;
 	gfxInitDefault();
 	/* Without romfs the logo falls back to the app name as text. */
 	bool romfs_ready = R_SUCCEEDED(romfsInit());
@@ -1875,7 +1876,7 @@ int main(int argc, char **argv)
 		gfxExit();
 		return 1;
 	}
-	cfg_set_path((argv && argv[0]) ? argv[0] : NULL);
+	cfg_set_path(NULL);
 	language_init();
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);

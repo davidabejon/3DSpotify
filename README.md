@@ -26,6 +26,12 @@ This repository contains:
 - A Nintendo 3DS with Homebrew Launcher and Wi-Fi access.
 - To build from source: devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus Python 3.12 or newer.
 
+Audio preparation exchanges OAuth for reusable AP credentials, then
+authenticates a new AP connection before requesting the audio key, following
+librespot's login flow. These AP credentials stay in memory and are never logged
+or saved. A key refusal displays the server code; it does not by itself prove
+that the account lacks Premium.
+
 ## Building the native client
 
 Install devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus
@@ -69,7 +75,8 @@ python source\build.py --cia
 
 This writes `source\dist\3ds\3DSpotify\3DSpotify.cia`; copy it to the SD
 card and install it with FBI or a similar CIA installer (requires custom
-firmware). The CIA keeps its settings in `SD:/3ds/spotibacan/`.
+firmware). The app creates `SD:/3ds/3DSpotify/` if needed and keeps its
+settings and local data there.
 
 Both the `.3dsx` and the `.cia` pack the repository's `romfs/` directory,
 which the app reads as `romfs:/`; the build stops if it is missing. It holds

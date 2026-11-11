@@ -17,6 +17,7 @@
 
 #include "mbedtls/bignum.h"
 #include "mbedtls/md.h"
+#include "mbedtls/platform_util.h"
 #include "mbedtls/rsa.h"
 
 /* --------------------------------------------------------------- constants */
@@ -29,6 +30,8 @@
 #define CPU_ARM              5
 #define OS_LINUX             5
 #define AUTH_SPOTIFY_TOKEN   3
+#define AUTH_STORED_SPOTIFY  1
+#define AUTH_STORED_FACEBOOK 2
 
 #define MAC_SIZE 4
 #define AP_MAX_PACKET (128 * 1024)
@@ -736,13 +739,14 @@ int ap_handle_ping(ap_session *s, const uint8_t *payload, size_t len)
 
 /* ----------------------------------------------------------------- login */
 
-ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
-                     const char *device_id, ap_info *info,
-                     char *err, size_t errlen)
+static ap_session *ap_login_credentials(const char *host, uint16_t port,
+                                        const char *username, int auth_type,
+                                        const uint8_t *auth_data, size_t auth_len,
+                                        const char *device_id, ap_info *nfo,
+                                        char *err, size_t errlen)
 {
-	ap_info local = {0};
-	ap_info *nfo = info ? info : &local;
 	memset(nfo, 0, sizeof(*nfo));
+	nfo->reusable_type = -1;
 	snprintf(nfo->ap, sizeof(nfo->ap), "%s:%u", host, port);
 
 	TickCounter t;
@@ -769,10 +773,9 @@ ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
 		return NULL;
 	}
 
-	/* ClientResponseEncrypted: the OAuth access token as the credential. */
+	/* ClientResponseEncrypted, with the exact credential type and bytes. */
 	osTickCounterStart(&t);
-	size_t token_len = strlen(access_token);
-	size_t creds_cap = token_len + 64;
+	size_t creds_cap = auth_len + (username ? strlen(username) : 0) + 64;
 	uint8_t *creds_store = malloc(creds_cap);
 	uint8_t sys_store[256];
 	uint8_t *login_store = malloc(creds_cap + sizeof(sys_store) + 128);
@@ -786,8 +789,10 @@ ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
 
 	pb creds, sys, login;
 	pb_init(&creds, creds_store, creds_cap);
-	pb_varint(&creds, 0x14, AUTH_SPOTIFY_TOKEN);
-	pb_bytes(&creds, 0x1e, access_token, token_len);
+	if (username)
+		pb_str(&creds, 0x0a, username);
+	pb_varint(&creds, 0x14, (uint64_t)auth_type);
+	pb_bytes(&creds, 0x1e, auth_data, auth_len);
 
 	pb_init(&sys, sys_store, sizeof(sys_store));
 	pb_varint(&sys, 0x0a, CPU_ARM);
@@ -802,6 +807,8 @@ ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
 
 	bool built = pb_ok(&login);
 	int sent = built ? ap_send(s, AP_PKT_LOGIN, login.p, login.len) : -1;
+	mbedtls_platform_zeroize(creds_store, creds_cap);
+	mbedtls_platform_zeroize(login_store, creds_cap + sizeof(sys_store) + 128);
 	free(creds_store);
 	free(login_store);
 	if (sent < 0) {
@@ -830,21 +837,31 @@ ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
 		}
 		if (cmd == AP_PKT_APWELCOME) {
 			pbv user;
-			if (pb_get_bytes(buf, (size_t)n, 0x0a, &user)) {
-				size_t len = user.len < sizeof(nfo->username) - 1
-				             ? user.len : sizeof(nfo->username) - 1;
-				memcpy(nfo->username, user.p, len);
-				nfo->username[len] = '\0';
+			if (!pb_get_bytes(buf, (size_t)n, 0x0a, &user) ||
+			    !user.len || user.len >= sizeof(nfo->username) ||
+			    memchr(user.p, '\0', user.len)) {
+				snprintf(err, errlen, "APWelcome has an invalid username");
+				break;
 			}
+			memcpy(nfo->username, user.p, user.len);
+			nfo->username[user.len] = '\0';
 			uint64_t acct = 0;
 			pb_get_varint(buf, (size_t)n, 0x14, &acct);
 			nfo->account_type = (int)acct;
+			uint64_t reusable_type;
 			pbv reusable;
-			if (pb_get_bytes(buf, (size_t)n, 0x28, &reusable) &&
-			    reusable.len <= sizeof(nfo->reusable)) {
-				memcpy(nfo->reusable, reusable.p, reusable.len);
-				nfo->reusable_len = reusable.len;
+			if (!pb_get_varint(buf, (size_t)n, 0x1e, &reusable_type) ||
+			    (reusable_type != AUTH_STORED_SPOTIFY &&
+			     reusable_type != AUTH_STORED_FACEBOOK) ||
+			    !pb_get_bytes(buf, (size_t)n, 0x28, &reusable) ||
+			    !reusable.len || reusable.len > sizeof(nfo->reusable)) {
+				snprintf(err, errlen,
+				         "APWelcome has missing or unsupported reusable credentials");
+				break;
 			}
+			nfo->reusable_type = (int)reusable_type;
+			memcpy(nfo->reusable, reusable.p, reusable.len);
+			nfo->reusable_len = reusable.len;
 			ok = true;
 			break;
 		}
@@ -859,6 +876,7 @@ ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
 		if (cmd == AP_PKT_PING)
 			ap_handle_ping(s, buf, (size_t)n);
 	}
+	mbedtls_platform_zeroize(buf, AP_MAX_PACKET);
 	free(buf);
 	osTickCounterUpdate(&t);
 	nfo->login_ms = osTickCounterRead(&t);
@@ -866,6 +884,44 @@ ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
 	if (!ok) {
 		ap_close(s);
 		return NULL;
+	}
+	return s;
+}
+
+ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
+                     const char *device_id, ap_info *info,
+                     char *err, size_t errlen)
+{
+	ap_info bootstrap = {0}, local = {0};
+	ap_info *nfo = info ? info : &local;
+	ap_session *s = ap_login_credentials(host, port, NULL, AUTH_SPOTIFY_TOKEN,
+	                                    (const uint8_t *)access_token,
+	                                    strlen(access_token), device_id,
+	                                    &bootstrap, err, errlen);
+	if (!s) {
+		*nfo = bootstrap;
+	} else {
+		/* Like librespot's connect_inner: token-authenticated AP sessions
+		 * are replaced, not reused for audio key requests. */
+		ap_close(s);
+		s = ap_login_credentials(host, port, bootstrap.username,
+		                         bootstrap.reusable_type, bootstrap.reusable,
+		                         bootstrap.reusable_len, device_id,
+		                         nfo, err, errlen);
+		if (s && strcmp(nfo->username, bootstrap.username) != 0) {
+			snprintf(err, errlen, "AP account changed during reauthentication");
+			ap_close(s);
+			s = NULL;
+		}
+		nfo->connect_ms += bootstrap.connect_ms;
+		nfo->handshake_ms += bootstrap.handshake_ms;
+		nfo->login_ms += bootstrap.login_ms;
+	}
+	mbedtls_platform_zeroize(&bootstrap, sizeof(bootstrap));
+	mbedtls_platform_zeroize(&local, sizeof(local));
+	if (!s) {
+		mbedtls_platform_zeroize(nfo->reusable, sizeof(nfo->reusable));
+		nfo->reusable_len = 0;
 	}
 	return s;
 }

@@ -832,6 +832,17 @@ class BuildTests(unittest.TestCase):
                      "error_detail_text", "header_text"):
             self.assertNotIn(gone, results)
 
+    def test_app_data_uses_3dspotify_directory_on_clean_install(self):
+        cfg = (build.ROOT / "platform3ds" / "cfg3ds.c").read_text(
+            encoding="utf-8"
+        )
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        self.assertIn('#define APP_DATA_DIR "sdmc:/3ds/3DSpotify/"', cfg)
+        self.assertNotIn("spotibacan", cfg)
+        self.assertIn('mkdir("sdmc:/3ds", 0777);', cfg)
+        self.assertIn('mkdir("sdmc:/3ds/3DSpotify", 0777);', cfg)
+        self.assertIn("cfg_set_path(NULL);", app)
+
     def test_player_preserves_audio_key_refusal_diagnostic(self):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
         begin = app[app.index("static void player_begin_audio(void)"):
@@ -854,6 +865,38 @@ class BuildTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertEqual(track.count("out->key_refused_code = refused;"), 2)
+
+    def test_audio_key_sessions_reauthenticate_after_oauth(self):
+        source = (build.ROOT / "platform3ds" / "ap3ds.c").read_text(
+            encoding="utf-8"
+        )
+        login = source[source.index("ap_session *ap_login("):
+                       source.index("ap_session *ap_login_any(")]
+        self.assertEqual(login.count("ap_login_credentials("), 2)
+        self.assertIn("NULL, AUTH_SPOTIFY_TOKEN", login)
+        self.assertLess(login.index("ap_close(s);"),
+                        login.index("bootstrap.username"))
+        self.assertIn("bootstrap.reusable_type, bootstrap.reusable", login)
+        self.assertIn("bootstrap.reusable_len, device_id", login)
+        self.assertIn("strcmp(nfo->username, bootstrap.username) != 0", login)
+        self.assertIn("mbedtls_platform_zeroize(&bootstrap", login)
+        self.assertIn("mbedtls_platform_zeroize(&local", login)
+        self.assertIn("mbedtls_platform_zeroize(nfo->reusable", login)
+        credentials = source[
+            source.index("static ap_session *ap_login_credentials("):
+            source.index("ap_session *ap_login(")
+        ]
+        self.assertIn("pb_str(&creds, 0x0a, username)", credentials)
+        self.assertIn("pb_varint(&creds, 0x14, (uint64_t)auth_type)", credentials)
+        self.assertIn("pb_bytes(&creds, 0x1e, auth_data, auth_len)", credentials)
+        self.assertIn("pb_get_varint(buf, (size_t)n, 0x1e, &reusable_type)",
+                      credentials)
+        self.assertIn("reusable_type != AUTH_STORED_SPOTIFY", credentials)
+        self.assertIn("reusable_type != AUTH_STORED_FACEBOOK", credentials)
+        self.assertIn("!reusable.len", credentials)
+        self.assertIn("mbedtls_platform_zeroize(login_store", credentials)
+        self.assertIn("mbedtls_platform_zeroize(buf, AP_MAX_PACKET)",
+                      credentials)
 
     def test_loading_a_track_never_blocks_the_main_thread(self):
         ui_dir = build.ROOT / "ui"
