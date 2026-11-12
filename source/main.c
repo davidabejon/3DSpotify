@@ -98,7 +98,21 @@ static bool screens_lost;
 
 /* Closing the lid over music darkens the screens instead of sleeping. */
 static bool ptmu_ready;
-static bool lcd_ready;
+static bool lcd_ready;   /* gsp::Lcd can be opened; never kept open */
+
+/* gsp::Lcd is opened only around each call, as ftpd does: a session held
+ * for the whole run left the HOME menu hung once the app handed it the
+ * console, and the console had to be rebooted. */
+static void set_backlights(bool on)
+{
+	if (R_FAILED(gspLcdInit()))
+		return;
+	if (on)
+		GSPLCD_PowerOnAllBacklights();
+	else
+		GSPLCD_PowerOffAllBacklights();
+	gspLcdExit();
+}
 static bool screens_dark;
 /* NDM drops the Wi-Fi when the lid shuts, sleep or not, unless the app
  * holds the connection in the exclusive infrastructure state. */
@@ -958,11 +972,11 @@ static void power_poll(void)
 	 * shut, and NDM should take the connection back first. */
 	wifi_hold(awake);
 	if (lit && screens_dark) {
-		GSPLCD_PowerOnAllBacklights();
+		set_backlights(true);
 		screens_dark = false;
 		screens_lost = true;
 	} else if (!lit && !screens_dark) {
-		GSPLCD_PowerOffAllBacklights();
+		set_backlights(false);
 		screens_dark = true;
 	}
 	/* Allowing sleep again with the lid shut sleeps at once, which is why
@@ -1847,6 +1861,8 @@ int main(int argc, char **argv)
 	}
 	ptmu_ready = R_SUCCEEDED(ptmuInit());
 	lcd_ready = R_SUCCEEDED(gspLcdInit());
+	if (lcd_ready)
+		gspLcdExit();
 	ndm_ready = R_SUCCEEDED(ndmuInit());
 	/* Now, with the lid surely open; a failure is retried, and reported,
 	 * on the first play. */
@@ -1961,15 +1977,13 @@ done:
 	thumbs_exit();
 	icons_exit();
 	if (screens_dark)
-		GSPLCD_PowerOnAllBacklights();
+		set_backlights(true);
 	if (ndsp_up)
 		ndspExit();
 	wifi_hold(false);
 	if (ndm_ready)
 		ndmuExit();
 	aptSetSleepAllowed(true);
-	if (lcd_ready)
-		gspLcdExit();
 	if (ptmu_ready)
 		ptmuExit();
 	ui_exit();
