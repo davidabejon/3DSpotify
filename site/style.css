@@ -361,6 +361,27 @@ code {
 	--banda-oscura: var(--ambar-osc);
 }
 
+/* Incidencia ajena a la app: rojo del botón A, más llamativo que coral. */
+.aviso--rojo {
+	--relleno: var(--btn-a);
+	--banda-clara: #FF9A93;
+	--banda-oscura: #B8261E;
+	border-width: 2px;
+}
+
+.incidencia {
+	padding: var(--e4) var(--e5);
+}
+
+.incidencia h2 {
+	font-size: var(--t-cabeza);
+	margin-bottom: var(--e1);
+}
+
+.incidencia code {
+	font-weight: 700;
+}
+
 .aviso .icon {
 	margin-top: 4px;
 }

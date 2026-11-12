@@ -3,15 +3,26 @@
 Cliente no oficial de Spotify para Nintendo 3DS. La aplicación se conecta
 directamente a Spotify por HTTPS.
 
-**Web:** [davidabejon.github.io/3DSpotify](https://davidabejon.github.io/3DSpotify/)
-(descarga, código QR para FBI, características y controles). Su código está en
-[site/](site/) y se publica en GitHub Pages con
-[.github/workflows/pages.yml](.github/workflows/pages.yml) en cada push a
-`main` que la modifique.
+> [!WARNING]
+> **Compatibilidad de cuentas de Spotify**
+>
+> Spotify ha cambiado la forma en que entrega las claves para descifrar el
+> audio. Algunas cuentas Premium, al parecer las creadas a partir de cierta
+> fecha, ya no pueden obtener las claves que necesita 3DSpotify. El inicio de
+> sesión y la búsqueda siguen funcionando, pero todas las canciones fallan con
+> `Audio key refused (0x0001)`. Esas mismas cuentas funcionan con normalidad en
+> las apps oficiales de Spotify.
+>
+> Es una restricción de Spotify, no un fallo de 3DSpotify ni un problema de tu
+> consola o tu configuración. Afecta igual a todos los clientes basados en
+> librespot; consulta
+> [librespot#1649](https://github.com/librespot-org/librespot/issues/1649).
+> Todavía no se conoce ninguna solución. Estoy trabajando para solucionarlo
+> o, al menos, encontrar una alternativa para las cuentas afectadas.
 
 <div style="display: flex; gap: 10px">
-  <img src="https://i.imgur.com/BiwIS82.png" alt="Top playing" width="350">
-  <img src="https://i.imgur.com/ppvuOb7.png" alt="Bottom playing" width="350">
+  <img src="assets/playing.png" alt="Now playing" width="350">
+  <img src="assets/results.png" alt="Search results" width="350">
 </div>
 
 ## Resumen

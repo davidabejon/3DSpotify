@@ -251,6 +251,12 @@ def makerom_command(makerom: Path, elf: Path, smdh: Path, banner: Path,
             f"-DAPP_ROMFS={romfs.as_posix()}"]
 
 
+def output_name(app: str) -> str:
+    """Base name of the output folder and of the .3dsx and .cia files: the
+    app's title for the real client, the target name for the probes."""
+    return APP_TITLE if app == "spotify3ds" else app
+
+
 def make_cia(sdk: Path, bannertool: Path, elf: Path, smdh: Path,
              out: Path, dest: Path, romfs: Path) -> Path:
     makerom = require_tool(sdk / "tools" / "bin", "makerom")
