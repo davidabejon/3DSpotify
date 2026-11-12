@@ -40,7 +40,7 @@ AccessControlInfo:
   UseExtSaveData                : false
 
   # The app reads and writes its config, log and downloads under
-  # sdmc:/3ds/spotibacan/.
+  # sdmc:/3ds/3DSpotify/.
   FileSystemAccess:
    - CategorySystemApplication
    - CategoryHardwareCheck
