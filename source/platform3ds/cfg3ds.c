@@ -8,10 +8,9 @@
 #include <sys/stat.h>
 
 #define CFG_NAME "spotify.cfg"
-/* A CIA has no usable argv[0], so without this everything (the token,
- * native.log, liked.txt, downloads) landed loose on the SD root. */
-#define CIA_DIR  "sdmc:/3ds/spotibacan/"
-#define CIA_PATH CIA_DIR CFG_NAME
+/* The app uses one data directory regardless of how it was launched. */
+#define APP_DATA_DIR "sdmc:/3ds/3DSpotify/"
+#define APP_CONFIG_PATH APP_DATA_DIR CFG_NAME
 #define CFG_MAX_KEYS 8
 #define CFG_VAL_MAX 512
 
@@ -41,28 +40,10 @@ void cfg_set_path(const char *argv0)
 			}
 		}
 	}
-	/* CIA install: keep everything under its own folder. The files a root
-	 * install of the early builds may have left behind move with it, so the
-	 * pairing survives the tidy-up. */
-	mkdir("sdmc:/3ds/spotibacan", 0777);
-	static const char *legacy[] = {
-		"spotify.cfg", "liked.txt", "likes_pending.txt", NULL
-	};
-	for (int i = 0; legacy[i]; i++) {
-		char from[64], to[96];
-		snprintf(from, sizeof(from), "sdmc:/%s", legacy[i]);
-		snprintf(to, sizeof(to), "%s%s", CIA_DIR, legacy[i]);
-		FILE *old = fopen(from, "r");
-		if (old) {
-			fclose(old);
-			FILE *have = fopen(to, "r");
-			if (have)
-				fclose(have);   /* already migrated: leave both alone */
-			else
-				rename(from, to);
-		}
-	}
-	snprintf(path, sizeof(path), "%s", CIA_PATH);
+	/* Keep CIA data in the same folder used by the 3dsx release. */
+	mkdir("sdmc:/3ds", 0777);
+	mkdir("sdmc:/3ds/3DSpotify", 0777);
+	snprintf(path, sizeof(path), "%s", APP_CONFIG_PATH);
 }
 
 const char *cfg_path(void)

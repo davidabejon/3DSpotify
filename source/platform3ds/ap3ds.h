@@ -32,7 +32,8 @@ typedef struct {
 	char   ap[160];              /* the host:port actually used */
 	char   username[128];        /* canonical_username from APWelcome */
 	char   country[8];           /* from the CountryCode packet, when it arrives */
-	int    account_type;
+	int    account_type;         /* Spotify/Facebook, not Free/Premium */
+	int    reusable_type;        /* AuthenticationType returned by APWelcome */
 	int    login_error;          /* APLoginFailed error_code, 0 when none */
 	double connect_ms;
 	double handshake_ms;
@@ -66,9 +67,11 @@ ap_session *ap_login_any(const ap_candidate *cands, int n, const char *access_to
                          const char *device_id, ap_info *info, int *tried,
                          char *err, size_t errlen);
 
-/* Dials the AP, completes the handshake and logs in with an OAuth access
- * token. `info` may be NULL. Returns NULL with `err` set on failure; when the
- * AP itself refused the login, info->login_error carries its reason. */
+/* Exchanges OAuth for AP credentials, then reconnects and authenticates with
+ * those credentials before returning an audio-key-capable session.
+ * `info` describes the second login and may be NULL. Returns NULL with `err`
+ * set on failure; an AP refusal sets info->login_error. Credentials remain
+ * in memory only and must never be displayed or logged. */
 ap_session *ap_login(const char *host, uint16_t port, const char *access_token,
                      const char *device_id, ap_info *info,
                      char *err, size_t errlen);
@@ -94,12 +97,12 @@ void ap_close(ap_session *s);
 
 /* The AES-128 key for one audio file, over this session.
  *
- * This is the one thing only the access point can give, and the reason the
- * session is held open at all. Spotify refuses it for some newer accounts
- * (librespot#1649) -- an account-side restriction, not a protocol error -- and
- * that shows up here as AP_KEY_REFUSED.
+ * An explicit server refusal is AP_KEY_REFUSED. Its numeric code alone does
+ * not establish whether the cause is account policy, track availability or
+ * how the session was authenticated.
  *
- * Returns 0, AP_KEY_REFUSED with the server's code in `refused_code`, or -1. */
+ * Returns 0, AP_KEY_REFUSED with the server's code in `refused_code` (-1 if
+ * absent), or -1 for a transport/protocol error. */
 #define AP_KEY_REFUSED (-2)
 
 int  ap_audio_key(ap_session *s, const uint8_t file_id[20],
