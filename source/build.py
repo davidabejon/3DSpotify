@@ -1,9 +1,9 @@
 """Build native 3DS apps with devkitPro (devkitARM, libctru and 3dsxtool).
 
 From the repository root:
-    python source/build.py --app spotify3ds --fetch-deps
+    python source\\build.py --app 3dspotify --fetch-deps --debug
 
-Add --cia to also package dist/3ds/3DSpotify/3DSpotify.cia for FBI and
+Add --cia to also package source/dist/3ds/3DSpotify/3DSpotify.cia for FBI and
 similar installers (needs makerom and bannertool from devkitPro's tools).
 
 Python 3.12+ is required. --fetch-deps downloads pinned dependencies when
@@ -38,7 +38,7 @@ QRCODEGEN_SHA256_H = "e82df4bff37d18b5863b9e7486fe6bda1b6cda8c3b9ecebfec47390726
 # at the repository root.
 ASSETS = ROOT.parent / "assets"
 # Files the app reads at run time as romfs:/ (the logo), packed into both the
-# .3dsx and the .cia of spotify3ds.
+# .3dsx and the .cia of 3dspotify.
 ROMFS = ROOT.parent / "romfs"
 APP_TITLE = "3DSpotify"
 APP_DESCRIPTION = "Native Spotify client for Nintendo 3DS"
@@ -51,7 +51,7 @@ BANNER_FADE_SECONDS = 0.4
 # name -> (source directories, extra defines, mbedTLS flavour or None,
 #          extra single sources relative to this script)
 APPS = {
-    "spotify3ds": (["ui", "lang", "platform3ds"], [], "release",
+    "3dspotify": (["ui", "lang", "platform3ds"], [], "release",
                    ["main.c", "deps/stb_vorbis.c", "deps/qrcodegen.c"]),
     "probe_tls": (["probe_tls", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
     "probe_pair": (["probe_pair", "platform3ds"], ["-DPROBE_BUILD"], "probe", []),
@@ -273,7 +273,7 @@ def make_cia(sdk: Path, bannertool: Path, elf: Path, smdh: Path,
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--app", choices=sorted(APPS), default="spotify3ds")
+    ap.add_argument("--app", choices=sorted(APPS), default="3dspotify")
     ap.add_argument("--devkitpro", "--toolchain", dest="devkitpro", type=Path,
                     help="devkitPro root (not a Melee shim)")
     ap.add_argument("--fetch-deps", action="store_true",
@@ -281,7 +281,7 @@ def main():
                          "dependencies")
     ap.add_argument("--debug", action="store_true", help="-O0 with assertions")
     ap.add_argument("--cia", action="store_true",
-                    help="also build an installable .cia (spotify3ds only)")
+                    help="also build an installable .cia (3dspotify only)")
     args = ap.parse_args()
 
     sdk = find_devkitpro(args.devkitpro)
@@ -292,10 +292,10 @@ def main():
         raise SystemExit(f"libctru is missing under {sdk}")
 
     app = args.app
-    if args.cia and app != "spotify3ds":
-        raise SystemExit("--cia is only supported for spotify3ds")
+    if args.cia and app != "3dspotify":
+        raise SystemExit("--cia is only supported for 3dspotify")
     # Checked before compiling, so a missing romfs fails fast.
-    romfs = require_romfs(ROMFS) if app == "spotify3ds" else None
+    romfs = require_romfs(ROMFS) if app == "3dspotify" else None
     srcdirs, defines, mbed, extra_sources = APPS[app]
     sources = []
     for directory in srcdirs:
@@ -347,11 +347,11 @@ def main():
                     "-Wl,--start-group", "-lcitro2d", "-lcitro3d", "-lctru",
                     "-lm", "-Wl,--end-group"], check=True)
 
-    name = output_name(app)
-    dest = ROOT / "dist" / "3ds" / name / f"{name}.3dsx"
+    output_name = APP_TITLE if app == "3dspotify" else app
+    dest = ROOT / "dist" / "3ds" / output_name / f"{output_name}.3dsx"
     dest.parent.mkdir(parents=True, exist_ok=True)
     bannertool = smdh = None
-    if app == "spotify3ds":
+    if app == "3dspotify":
         bannertool = require_tool(sdk / "tools" / "bin", "bannertool")
         smdh = make_smdh(bannertool, out)
     subprocess.run(pack_command(packer, elf, dest, smdh, romfs), check=True)
@@ -362,7 +362,7 @@ def main():
         print(f"Built {cia}  ({cia.stat().st_size:,} bytes)")
         print("Copy it to the SD card and install it with FBI or a similar "
               "CIA installer.")
-    if app == "spotify3ds":
+    if app == "3dspotify":
         print(f"Copy {dest.parent} to SD:/3ds/ and launch {dest.name} from "
               "Homebrew Launcher, or send it with 3dslink.")
 

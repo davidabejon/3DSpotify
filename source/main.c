@@ -98,7 +98,21 @@ static bool screens_lost;
 
 /* Closing the lid over music darkens the screens instead of sleeping. */
 static bool ptmu_ready;
-static bool lcd_ready;
+static bool lcd_ready;   /* gsp::Lcd can be opened; never kept open */
+
+/* gsp::Lcd is opened only around each call, as ftpd does: a session held
+ * for the whole run left the HOME menu hung once the app handed it the
+ * console, and the console had to be rebooted. */
+static void set_backlights(bool on)
+{
+	if (R_FAILED(gspLcdInit()))
+		return;
+	if (on)
+		GSPLCD_PowerOnAllBacklights();
+	else
+		GSPLCD_PowerOffAllBacklights();
+	gspLcdExit();
+}
 static bool screens_dark;
 /* NDM drops the Wi-Fi when the lid shuts, sleep or not, unless the app
  * holds the connection in the exclusive infrastructure state. */
@@ -547,10 +561,10 @@ static void player_begin_audio(void)
 	memset(&prep.stream, 0, sizeof(prep.stream));
 	prepare_reap();
 	if (rc != 0) {
-		if (rc == AP_KEY_REFUSED)
-			snprintf(error, sizeof(error), "%s", tr(STR_ERR_KEY_REFUSED));
-		else if (!error[0])
-			snprintf(error, sizeof(error), "%s", tr(STR_ERR_AP_SESSION));
+		if (!error[0])
+			snprintf(error, sizeof(error), "%s",
+			         tr(rc == AP_KEY_REFUSED ? STR_ERR_KEY_REFUSED
+			                                 : STR_ERR_AP_SESSION));
 		player_fail(error);
 		return;
 	}
@@ -958,11 +972,11 @@ static void power_poll(void)
 	 * shut, and NDM should take the connection back first. */
 	wifi_hold(awake);
 	if (lit && screens_dark) {
-		GSPLCD_PowerOnAllBacklights();
+		set_backlights(true);
 		screens_dark = false;
 		screens_lost = true;
 	} else if (!lit && !screens_dark) {
-		GSPLCD_PowerOffAllBacklights();
+		set_backlights(false);
 		screens_dark = true;
 	}
 	/* Allowing sleep again with the lid shut sleeps at once, which is why
@@ -1835,6 +1849,7 @@ static login_action run_error(const startup_error *error, bool fatal)
 int main(int argc, char **argv)
 {
 	(void)argc;
+	(void)argv;
 	gfxInitDefault();
 	/* Without romfs the logo falls back to the app name as text. */
 	bool romfs_ready = R_SUCCEEDED(romfsInit());
@@ -1847,6 +1862,8 @@ int main(int argc, char **argv)
 	}
 	ptmu_ready = R_SUCCEEDED(ptmuInit());
 	lcd_ready = R_SUCCEEDED(gspLcdInit());
+	if (lcd_ready)
+		gspLcdExit();
 	ndm_ready = R_SUCCEEDED(ndmuInit());
 	/* Now, with the lid surely open; a failure is retried, and reported,
 	 * on the first play. */
@@ -1875,7 +1892,7 @@ int main(int argc, char **argv)
 		gfxExit();
 		return 1;
 	}
-	cfg_set_path((argv && argv[0]) ? argv[0] : NULL);
+	cfg_set_path(NULL);
 	language_init();
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
@@ -1961,15 +1978,13 @@ done:
 	thumbs_exit();
 	icons_exit();
 	if (screens_dark)
-		GSPLCD_PowerOnAllBacklights();
+		set_backlights(true);
 	if (ndsp_up)
 		ndspExit();
 	wifi_hold(false);
 	if (ndm_ready)
 		ndmuExit();
 	aptSetSleepAllowed(true);
-	if (lcd_ready)
-		gspLcdExit();
 	if (ptmu_ready)
 		ptmuExit();
 	ui_exit();

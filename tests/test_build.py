@@ -105,7 +105,7 @@ class BuildTests(unittest.TestCase):
                 build.stb_vorbis_source(False)
 
     def test_native_target_has_root_entry_point_and_no_proxy_client(self):
-        source_dirs, _, mbedtls, extra_sources = build.APPS["spotify3ds"]
+        source_dirs, _, mbedtls, extra_sources = build.APPS["3dspotify"]
         source_names = {
             path.name
             for directory in source_dirs
@@ -126,8 +126,25 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(mbedtls, "release")
         self.assertIn("deps/stb_vorbis.c", extra_sources)
 
+    def test_native_target_name_and_distribution_path(self):
+        self.assertIn("3dspotify", build.APPS)
+        self.assertNotIn("spotify3ds", build.APPS)
+        self.assertEqual(build.APP_TITLE, "3DSpotify")
+        source = (build.ROOT / "build.py").read_text(encoding="utf-8")
+        self.assertIn('default="3dspotify"', source)
+        self.assertIn(
+            'output_name = APP_TITLE if app == "3dspotify" else app',
+            source,
+        )
+        self.assertIn(
+            'ROOT / "dist" / "3ds" / output_name / f"{output_name}.3dsx"',
+            source,
+        )
+        self.assertIn('dest.with_suffix(".cia")', source)
+        self.assertIn("launch {dest.name}", source)
+
     def test_native_target_uses_only_direct_artwork_pipeline(self):
-        source_dirs, _, _, _ = build.APPS["spotify3ds"]
+        source_dirs, _, _, _ = build.APPS["3dspotify"]
         ui_sources = list((build.ROOT / "ui").glob("*.c"))
         implementations = [
             source for source in ui_sources
@@ -605,7 +622,7 @@ class BuildTests(unittest.TestCase):
                               r"RootPath\s*:\s*\$\(APP_ROMFS\)")
         self.assertEqual(build.ROMFS, build.ROOT.parent / "romfs")
         source = (build.ROOT / "build.py").read_text(encoding="utf-8")
-        self.assertIn("require_romfs(ROMFS) if app == \"spotify3ds\"", source)
+        self.assertIn("require_romfs(ROMFS) if app == \"3dspotify\"", source)
 
     def test_romfs_is_mounted_around_the_renderer(self):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
@@ -819,6 +836,72 @@ class BuildTests(unittest.TestCase):
                      "error_detail_text", "header_text"):
             self.assertNotIn(gone, results)
 
+    def test_app_data_uses_3dspotify_directory_on_clean_install(self):
+        cfg = (build.ROOT / "platform3ds" / "cfg3ds.c").read_text(
+            encoding="utf-8"
+        )
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        self.assertIn('#define APP_DATA_DIR "sdmc:/3ds/3DSpotify/"', cfg)
+        self.assertNotIn("spotibacan", cfg)
+        self.assertIn('mkdir("sdmc:/3ds", 0777);', cfg)
+        self.assertIn('mkdir("sdmc:/3ds/3DSpotify", 0777);', cfg)
+        self.assertIn("cfg_set_path(NULL);", app)
+
+    def test_player_preserves_audio_key_refusal_diagnostic(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        begin = app[app.index("static void player_begin_audio(void)"):
+                    app.index("static int free_wave_index(")]
+        self.assertLess(begin.index('"%s", prep.error'),
+                        begin.index("prepare_reap();"))
+        self.assertIn(
+            'if (!error[0])\n\t\t\tsnprintf(error, sizeof(error), "%s",',
+            begin,
+        )
+        self.assertNotIn("if (rc == AP_KEY_REFUSED)", begin)
+        self.assertIn("player_fail(error);", begin)
+        ap = (build.ROOT / "platform3ds" / "ap3ds.c").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Audio key refused (0x%04X)", ap)
+        self.assertIn("Audio key refused (no server code)", ap)
+        self.assertIn("packet=0x%02X len=%d\\nseq=%lu", ap)
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(track.count("out->key_refused_code = refused;"), 2)
+
+    def test_audio_key_sessions_reauthenticate_after_oauth(self):
+        source = (build.ROOT / "platform3ds" / "ap3ds.c").read_text(
+            encoding="utf-8"
+        )
+        login = source[source.index("ap_session *ap_login("):
+                       source.index("ap_session *ap_login_any(")]
+        self.assertEqual(login.count("ap_login_credentials("), 2)
+        self.assertIn("NULL, AUTH_SPOTIFY_TOKEN", login)
+        self.assertLess(login.index("ap_close(s);"),
+                        login.index("bootstrap.username"))
+        self.assertIn("bootstrap.reusable_type, bootstrap.reusable", login)
+        self.assertIn("bootstrap.reusable_len, device_id", login)
+        self.assertIn("strcmp(nfo->username, bootstrap.username) != 0", login)
+        self.assertIn("mbedtls_platform_zeroize(&bootstrap", login)
+        self.assertIn("mbedtls_platform_zeroize(&local", login)
+        self.assertIn("mbedtls_platform_zeroize(nfo->reusable", login)
+        credentials = source[
+            source.index("static ap_session *ap_login_credentials("):
+            source.index("ap_session *ap_login(")
+        ]
+        self.assertIn("pb_str(&creds, 0x0a, username)", credentials)
+        self.assertIn("pb_varint(&creds, 0x14, (uint64_t)auth_type)", credentials)
+        self.assertIn("pb_bytes(&creds, 0x1e, auth_data, auth_len)", credentials)
+        self.assertIn("pb_get_varint(buf, (size_t)n, 0x1e, &reusable_type)",
+                      credentials)
+        self.assertIn("reusable_type != AUTH_STORED_SPOTIFY", credentials)
+        self.assertIn("reusable_type != AUTH_STORED_FACEBOOK", credentials)
+        self.assertIn("!reusable.len", credentials)
+        self.assertIn("mbedtls_platform_zeroize(login_store", credentials)
+        self.assertIn("mbedtls_platform_zeroize(buf, AP_MAX_PACKET)",
+                      credentials)
+
     def test_loading_a_track_never_blocks_the_main_thread(self):
         ui_dir = build.ROOT / "ui"
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
@@ -962,7 +1045,7 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((self.root / "deps").exists())
 
     def test_qrcodegen_is_pinned_and_built_without_warnings(self):
-        _, _, _, extra_sources = build.APPS["spotify3ds"]
+        _, _, _, extra_sources = build.APPS["3dspotify"]
         self.assertIn("deps/qrcodegen.c", extra_sources)
         # The committed copies are the pinned ones, so an offline build works.
         source = build.qrcodegen_source(False)

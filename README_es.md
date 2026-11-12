@@ -35,16 +35,23 @@ Este repositorio contiene:
 - Una Nintendo 3DS con Homebrew Launcher y conexión Wi-Fi.
 - Para compilar desde código: devkitPro con devkitARM, libctru, citro2d, citro3d y 3dsxtool, además de Python 3.12 o posterior.
 
+La preparación de audio intercambia OAuth por credenciales reutilizables del AP
+y autentica una nueva conexión antes de pedir la clave, siguiendo el flujo de
+librespot. Estas credenciales AP quedan en memoria: no se guardan ni se registran.
+El rechazo muestra el código del servidor, que por sí solo no demuestra que
+falte Premium.
+
 ## Compilar el cliente nativo
 
 Instala devkitPro con devkitARM, libctru, citro2d, citro3d y 3dsxtool, además
 de Python 3.12 o posterior. Desde la raíz del repositorio:
 
 ```powershell
-python source\build.py --fetch-deps
+python source\build.py --app 3dspotify --fetch-deps --debug
 ```
 
-El target predeterminado y único cliente completo es `spotify3ds`. La descarga
+El target predeterminado y único cliente completo es `3dspotify`. Omite
+`--debug` para generar una versión optimizada. La descarga
 fija y verifica mbedTLS 3.6.7, `stb_vorbis` y `qrcodegen` 1.8.0 (el código QR
 del emparejamiento); también genera la cabecera de
 Vorbis desde esa misma fuente verificada. Tras descargar las dependencias, se
@@ -78,7 +85,8 @@ python source\build.py --cia
 
 Se genera `source\dist\3ds\3DSpotify\3DSpotify.cia`; cópialo a la SD e
 instálalo con FBI o un instalador de CIA similar (requiere custom firmware).
-El CIA guarda su configuración en `SD:/3ds/spotibacan/`.
+La app crea `SD:/3ds/3DSpotify/` si hace falta y guarda allí su configuración
+y sus datos locales.
 
 Tanto el `.3dsx` como el `.cia` empaquetan el directorio `romfs/` del
 repositorio, que la app lee como `romfs:/`; si falta, el build se detiene.

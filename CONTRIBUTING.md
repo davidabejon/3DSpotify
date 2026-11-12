@@ -45,7 +45,7 @@ You need devkitPro with devkitARM, libctru, citro2d, citro3d and 3dsxtool, plus
 Python 3.12 or newer. From the repository root:
 
 ```powershell
-python source\build.py --fetch-deps          # build spotify3ds
+python source\build.py --app 3dspotify --fetch-deps --debug
 python source\build.py --app probe_tls       # build a probe
 python source\build.py --debug               # -O0 with assertions
 python source\build.py --cia                 # also package the CIA
@@ -60,7 +60,7 @@ them against pinned checksums. Do not commit anything under `source/dist/`,
 
 | Path | Contents |
 |---|---|
-| `source/main.c` | Entry point of the `spotify3ds` client. |
+| `source/main.c` | Entry point of the `3dspotify` client. |
 | `source/ui/` | Screens, rendering, artwork and player logic. |
 | `source/lang/` | User-facing text in every supported language. |
 | `source/platform3ds/` | TLS, sockets, Spotify protocol and 3DS platform code. |
@@ -145,7 +145,7 @@ README and, if it is copied into the repository, in `NOTICE`.
 - Add or update tests for logic you change. Pure logic belongs in
   `tests/native_logic_test.c`; build and wiring checks belong in
   `tests/test_build.py`.
-- Make sure `python source\build.py` builds `spotify3ds` without new warnings,
+- Make sure `python source\build.py` builds `3dspotify` without new warnings,
   and that any probe you touched still builds with `--app`.
 - **Test on real hardware** whenever you change networking, audio, rendering,
   input or file handling. Say in the PR which console you tested on; if you

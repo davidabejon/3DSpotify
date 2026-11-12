@@ -31,6 +31,7 @@ typedef struct {
 	double   key_ms;
 	double   download_ms;
 	double   decrypt_ms;
+	int      key_refused_code; /* on AP_KEY_REFUSED: 0..65535, -1 if absent */
 } track_audio;
 
 /* Fetches and decrypts one track. `ap` must be a live session: the audio key
@@ -82,6 +83,7 @@ typedef struct {
 	int        format;
 	uint8_t    key[16];
 	sp_storage storage;
+	int        key_refused_code; /* on AP_KEY_REFUSED: 0..65535, -1 if absent */
 
 	/* What storage-resolve needs to hand out fresh CDN URLs mid-download:
 	 * they are signed and expire, and an edge refuses a stale one. */

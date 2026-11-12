@@ -88,6 +88,7 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 	                      err, errlen);
 	osTickCounterUpdate(&t);
 	out->key_ms = osTickCounterRead(&t);
+	out->key_refused_code = refused;
 	if (rc != 0)
 		return rc;
 
@@ -186,8 +187,10 @@ static int track_stream_begin_internal(const char *sp_host, const char *token,
 
 	if (progress) progress("clave de audio");
 	int refused = 0;
-	return ap_audio_key(ap, file->id, out->meta.gid, out->key, &refused,
-	                    err, errlen);
+	int rc = ap_audio_key(ap, file->id, out->meta.gid, out->key, &refused,
+	                      err, errlen);
+	out->key_refused_code = refused;
+	return rc;
 }
 
 int track_stream_begin(const char *sp_host, const char *token, ap_session *ap,
