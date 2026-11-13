@@ -541,6 +541,23 @@ class BuildTests(unittest.TestCase):
         self.assertIn("doc->kind == DETAIL_ALBUM ? TRACK_LIST_NUMBERS", view)
         self.assertIn("track_list_scroll_to(&list, doc->first);", view)
         self.assertIn("doc->selected = list.selected;", view)
+        # The Playing tab's title, artist and album open their details on
+        # that tab, once the press has been seen; the track's with a copy
+        # of the queue.
+        player = (ui_dir / "view_player.c").read_text(encoding="utf-8")
+        self.assertIn("player_link_hit(pos.px, pos.py, enabled)", player)
+        self.assertIn("queue(link_action(control - LINK_CONTROL), press);",
+                      player)
+        self.assertIn("player_links_enabled(info.phase)", player)
+        for case, kind in (("PLAYER_ACTION_OPEN_TRACK", "DETAIL_TRACK"),
+                           ("PLAYER_ACTION_OPEN_ARTIST", "DETAIL_ARTIST"),
+                           ("PLAYER_ACTION_OPEN_ALBUM", "DETAIL_ALBUM")):
+            self.assertIn(f"case {case}:\n\t\t\t\topen_playing_detail({kind});",
+                          loop)
+        opening = app[app.index("static void open_playing_detail("):
+                      app.index("static void detail_input(")]
+        self.assertIn("details_open_track(TAB_PLAYER, playback_queue, "
+                      "playback_queue_count,", opening)
         self.assertIn("view_detail_init()", app)
         self.assertLess(app.index("view_detail_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))

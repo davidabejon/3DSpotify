@@ -1280,6 +1280,30 @@ static void open_result_detail(void)
 	switch_tab(TAB_SEARCH);
 }
 
+/* A link of the Playing tab: the detail of the track playing, of its
+ * artist or of its album, on that tab's stack. The track detail gets a
+ * copy of the queue, which may change afterwards, so "Play" there plays
+ * this queue again from this track. */
+static void open_playing_detail(detail_kind kind)
+{
+	const sp_track *track = player_track();
+	if (!track)
+		return;
+	switch (kind) {
+	case DETAIL_ARTIST:
+		details_open_artist(TAB_PLAYER, track->artist_uri);
+		break;
+	case DETAIL_ALBUM:
+		details_open_album(TAB_PLAYER, track->album_uri);
+		break;
+	default:
+		details_open_track(TAB_PLAYER, playback_queue, playback_queue_count,
+		                   player.index);
+		break;
+	}
+	switch_tab(TAB_PLAYER);
+}
+
 /* A detail is on top of the active tab: its view has the input. */
 static void detail_input(spotify_session *session, u32 down)
 {
@@ -1468,6 +1492,15 @@ static tabs_exit run_tabs(spotify_session *session)
 				break;
 			case PLAYER_ACTION_LANGUAGE:
 				switch_language();
+				break;
+			case PLAYER_ACTION_OPEN_TRACK:
+				open_playing_detail(DETAIL_TRACK);
+				break;
+			case PLAYER_ACTION_OPEN_ARTIST:
+				open_playing_detail(DETAIL_ARTIST);
+				break;
+			case PLAYER_ACTION_OPEN_ALBUM:
+				open_playing_detail(DETAIL_ALBUM);
 				break;
 			default:
 				break;

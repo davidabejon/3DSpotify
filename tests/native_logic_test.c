@@ -1090,6 +1090,10 @@ static void test_theme_contrast(void)
 	for (size_t i = 0; i < COUNT(on_background); i++)
 		for (size_t j = 0; j < COUNT(backgrounds); j++)
 			assert(contrast(on_background[i], backgrounds[j]) >= 4.5);
+	/* A pressed link of the Playing tab is `lima` text on the background
+	 * (plan 4.4): the only accent that reads on both tones. */
+	for (size_t j = 0; j < COUNT(backgrounds); j++)
+		assert(contrast(COL_LIMA, backgrounds[j]) >= 4.5);
 
 	/* `capa` also holds disabled text and a pressed secondary button's
 	 * label (6.1, 6.3). */
@@ -1521,6 +1525,49 @@ static void test_player_layout(void)
 	assert(player_hit_test(prev.x + prev.w + 1, prev.y + 1) ==
 	       PLAYER_CONTROL_NONE);
 	assert(player_hit_test(10, 10) == PLAYER_CONTROL_NONE);
+
+	/* The links (plan 4.4): touch zones of TOUCH_MIN, the track across the
+	 * content width, then the artist and the album side by side, SP_1
+	 * apart, all under the tab bar and above the controls. */
+	ui_rect link_track = player_link_rect(PLAYER_LINK_TRACK);
+	ui_rect link_artist = player_link_rect(PLAYER_LINK_ARTIST);
+	ui_rect link_album = player_link_rect(PLAYER_LINK_ALBUM);
+	assert(PLAYER_CONTROLS_TOP == 108);
+	assert(link_track.x == SP_2 && link_track.y == 36 &&
+	       link_track.w == SCREEN_BOTTOM_W - 2 * SP_2 &&
+	       link_track.h == TOUCH_MIN);
+	assert(link_artist.x == 8 && link_artist.y == 72 &&
+	       link_artist.w == 150 && link_artist.h == TOUCH_MIN);
+	assert(link_album.x == 162 && link_album.y == 72 &&
+	       link_album.w == 150 && link_album.h == TOUCH_MIN);
+	assert(link_album.x + link_album.w == SCREEN_BOTTOM_W - SP_2);
+	assert(link_track.y >= TAB_H);
+	assert(link_artist.y - (link_track.y + link_track.h) == SP_1);
+	/* The links end above the controls, with room to spare. */
+	assert(link_artist.y + link_artist.h < prev.y);
+	assert(link_artist.y + link_artist.h < play.y);
+
+	bool links_all[PLAYER_LINK_COUNT] = { true, true, true };
+	bool links_no_album[PLAYER_LINK_COUNT] = { true, true, false };
+	assert(player_link_hit(link_track.x + 1, link_track.y + 1, links_all) ==
+	       PLAYER_LINK_TRACK);
+	assert(player_link_hit(link_artist.x + 1, link_artist.y + 1, links_all) ==
+	       PLAYER_LINK_ARTIST);
+	assert(player_link_hit(link_album.x + 1, link_album.y + 1, links_all) ==
+	       PLAYER_LINK_ALBUM);
+	/* Between the two halves, and on a disabled link: nothing. */
+	assert(player_link_hit(link_album.x - 2, link_album.y + 1, links_all) ==
+	       PLAYER_LINK_NONE);
+	assert(player_link_hit(link_album.x + 1, link_album.y + 1,
+	                       links_no_album) == PLAYER_LINK_NONE);
+	assert(player_link_hit(play.x + 1, play.y + 1, links_all) ==
+	       PLAYER_LINK_NONE);
+	/* The phases that show a track have links; idle and failed do not. */
+	assert(!player_links_enabled(PLAYER_PHASE_IDLE));
+	assert(player_links_enabled(PLAYER_PHASE_LOADING));
+	assert(player_links_enabled(PLAYER_PHASE_PLAYING));
+	assert(player_links_enabled(PLAYER_PHASE_FINISHED));
+	assert(!player_links_enabled(PLAYER_PHASE_FAILED));
 
 	/* 5.4, 5.5: the bars, below the controls and their shadow, clear of
 	 * each other and of the button bar, the handle included. */
