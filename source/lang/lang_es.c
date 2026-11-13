@@ -35,6 +35,9 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_DETAIL_ARTIST_FMT] = "Artista: %s",
 	[STR_DETAIL_ALBUM_FMT] = "Album: %s",
 	[STR_UNKNOWN_ALBUM] = "(album desconocido)",
+	[STR_DETAIL_LOADING] = "Cargando...",
+	[STR_DETAIL_EMPTY] = "No hay canciones",
+	[STR_DETAIL_FAILED_TITLE] = "No se pudo cargar",
 
 	/* Pestana de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",

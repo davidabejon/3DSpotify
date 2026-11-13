@@ -12,6 +12,58 @@
 #define ROW_GLYPHS     3200
 #define SCRATCH_GLYPHS UI_FIELD_SIZE
 
+/* The list thumbs.c serves: the last one shown with thumbnails. */
+static track_list *thumbs_list;
+static bool thumbs_allowed = true;
+
+/* Gives thumbs.c the list when allowed; until then nothing it holds is
+ * drawn for it. Covers already fetched for the same position and URL are
+ * kept, so coming back to a list costs nothing. */
+static void hold_thumbs(track_list *l)
+{
+	if (!l)
+		return;
+	l->thumbs_synced = false;
+	if (!thumbs_allowed || l->count == 0)
+		return;
+	/* Visible rows first (STYLES.md 9). */
+	thumbs_set_tracks(l->tracks, l->count);
+	thumbs_set_window(l->first);
+	l->thumbs_synced = true;
+}
+
+void track_list_thumbs_frame(track_list *l)
+{
+	if (l->style != TRACK_LIST_THUMBS)
+		return;
+	if (thumbs_list != l) {
+		thumbs_list = l;
+		hold_thumbs(l);
+	}
+	if (thumbs_poll())
+		l->thumbs_serial++;
+}
+
+void track_list_offer_thumbs(track_list *l)
+{
+	if (l->style != TRACK_LIST_THUMBS || thumbs_list)
+		return;
+	thumbs_list = l;
+	hold_thumbs(l);
+}
+
+void track_list_allow_thumbs(bool allow)
+{
+	if (allow == thumbs_allowed)
+		return;
+	thumbs_allowed = allow;
+	/* Stopped, what was fetched stays usable; nothing new arrives. */
+	if (allow)
+		hold_thumbs(thumbs_list);
+	else
+		thumbs_stop();
+}
+
 /* --- Lifetime ---------------------------------------------------------- */
 
 bool track_list_init(track_list *l, track_list_style style)
@@ -33,6 +85,8 @@ bool track_list_init(track_list *l, track_list_style style)
 
 void track_list_exit(track_list *l)
 {
+	if (thumbs_list == l)
+		thumbs_list = NULL;
 	if (l->buf)
 		C2D_TextBufDelete(l->buf);
 	if (l->scratch)
@@ -61,8 +115,22 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 	l->first = list_scroll(0, l->selected, l->count, RESULTS_PER_PAGE);
 	l->scroll = l->first * LIST_PITCH;
 	l->thumbs_synced = false;
+	/* New tracks: thumbs.c is handed them by the next claim. */
+	if (thumbs_list == l)
+		thumbs_list = NULL;
 	l->stale = true;
 	track_list_reset_input(l);
+}
+
+void track_list_scroll_to(track_list *l, int first)
+{
+	int last = list_max_scroll(l->count) / LIST_PITCH;
+	l->first = first < 0 ? 0 : first > last ? last : first;
+	l->scroll = l->first * LIST_PITCH;
+	/* The focus is never left out of view by this. */
+	if (!list_row_whole(l->selected, l->scroll, l->count))
+		l->first = list_align(l->scroll, l->selected, l->count);
+	l->scroll = l->first * LIST_PITCH;
 }
 
 /* --- Text -------------------------------------------------------------- */
@@ -132,6 +200,7 @@ track_list_look track_list_get_look(const track_list *l)
 		.scroll = l->scroll,
 		.pressed = press_down(&l->press) ? l->press_index : -1,
 		.edge = l->edge_frames > 0 ? l->edge_dir * EDGE_SHIFT : 0,
+		.thumbs = l->thumbs_serial,
 	};
 }
 
@@ -139,7 +208,7 @@ bool track_list_same_look(const track_list_look *a, const track_list_look *b)
 {
 	return a->selected == b->selected && a->first == b->first &&
 	       a->scroll == b->scroll && a->pressed == b->pressed &&
-	       a->edge == b->edge;
+	       a->edge == b->edge && a->thumbs == b->thumbs;
 }
 
 void track_list_tick(track_list *l)
@@ -153,9 +222,10 @@ void track_list_tick(track_list *l)
 
 /* --- Input ------------------------------------------------------------- */
 
+/* The fetch priority follows the scroll, for the list thumbs.c serves. */
 static void follow_window(const track_list *l)
 {
-	if (l->style == TRACK_LIST_THUMBS)
+	if (l->style == TRACK_LIST_THUMBS && l == thumbs_list && l->thumbs_synced)
 		thumbs_set_window(l->first);
 }
 
@@ -303,7 +373,7 @@ void track_list_release(track_list *l)
 static void draw_thumb(const track_list *l, ui_rect row, int index)
 {
 	C2D_Image image;
-	bool shown = l && index >= 0 &&
+	bool shown = l && index >= 0 && l == thumbs_list &&
 	             l->thumbs_synced && thumbs_image(index, &image);
 	ui_art(list_thumb_rect(row), shown ? &image : NULL);
 }

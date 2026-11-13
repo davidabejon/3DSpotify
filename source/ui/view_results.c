@@ -5,7 +5,6 @@
 #include "list_logic.h"
 #include "press_logic.h"
 #include "tabbar.h"
-#include "thumbs.h"
 #include "theme.h"
 #include "track_list.h"
 
@@ -40,12 +39,6 @@ static results_mode mode = MODE_IDLE;
 static track_list list;
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
-/* Bumped whenever a thumbnail arrives, so the list repaints. */
-static int thumbs_serial;
-/* Whether the thumbnails may download now (STYLES.md 9: not while the
- * audio downloads). Whether thumbs.c holds this list is the list's
- * thumbs_synced. */
-static bool thumbs_allowed = true;
 
 /* Parsed text. `stale`: content or language changed. */
 static C2D_TextBuf static_buf, scratch_buf;
@@ -79,7 +72,6 @@ typedef struct {
 	bool bubble;
 	int loader_step;
 	bool cancelling;
-	int thumbs;
 } results_look;
 static results_look drawn;
 static bool drawn_valid;
@@ -124,28 +116,11 @@ static void reset_interaction(void)
 	drawn_valid = false;
 }
 
-/* Gives thumbs.c this list when allowed; until then nothing it holds is
- * drawn. */
-static void sync_thumbs(void)
-{
-	list.thumbs_synced = false;
-	if (!thumbs_allowed || mode != MODE_LIST)
-		return;
-	thumbs_set_tracks(list.tracks, list.count);
-	thumbs_set_window(list.first);
-	list.thumbs_synced = true;
-}
-
+/* For every list with thumbnails, the details' too: the results are where
+ * the caller has always asked. */
 void view_results_allow_thumbs(bool allow)
 {
-	if (allow == thumbs_allowed)
-		return;
-	thumbs_allowed = allow;
-	/* Stopped, what was fetched stays usable; nothing new arrives. */
-	if (allow)
-		sync_thumbs();
-	else
-		thumbs_stop();
+	track_list_allow_thumbs(allow);
 }
 
 void view_results_idle(void)
@@ -182,8 +157,9 @@ void view_results_show(const sp_track *tracks, int n, int focus)
 	track_list_set(&list, tracks, n, focus);
 	mode = list.count > 0 ? MODE_LIST : MODE_EMPTY;
 	reset_interaction();
-	/* Covers: visible rows first (STYLES.md 9). */
-	sync_thumbs();
+	/* Covers now, even before the tab is on screen, unless a list on
+	 * screen has them; on screen, the list claims them anyway. */
+	track_list_offer_thumbs(&list);
 }
 
 void view_results_error(str_id help)
@@ -268,7 +244,6 @@ static results_look current_look(void)
 		.loader_step = mode == MODE_SEARCHING
 		               ? loader_frames / LOADER_STEP : 0,
 		.cancelling = cancelling,
-		.thumbs = thumbs_serial,
 	};
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		look.glyph[i] = press_down(&press_glyph[i]);
@@ -280,7 +255,7 @@ static bool same_look(const results_look *a, const results_look *b)
 	if (a->mode != b->mode || !track_list_same_look(&a->list, &b->list) ||
 	    a->button != b->button ||
 	    a->bubble != b->bubble || a->loader_step != b->loader_step ||
-	    a->cancelling != b->cancelling || a->thumbs != b->thumbs)
+	    a->cancelling != b->cancelling)
 		return false;
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		if (a->glyph[i] != b->glyph[i])
@@ -400,8 +375,7 @@ results_action view_results_update(u32 down)
 	tick();
 	release_keys(up);
 	/* Uploads happen here, on the main thread, never while drawing. */
-	if (thumbs_poll())
-		thumbs_serial++;
+	track_list_thumbs_frame(&list);
 
 	if (pending != RESULTS_ACTION_NONE) {
 		if (!press_shown(pending_press))

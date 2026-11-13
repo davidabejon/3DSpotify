@@ -1283,9 +1283,36 @@ static void open_result_detail(void)
 /* A detail is on top of the active tab: its view has the input. */
 static void detail_input(spotify_session *session, u32 down)
 {
-	switch (view_detail_update(details_top(active_tab), down)) {
+	detail_doc *doc = details_top(active_tab);
+	detail_action action = view_detail_update(doc, down);
+	/* The track the action is about: the one shown, or the focused row,
+	 * as the view has just written it back. Opening a level copies what
+	 * it needs from this one, which stays on the stack under it. */
+	const sp_track *track = doc->count > 0 ? &doc->tracks[doc->selected]
+	                                       : NULL;
+	switch (action) {
 	case DETAIL_ACTION_PLAY:
 		play_from_detail(session, active_tab);
+		break;
+	case DETAIL_ACTION_ARTIST:
+		if (track)
+			details_open_artist(active_tab, track->artist_uri);
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_ALBUM:
+		if (track)
+			details_open_album(active_tab, track->album_uri);
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_OPEN_TRACK:
+		/* The list comes along, as from the results: "Play" there queues
+		 * this album or artist. */
+		details_open_track(active_tab, doc->tracks, doc->count,
+		                   doc->selected);
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_RETRY:
+		details_retry(active_tab);
 		break;
 	case DETAIL_ACTION_BACK:
 		details_back(active_tab);
@@ -1296,7 +1323,6 @@ static void detail_input(spotify_session *session, u32 down)
 		switch_language();
 		break;
 	default:
-		/* Artist and album open their own details (phase 5). */
 		break;
 	}
 }

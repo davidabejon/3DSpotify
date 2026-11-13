@@ -394,24 +394,41 @@ class BuildTests(unittest.TestCase):
                         stop_search.index("search_join();"))
         stop = app[app.index("static void stop_tabs("):]
         self.assertIn("thumbs_wait();", stop[:stop.index("\n}\n")])
-        results_src = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        allow = results_src[results_src.index(
-            "void view_results_allow_thumbs("):]
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
+        detail = (ui_dir / "view_detail.c").read_text(encoding="utf-8")
+        # Allowing and stopping is one switch for every list.
+        allow = results[results.index("void view_results_allow_thumbs("):]
+        self.assertIn("track_list_allow_thumbs(allow);",
+                      allow[:allow.index("\n}\n")])
+        allow = rows[rows.index("void track_list_allow_thumbs("):]
         self.assertIn("thumbs_stop();", allow[:allow.index("\n}\n")])
         self.assertIn("thumbs_init();", app)
         self.assertLess(app.index("thumbs_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
-        # The view: uploads on update, a fixed-size slot either way.
-        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
-        self.assertIn("thumbs_poll()", results)
+        # thumbs.c serves one list: the one on screen claims it from its
+        # view's update, where the uploads happen too; a list ready before
+        # it is shown only takes it when no other list has it.
+        frame = rows[rows.index("void track_list_thumbs_frame("):]
+        frame = frame[:frame.index("\n}\n")]
+        self.assertIn("if (thumbs_list != l)", frame)
+        self.assertIn("thumbs_poll()", frame)
+        offer = rows[rows.index("void track_list_offer_thumbs("):]
+        self.assertIn("thumbs_list)", offer[:offer.index("\n}\n")])
+        self.assertIn("track_list_thumbs_frame(&list);", results)
+        self.assertIn("track_list_thumbs_frame(&list);", detail)
+        self.assertIn("track_list_offer_thumbs(&list);", results)
+        # A fixed-size slot either way.
         self.assertIn("thumbs_image(index, &image)", rows)
         self.assertIn("thumbs_set_window(l->first)", rows)
-        # Only the thumbnail style follows the scroll with downloads.
-        self.assertIn("if (l->style == TRACK_LIST_THUMBS)\n"
+        # Only the list thumbs.c serves follows the scroll with downloads.
+        self.assertIn("if (l->style == TRACK_LIST_THUMBS && l == thumbs_list "
+                      "&& l->thumbs_synced)\n"
                       "\t\tthumbs_set_window(l->first);", rows)
         # Nothing thumbs.c holds for another list is drawn.
-        self.assertIn("thumbs_synced && thumbs_image(index, &image)", rows)
+        self.assertIn("l == thumbs_list &&\n"
+                      "\t             l->thumbs_synced && "
+                      "thumbs_image(index, &image)", rows)
 
     def test_results_play_directly_and_scroll_by_touch(self):
         ui_dir = build.ROOT / "ui"
@@ -507,6 +524,23 @@ class BuildTests(unittest.TestCase):
         self.assertLess(play.index("view_results_allow_thumbs(false);"),
                         play.index("player_play(session, doc->selected);"))
         self.assertIn("queue_from_results = false;", play)
+        # Albums and artists: the track's buttons open them on the same
+        # tab, X on their rows opens a track detail with the list, and a
+        # failed load can be retried.
+        detail_in = app[app.index("static void detail_input("):
+                        app.index("/* --- Tabs ---")]
+        for wired in ("details_open_artist(active_tab, track->artist_uri);",
+                      "details_open_album(active_tab, track->album_uri);",
+                      "details_open_track(active_tab, doc->tracks, "
+                      "doc->count,",
+                      "details_retry(active_tab);",
+                      "details_back(active_tab);"):
+            self.assertIn(wired, detail_in)
+        view = (ui_dir / "view_detail.c").read_text(encoding="utf-8")
+        # An album's rows share its cover: they show their position.
+        self.assertIn("doc->kind == DETAIL_ALBUM ? TRACK_LIST_NUMBERS", view)
+        self.assertIn("track_list_scroll_to(&list, doc->first);", view)
+        self.assertIn("doc->selected = list.selected;", view)
         self.assertIn("view_detail_init()", app)
         self.assertLess(app.index("view_detail_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))

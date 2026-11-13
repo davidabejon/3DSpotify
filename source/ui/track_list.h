@@ -15,7 +15,9 @@
  * parsed when the tracks or the language change, never per frame.
  *
  * Each list is its own instance, so the results keep their state under a
- * detail. Main thread only. */
+ * detail. thumbs.c serves one list at a time: the one on screen, which
+ * claims it from its view's update (track_list_thumbs_frame), so a list
+ * shown under another never takes the covers from it. Main thread only. */
 #ifndef TRACK_LIST_H
 #define TRACK_LIST_H
 
@@ -50,6 +52,7 @@ typedef struct {
 	int selected, first, scroll;
 	int pressed;           /* the pressed row, -1 for none */
 	int edge;              /* the focused row's nudge, px */
+	int thumbs;            /* bumped when a thumbnail arrives */
 } track_list_look;
 
 typedef struct {
@@ -59,9 +62,10 @@ typedef struct {
 	int selected;
 	int first;             /* first visible row: scroll / LIST_PITCH */
 	int scroll;            /* px; whole rows except while dragging */
-	/* Set by the owner: thumbs.c holds this list, so its images are
-	 * this list's. Until then the placeholder shows. */
+	/* thumbs.c holds this list's covers, so its images are this list's.
+	 * Until then the placeholder shows. */
 	bool thumbs_synced;
+	int thumbs_serial;
 
 	press_state press;     /* the focused row's, for A and taps */
 	int press_index;
@@ -89,6 +93,9 @@ void track_list_exit(track_list *l);
  * carries over. */
 void track_list_set(track_list *l, const sp_track *tracks, int count,
                     int selected);
+/* Back to where a list was left: `first` as the first visible row, on
+ * whole rows, with the focus kept in view. */
+void track_list_scroll_to(track_list *l, int first);
 /* No press, touch, drag or nudge in progress: entering the view. */
 void track_list_reset_input(track_list *l);
 
@@ -97,6 +104,19 @@ void track_list_focus(track_list *l, int index);
 
 /* Once per frame, before the input. */
 void track_list_tick(track_list *l);
+
+/* Once per frame from the update of the view showing `l`: a thumbnail
+ * list claims thumbs.c if another list had it, and uploads the covers
+ * that arrived (on the main thread, never while drawing). */
+void track_list_thumbs_frame(track_list *l);
+/* Gives thumbs.c `l` only if no list holds it: a list that is ready
+ * before it is on screen (results arriving on another tab) starts its
+ * covers early, without taking them from a list on screen. */
+void track_list_offer_thumbs(track_list *l);
+/* Whether the thumbnails may download (STYLES.md 9: not while a track
+ * prepares). Disallowing asks the worker to stop without waiting for it
+ * (thumbs_stop); what it fetched stays on screen. */
+void track_list_allow_thumbs(bool allow);
 
 /* The stylus on the list: tapping a row focuses it, tapping the focused
  * row activates it, dragging scrolls (6.4, 6.9). Only touches that start
