@@ -1,4 +1,5 @@
 #include "art_url.h"
+#include "detail_logic.h"
 #include "detail_nav.h"
 #include "home_logic.h"
 #include "http_logic.h"
@@ -396,6 +397,55 @@ static void test_detail_stack(void)
 	assert(s.count == 0 && detail_stack_top(&s) == -1);
 }
 
+static void test_detail_buttons(void)
+{
+	/* The Settings geometry: three full-width buttons of TOUCH_MIN under
+	 * the tab bar, SP_4 apart, clear of the button bar. */
+	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++) {
+		ui_rect r = detail_button_rect(i);
+		ui_rect s = settings_item_rect(i);
+		assert(r.x == s.x && r.y == s.y && r.w == s.w && r.h == s.h);
+		assert(r.h >= TOUCH_MIN);
+		assert(r.y + r.h <= detail_hints_rect().y);
+		if (i > 0)
+			assert(r.y - (detail_button_rect(i - 1).y +
+			              detail_button_rect(i - 1).h) == SP_4);
+	}
+	assert(detail_button_rect(0).y >= TAB_H);
+
+	bool all[DETAIL_BUTTON_COUNT] = { true, true, true };
+	bool no_artist[DETAIL_BUTTON_COUNT] = { true, false, true };
+	bool only_play[DETAIL_BUTTON_COUNT] = { true, false, false };
+	ui_rect artist = detail_button_rect(DETAIL_BUTTON_ARTIST);
+	int ax = artist.x + artist.w / 2, ay = artist.y + artist.h / 2;
+
+	/* A disabled button does not answer the stylus (6.1). */
+	assert(detail_hit_test(ax, ay, all) == DETAIL_BUTTON_ARTIST);
+	assert(detail_hit_test(ax, ay, no_artist) == DETAIL_BUTTON_NONE);
+	assert(detail_hit_test(0, 0, all) == DETAIL_BUTTON_NONE);
+
+	/* The D-pad stops at the ends and steps over disabled buttons. */
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, -1, all) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, all) ==
+	       DETAIL_BUTTON_ARTIST);
+	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, 1, all) ==
+	       DETAIL_BUTTON_ALBUM);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, no_artist) ==
+	       DETAIL_BUTTON_ALBUM);
+	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, -1, no_artist) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, only_play) ==
+	       DETAIL_BUTTON_PLAY);
+	/* A focus that is not usable falls back to Play. */
+	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 1, no_artist) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_NONE, 1, all) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 0, all) ==
+	       DETAIL_BUTTON_ARTIST);
+}
+
 static void test_detail_pool(void)
 {
 	detail_stack stacks[DETAIL_STACKS];
@@ -567,6 +617,7 @@ static void test_language_tables(void)
 			       text != lang_text(LANG_EN, (str_id)id) ||
 			       strcmp(text, "Error") == 0 ||
 			       strcmp(text, "Album") == 0 ||
+			       strcmp(text, "Album: %s") == 0 ||
 			       strcmp(text, "3DSpotify") == 0);
 			/* The tables stay ASCII until lifted on purpose (lang.h). */
 			for (const char *p = text; *p; p++)
@@ -2039,6 +2090,7 @@ int main(void)
 	test_meta_parse_batch();
 	test_detail_stack();
 	test_detail_pool();
+	test_detail_buttons();
 	test_http_redirects();
 	test_download_retry_delay();
 	test_power_policy();

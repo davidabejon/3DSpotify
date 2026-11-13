@@ -28,6 +28,13 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_PAIR] = "Pair",
 	[STR_HINT_EXIT] = "Exit",
 
+	/* Detail views. */
+	[STR_HINT_DETAIL] = "Detail",
+	[STR_DETAIL_PLAY] = "Play",
+	[STR_DETAIL_ARTIST_FMT] = "Artist: %s",
+	[STR_DETAIL_ALBUM_FMT] = "Album: %s",
+	[STR_UNKNOWN_ALBUM] = "(unknown album)",
+
 	/* Settings tab. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",
 	[STR_SETTINGS_RECONNECT] = "Reconnect",

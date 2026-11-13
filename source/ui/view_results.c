@@ -29,10 +29,10 @@ typedef enum {
 } results_mode;
 
 /* The buttons this view uses (2.5). */
-enum { GLYPH_A, GLYPH_B, GLYPH_Y, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "Y" };
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X", "Y" };
 static const u32 glyph_colors[GLYPH_COUNT] = {
-	COL_BTN_A, COL_BTN_B, COL_BTN_Y
+	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y
 };
 
 /* Content. The rows, their focus, scroll and input are the list's. */
@@ -59,7 +59,8 @@ static C2D_Text notice_title_text;
 static C2D_Text notice_body_text;
 static C2D_Text bubble_text;
 static C2D_Text letter_text[GLYPH_COUNT];
-static C2D_Text hint_play, hint_back, hint_search, hint_cancel, hint_retry;
+static C2D_Text hint_play, hint_detail, hint_back, hint_search, hint_cancel,
+                hint_retry;
 
 /* Interaction (STYLES.md 6). `touch` is the button's, outside the list. */
 static press_state press_button;
@@ -238,6 +239,7 @@ static void parse_static(void)
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		parse(&letter_text[i], static_buf, glyph_letters[i]);
 	parse(&hint_play, static_buf, tr(STR_HINT_PLAY));
+	parse(&hint_detail, static_buf, tr(STR_HINT_DETAIL));
 	parse(&hint_back, static_buf, tr(STR_HINT_BACK));
 	parse(&hint_search, static_buf, tr(STR_HINT_SEARCH));
 	parse(&hint_cancel, static_buf, tr(STR_HINT_CANCEL));
@@ -333,6 +335,8 @@ static void release_keys(u32 up)
 	}
 	if (up & KEY_B)
 		press_end(&press_glyph[GLYPH_B]);
+	if (up & KEY_X)
+		press_end(&press_glyph[GLYPH_X]);
 	if (up & KEY_Y)
 		press_end(&press_glyph[GLYPH_Y]);
 }
@@ -378,7 +382,7 @@ static bool handle_touch(u32 down, u32 held, u32 up)
 	return touch.target >= 0;
 }
 
-/* The A, B and Y glyphs plus what each does in this mode. */
+/* The A, B, X and Y glyphs plus what each does in this mode. */
 static void press_key(int glyph, results_action action,
                       press_state *control)
 {
@@ -418,12 +422,15 @@ results_action view_results_update(u32 down)
 	if (handle_touch(down, held, up) || pending != RESULTS_ACTION_NONE)
 		return RESULTS_ACTION_NONE;
 
-	if (mode == MODE_LIST && track_list_realign(&list, down, KEY_A)) {
+	if (mode == MODE_LIST &&
+	    track_list_realign(&list, down, KEY_A | KEY_X)) {
 		/* 6.6: with the focus dragged out of view, the first button press
-		 * only brings the list back to it, on whole rows. A still shows
-		 * its glyph pressed, but plays nothing it cannot see. */
+		 * only brings the list back to it, on whole rows. A and X still
+		 * show their glyph pressed, but act on nothing they cannot see. */
 		if (down & KEY_A)
 			press_begin(&press_glyph[GLYPH_A]);
+		if (down & KEY_X)
+			press_begin(&press_glyph[GLYPH_X]);
 		return RESULTS_ACTION_NONE;
 	}
 
@@ -437,6 +444,8 @@ results_action view_results_update(u32 down)
 		} else {
 			press_key(GLYPH_A, button_action(), &press_button);
 		}
+	} else if ((down & KEY_X) && mode == MODE_LIST) {
+		press_key(GLYPH_X, RESULTS_ACTION_DETAIL, NULL);
 	} else if (down & KEY_B) {
 		press_key(GLYPH_B, RESULTS_ACTION_BACK, NULL);
 	} else if (down & KEY_Y) {
@@ -462,7 +471,7 @@ bool view_results_dirty(void)
 
 static void draw_bar(const results_look *look)
 {
-	ui_hint hints[3];
+	ui_hint hints[4];
 	int n = 0;
 	const C2D_Text *a_label = NULL;
 	switch (mode) {
@@ -485,6 +494,10 @@ static void draw_bar(const results_look *look)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
 		                        look->glyph[GLYPH_A] };
+	if (mode == MODE_LIST)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_detail,
+		                        glyph_colors[GLYPH_X],
+		                        look->glyph[GLYPH_X] };
 	if (mode == MODE_LIST || mode == MODE_ERROR)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_Y], &hint_search,
 		                        glyph_colors[GLYPH_Y],

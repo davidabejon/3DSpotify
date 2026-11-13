@@ -51,6 +51,13 @@ typedef enum {
 	STR_HINT_PAIR,
 	STR_HINT_EXIT,
 
+	/* Detail views (docs/plan_vistas_detalle.md). */
+	STR_HINT_DETAIL,
+	STR_DETAIL_PLAY,
+	STR_DETAIL_ARTIST_FMT,
+	STR_DETAIL_ALBUM_FMT,
+	STR_UNKNOWN_ALBUM,
+
 	/* Settings tab. */
 	STR_SETTINGS_LANGUAGE_FMT,
 	STR_SETTINGS_RECONNECT,

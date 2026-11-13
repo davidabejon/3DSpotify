@@ -447,7 +447,8 @@ class BuildTests(unittest.TestCase):
         for change in ("list_snap", "scroll =", "selected ="):
             self.assertNotIn(change, drag_end)
         self.assertIn("list_row_whole(l->selected, l->scroll, l->count)", rows)
-        self.assertIn("track_list_realign(&list, down, KEY_A)", results)
+        self.assertIn("track_list_realign(&list, down, KEY_A | KEY_X)",
+                      results)
         for source in (results, rows):
             self.assertNotIn("list_keep_visible", source)
         self.assertIn("list_scroll_thumb(look->scroll, l->count)", rows)
@@ -457,6 +458,58 @@ class BuildTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn("### 5.11 Indicador de desplazamiento", style)
         self.assertIn("### 6.9 Arrastre en listas", style)
+
+    def test_detail_views_are_wired(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("detail_nav.h", "detail_logic.h"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("#include <3ds", source, name)
+            self.assertNotIn("#include <citro", source, name)
+        # X opens the track detail; A still plays with nothing in between
+        # (STYLES.md 7.4).
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("press_key(GLYPH_X, RESULTS_ACTION_DETAIL, NULL)",
+                      results)
+        self.assertIn("COL_BTN_X", results)
+        loop = app[app.index("static tabs_exit run_tabs("):
+                   app.index("static void stop_tabs(")]
+        self.assertIn("case RESULTS_ACTION_DETAIL:", loop)
+        self.assertIn("play_from_results(session, view_results_selected());",
+                      loop)
+        self.assertIn("details_open_track(TAB_SEARCH, search.tracks, "
+                      "search.count,", app)
+        # With a detail open, its view has the tab's input and screen.
+        self.assertIn("if (details_active(active_tab)) {\n"
+                      "\t\t\tdetail_input(session, down);", loop)
+        frame = app[app.index("static void frame(void)"):
+                    app.index("/* --- Search ---")]
+        self.assertIn("view_detail_dirty(details_top(active_tab))", frame)
+        self.assertIn("view_detail_draw_bottom(details_top(active_tab))",
+                      frame)
+        # The loader runs once per frame next to the search, a new search
+        # replaces what the Search tab's details came from, and the loader
+        # is gone before the thumbnails' wait and the session.
+        self.assertLess(loop.index("search_poll();"),
+                        loop.index("details_poll(active_tab,"))
+        start = app[app.index("static void search_start("):
+                    app.index("static void search_poll(")]
+        self.assertIn("details_clear(TAB_SEARCH);", start)
+        stop = app[app.index("static void stop_tabs("):]
+        stop = stop[:stop.index("\n}\n")]
+        self.assertLess(stop.index("tls_set_abort(true);"),
+                        stop.index("details_stop();"))
+        self.assertLess(stop.index("details_stop();"),
+                        stop.index("thumbs_wait();"))
+        # Playing from a detail queues its copy, like the results do.
+        play = app[app.index("static void play_from_detail("):
+                   app.index("static void open_result_detail(")]
+        self.assertLess(play.index("view_results_allow_thumbs(false);"),
+                        play.index("player_play(session, doc->selected);"))
+        self.assertIn("queue_from_results = false;", play)
+        self.assertIn("view_detail_init()", app)
+        self.assertLess(app.index("view_detail_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT

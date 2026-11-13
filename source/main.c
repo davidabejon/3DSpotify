@@ -25,6 +25,7 @@
 #include "tls3ds.h"
 #include "top.h"
 #include "ui.h"
+#include "view_detail.h"
 #include "view_home.h"
 #include "view_login.h"
 #include "view_player.h"
@@ -1010,7 +1011,9 @@ static void frame(void)
 		view_player_set(&info);
 		top_set(&info);
 		changed = tabbar_dirty() || top_dirty(active_tab, &cover_art);
-		switch (active_tab) {
+		if (details_active(active_tab))
+			changed |= view_detail_dirty(details_top(active_tab));
+		else switch (active_tab) {
 		case TAB_HOME:
 			changed |= view_home_dirty();
 			break;
@@ -1038,6 +1041,9 @@ static void frame(void)
 	ui_scene(GFX_BOTTOM);
 	if (!tabs) {
 		view_login_draw_bottom();
+	} else if (details_active(active_tab)) {
+		view_detail_draw_bottom(details_top(active_tab));
+		tabbar_draw();
 	} else {
 		switch (active_tab) {
 		case TAB_HOME:
@@ -1233,6 +1239,68 @@ static void play_from_results(spotify_session *session, int index)
 	switch_tab(TAB_PLAYER);
 }
 
+/* --- Details ----------------------------------------------------------- */
+
+/* Plays the detail on top of `tab` from its focused track, with the whole
+ * list it holds as the queue: the results it was opened from, or the album
+ * or artist (docs/plan_vistas_detalle.md 4.1). The document is a copy, so
+ * the queue is too, whatever the results do afterwards. */
+static void play_from_detail(spotify_session *session, app_tab tab)
+{
+	const detail_doc *doc = details_top(tab);
+	if (!doc || doc->count <= 0)
+		return;
+	const sp_track *pick = &doc->tracks[doc->selected];
+	/* The track already playing: show it rather than start it again. */
+	const sp_track *now = player_track();
+	bool same = now && strcmp(now->uri, pick->uri) == 0 &&
+	            (player.phase == PLAYER_PHASE_LOADING ||
+	             player.phase == PLAYER_PHASE_PLAYING);
+	if (!same) {
+		/* As from the results: the thumbnails wait for the preparation
+		 * (STYLES.md 9). */
+		view_results_allow_thumbs(false);
+		playback_queue_count = doc->count;
+		memcpy(playback_queue, doc->tracks,
+		       (size_t)playback_queue_count * sizeof(playback_queue[0]));
+		queue_from_results = false;
+		player_play(session, doc->selected);
+	}
+	/* The Playing tab shows the player, not a detail left open there; the
+	 * queue is copied, so this may be the document just played. */
+	details_clear(TAB_PLAYER);
+	switch_tab(TAB_PLAYER);
+}
+
+/* The detail of the focused result, on the Search tab's stack. */
+static void open_result_detail(void)
+{
+	details_open_track(TAB_SEARCH, search.tracks, search.count,
+	                   view_results_selected());
+	switch_tab(TAB_SEARCH);
+}
+
+/* A detail is on top of the active tab: its view has the input. */
+static void detail_input(spotify_session *session, u32 down)
+{
+	switch (view_detail_update(details_top(active_tab), down)) {
+	case DETAIL_ACTION_PLAY:
+		play_from_detail(session, active_tab);
+		break;
+	case DETAIL_ACTION_BACK:
+		details_back(active_tab);
+		/* The level below, or the tab's own view, starts afresh. */
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_LANGUAGE:
+		switch_language();
+		break;
+	default:
+		/* Artist and album open their own details (phase 5). */
+		break;
+	}
+}
+
 /* --- Tabs -------------------------------------------------------------- */
 
 /* Shows `tab`: its view starts with no press in progress. */
@@ -1240,6 +1308,11 @@ static void switch_tab(app_tab tab)
 {
 	active_tab = tab;
 	tabbar_set_active(tab);
+	/* A detail left open on the tab is still there (plan 3.1). */
+	if (details_active(tab)) {
+		view_detail_enter();
+		return;
+	}
 	switch (tab) {
 	case TAB_HOME:
 		view_home_enter(home_query);
@@ -1294,7 +1367,9 @@ static tabs_exit run_tabs(spotify_session *session)
 				switch_tab((app_tab)next);
 		}
 
-		switch (active_tab) {
+		if (details_active(active_tab)) {
+			detail_input(session, down);
+		} else switch (active_tab) {
 		case TAB_HOME:
 			switch (view_home_update(down)) {
 			case HOME_ACTION_SEARCH:
@@ -1324,6 +1399,9 @@ static tabs_exit run_tabs(spotify_session *session)
 			switch (action) {
 			case RESULTS_ACTION_OPEN:
 				play_from_results(session, view_results_selected());
+				break;
+			case RESULTS_ACTION_DETAIL:
+				open_result_detail();
 				break;
 			case RESULTS_ACTION_BACK:
 				switch_tab(TAB_HOME);
@@ -1882,8 +1960,9 @@ int main(int argc, char **argv)
 		logo_load();
 	if (!view_home_init() || !view_results_init() ||
 	    !view_player_init() || !view_settings_init() || !view_login_init() ||
-	    !top_init()) {
+	    !view_detail_init() || !top_init()) {
 		top_exit();
+		view_detail_exit();
 		view_login_exit();
 		view_settings_exit();
 		view_player_exit();
@@ -1975,6 +2054,7 @@ done:
 		socExit();
 	free(soc_buffer);
 	top_exit();
+	view_detail_exit();
 	view_login_exit();
 	view_settings_exit();
 	view_player_exit();

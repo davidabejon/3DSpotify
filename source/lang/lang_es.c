@@ -29,6 +29,13 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_PAIR] = "Emparejar",
 	[STR_HINT_EXIT] = "Salir",
 
+	/* Vistas de detalle. */
+	[STR_HINT_DETAIL] = "Detalle",
+	[STR_DETAIL_PLAY] = "Reproducir",
+	[STR_DETAIL_ARTIST_FMT] = "Artista: %s",
+	[STR_DETAIL_ALBUM_FMT] = "Album: %s",
+	[STR_UNKNOWN_ALBUM] = "(album desconocido)",
+
 	/* Pestana de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",
 	[STR_SETTINGS_RECONNECT] = "Volver a conectar",
