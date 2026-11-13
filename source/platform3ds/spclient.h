@@ -11,6 +11,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "spotify_id.h"
+
 typedef struct http_session http_session;
 
 #define SP_MAX_FILES 8
@@ -45,7 +47,60 @@ typedef struct {
 	int     duration_ms;
 	sp_file files[SP_MAX_FILES];
 	int     file_count;
+	/* What the detail views need to follow a track to its album and its
+	 * first artist: the metadata names them only by gid, so these are built
+	 * from it. Empty when the track does not carry them. The rest comes from
+	 * the same Track (and the Album embedded in it), so no request is added.
+	 * Track.explicit is absent from the wire when false; year is 0 when
+	 * unknown. */
+	char    album_uri[SP_URI_MAX];
+	char    artist_uri[SP_URI_MAX];
+	int     track_number;
+	int     disc_number;
+	bool    is_explicit;
+	int     year;
 } sp_track;
+
+/* Album types, from metadata.proto's Album.Type. 0 when the album does not
+ * say. */
+#define SP_ALBUM_ALBUM       1
+#define SP_ALBUM_SINGLE      2
+#define SP_ALBUM_COMPILATION 3
+#define SP_ALBUM_EP          4
+
+/* As many as a list shows (SEARCH_LIMIT in main.c); the rest are counted in
+ * total_tracks but not kept. */
+#define SP_ALBUM_MAX_TRACKS  24
+#define SP_ARTIST_MAX_TRACKS 24
+
+/* An album's header and its track URIs in disc order. The tracks come back
+ * as bare gids, so naming them is a second request, a metadata batch. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char artist[128];             /* the first of Album.artist */
+	char artist_uri[SP_URI_MAX];
+	char label[64];
+	int  year;                    /* 0 when unknown */
+	int  type;                    /* SP_ALBUM_*, 0 when unknown */
+	char art_small[80];
+	char art_large[80];
+	int  total_tracks;            /* across every disc, kept or not */
+	int  track_count;
+	char track_uris[SP_ALBUM_MAX_TRACKS][SP_URI_MAX];
+} sp_album;
+
+/* An artist's name, portrait and popular tracks. The service sends one
+ * TopTracks group already chosen for the account's country; when several
+ * come, the one matching `country` wins, else the first. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char art_small[80];
+	char art_large[80];
+	int  track_count;
+	char track_uris[SP_ARTIST_MAX_TRACKS][SP_URI_MAX];
+} sp_artist;
 
 /* Which spclient host to use. Falls back to the well-known name when apresolve
  * has nothing to say, which is what librespot does too. */
@@ -68,6 +123,19 @@ int  sp_track_metadata_batch(const char *host, const char *token,
 int  sp_track_metadata_batch_s(http_session *sess, const char *token,
                                const char *const *uris, int n,
                                sp_track *out, char *err, size_t errlen);
+
+/* An album or an artist through extended-metadata, over a keep-alive session
+ * because the caller names the tracks right after with
+ * sp_track_metadata_batch_s on the same link. `country` may be NULL or
+ * empty. Both return 0 or -1. An artist answer runs to tens of KB (the
+ * biography and every album it appears on come along), which the default
+ * reply limit covers. */
+int  sp_album_metadata(http_session *sess, const char *token,
+                       const char *album_uri, sp_album *out,
+                       char *err, size_t errlen);
+int  sp_artist_metadata(http_session *sess, const char *token,
+                        const char *artist_uri, const char *country,
+                        sp_artist *out, char *err, size_t errlen);
 
 /* Searching the catalogue. Needs no library, which is what makes a fresh
  * account usable: the answer is a list of track URIs, which

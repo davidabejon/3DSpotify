@@ -45,6 +45,12 @@ bool pb_get_varint(const uint8_t *buf, size_t len, uint32_t field, uint64_t *out
 bool pb_get_sint(const uint8_t *buf, size_t len, uint32_t field, int64_t *out);
 bool pb_has(const uint8_t *buf, size_t len, uint32_t field);
 
+/* Walks a repeated length-delimited field: start with *at = 0 and call until
+ * it returns false. pb_get_bytes alone only ever finds the first occurrence;
+ * this restarts the scan just past the previous value, which is always a
+ * field boundary. */
+bool pb_next_bytes(const pbv *msg, uint32_t field, size_t *at, pbv *out);
+
 /* Chases a path of nested length-delimited fields, e.g. challenge ->
  * login_crypto_challenge -> diffie_hellman. */
 bool pb_dig(const uint8_t *buf, size_t len, const uint32_t *fields, size_t depth,
