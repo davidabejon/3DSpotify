@@ -241,7 +241,8 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("C2D_Color32", source, path.name)
             self.assertNotIn("UI_COLOR_", source, path.name)
         # The redesigned views: no loose colours, sizes or text scales.
-        for name in ("view_home.c", "view_results.c", "draw.c"):
+        for name in ("view_home.c", "view_results.c", "track_list.c",
+                     "draw.c"):
             source = (ui_dir / name).read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
             # 0.0f is the depth argument of the C2D calls.
@@ -254,14 +255,17 @@ class BuildTests(unittest.TestCase):
         self.assertIn("void ui_button(", draw)
         home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
         for source, name in ((draw, "draw.c"), (home, "view_home.c"),
-                             (results, "view_results.c")):
+                             (results, "view_results.c"),
+                             (rows, "track_list.c")):
             for call in ("C2D_DrawCircle", "C2D_DrawTriangle",
                          "C2D_DrawRectangle(", "C2D_DrawEllipse",
                          "color_fade", "color_mix"):
                 self.assertNotIn(call, source, name)
         self.assertNotIn("C2D_DrawRect", home)
         self.assertNotIn("C2D_DrawRect", results)
+        self.assertNotIn("C2D_DrawRect", rows)
         # Icons: crisp at whole pixels (5.10).
         icons = (ui_dir / "icons.c").read_text(encoding="utf-8")
         self.assertIn("GPU_NEAREST, GPU_NEAREST", icons)
@@ -297,15 +301,22 @@ class BuildTests(unittest.TestCase):
         # the tab bar's.
         self.assertIn("#define RESULTS_PER_PAGE 4", logic)
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        self.assertIn("move_focus(RESULTS_PER_PAGE)", results)
-        self.assertIn("else if (down & KEY_RIGHT)\n\t\t\tmove_focus("
-                      "RESULTS_PER_PAGE);", results)
-        self.assertNotIn("KEY_L)", results)
-        self.assertNotIn("KEY_R)", results)
+        # The rows, their focus, scrolling and touch are the list widget's,
+        # shared with the album and artist details.
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
+        self.assertIn('#include "track_list.h"', results)
+        self.assertIn("track_list_update_touch(&list", results)
+        self.assertIn("track_list_navigate(&list, down)", results)
+        self.assertIn("move_focus(l, RESULTS_PER_PAGE)", rows)
+        self.assertIn("else if (down & KEY_RIGHT)\n\t\tmove_focus(l, "
+                      "RESULTS_PER_PAGE);", rows)
+        for source in (results, rows):
+            self.assertNotIn("KEY_L)", source)
+            self.assertNotIn("KEY_R)", source)
         # Rows are cut in pixels, never the duration (5.3, 3.3).
-        self.assertIn("parse_fitted(&row_title[i]", results)
+        self.assertIn("ui_parse_fitted(&l->title[i]", rows)
         # The thumbnail and its note placeholder are the shared ui_art.
-        self.assertIn("ui_art(list_thumb_rect(row)", results)
+        self.assertIn("ui_art(list_thumb_rect(row)", rows)
         draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
         self.assertIn("ICON_NOTE", draw)
         # On-demand render and view switching.
@@ -392,11 +403,15 @@ class BuildTests(unittest.TestCase):
                         app.index("ui_exit();", app.index("done:")))
         # The view: uploads on update, a fixed-size slot either way.
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
         self.assertIn("thumbs_poll()", results)
-        self.assertIn("thumbs_image(index, &image)", results)
-        self.assertIn("thumbs_set_window(first)", results)
+        self.assertIn("thumbs_image(index, &image)", rows)
+        self.assertIn("thumbs_set_window(l->first)", rows)
+        # Only the thumbnail style follows the scroll with downloads.
+        self.assertIn("if (l->style == TRACK_LIST_THUMBS)\n"
+                      "\t\tthumbs_set_window(l->first);", rows)
         # Nothing thumbs.c holds for another list is drawn.
-        self.assertIn("thumbs_synced && thumbs_image(index, &image)", results)
+        self.assertIn("thumbs_synced && thumbs_image(index, &image)", rows)
 
     def test_results_play_directly_and_scroll_by_touch(self):
         ui_dir = build.ROOT / "ui"
@@ -416,24 +431,28 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("hidKeysDown", play)
         # Dragging (6.9) and the scroll indicator (5.11).
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        self.assertIn("list_drag_begin(&drag", results)
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
+        self.assertIn("list_drag_begin(&l->drag", rows)
         # A drag starts on the list, never on the tab bar.
-        self.assertIn("list_area_contains(pos.px, pos.py)", results)
-        self.assertIn("!tabbar_touching()", results)
-        self.assertIn("list_drag_update(&drag", results)
-        self.assertIn("press_cancel(&press_row)", results)
+        self.assertIn("list_area_contains(pos.px, pos.py)", rows)
+        self.assertIn("!tabbar_touching()", rows)
+        self.assertIn("list_drag_update(&l->drag", rows)
+        self.assertIn("press_cancel(&l->press)", rows)
         # A drag may leave rows cut; the buttons align to whole rows.
-        self.assertIn("list_align(scroll, selected, count)", results)
+        self.assertIn("list_align(l->scroll, l->selected, l->count)", rows)
         # The focus survives a drag (6.9), and the first button press with
         # it out of view only brings the list back to it (6.6).
-        drag_end = results[results.index("static void drag_end(void)"):]
+        drag_end = rows[rows.index("static void drag_end(track_list *l)"):]
         drag_end = drag_end[:drag_end.index("\n}\n")]
         for change in ("list_snap", "scroll =", "selected ="):
             self.assertNotIn(change, drag_end)
-        self.assertIn("!list_row_whole(selected, scroll, count)", results)
-        self.assertNotIn("list_keep_visible", results)
-        self.assertIn("list_scroll_thumb(scroll, count)", results)
-        self.assertIn("list_hit_row(pos.px, pos.py, scroll, count)", results)
+        self.assertIn("list_row_whole(l->selected, l->scroll, l->count)", rows)
+        self.assertIn("track_list_realign(&list, down, KEY_A)", results)
+        for source in (results, rows):
+            self.assertNotIn("list_keep_visible", source)
+        self.assertIn("list_scroll_thumb(look->scroll, l->count)", rows)
+        self.assertIn("list_hit_row(pos.px, pos.py, l->scroll, l->count)",
+                      rows)
         style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
             encoding="utf-8")
         self.assertIn("### 5.11 Indicador de desplazamiento", style)
