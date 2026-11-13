@@ -1,4 +1,5 @@
 #include "art_url.h"
+#include "detail_nav.h"
 #include "home_logic.h"
 #include "http_logic.h"
 #include "image_util.h"
@@ -361,6 +362,84 @@ static void test_meta_parse_artist(void)
 	assert(sp_parse_artist(&av, "", &a) && a.track_count == 2);
 	assert(sp_parse_artist(&av, "E", &a) && a.track_count == 2);
 	assert(sp_parse_artist(&av, "FR", &a) && a.track_count == 2);
+}
+
+static void test_detail_stack(void)
+{
+	assert(detail_tab_stack(TAB_SEARCH) == 0);
+	assert(detail_tab_stack(TAB_PLAYER) == 1);
+	assert(detail_tab_stack(TAB_HOME) < 0);
+	assert(detail_tab_stack(TAB_SETTINGS) < 0);
+
+	detail_stack s;
+	detail_stack_clear(&s);
+	assert(detail_stack_top(&s) == -1);
+	assert(detail_stack_pop(&s) == -1);
+	assert(detail_stack_drop_oldest(&s) == -1);
+
+	/* Up to the depth nothing is dropped. */
+	for (int i = 0; i < DETAIL_DEPTH; i++) {
+		assert(detail_stack_push(&s, 10 + i) == -1);
+		assert(detail_stack_top(&s) == 10 + i);
+	}
+	assert(s.count == DETAIL_DEPTH);
+	/* Past it the oldest goes, and the order of the rest holds. */
+	assert(detail_stack_push(&s, 99) == 10);
+	assert(s.count == DETAIL_DEPTH);
+	assert(s.slot[0] == 11 && detail_stack_top(&s) == 99);
+	assert(detail_stack_holds(&s, 99) && !detail_stack_holds(&s, 10));
+
+	/* B pops back down to the tab's own view. */
+	assert(detail_stack_pop(&s) == 99);
+	for (int i = DETAIL_DEPTH - 1; i >= 1; i--)
+		assert(detail_stack_pop(&s) == 10 + i);
+	assert(s.count == 0 && detail_stack_top(&s) == -1);
+}
+
+static void test_detail_pool(void)
+{
+	detail_stack stacks[DETAIL_STACKS];
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		detail_stack_clear(&stacks[i]);
+	assert(detail_pool_free(stacks) == 0);
+
+	/* Opening, going back and switching tabs in a long, fixed pattern:
+	 * the pool never runs out and no document is on two levels at once. */
+	unsigned rng = 12345;
+	for (int step = 0; step < 5000; step++) {
+		rng = rng * 1103515245u + 12345u;
+		detail_stack *s = &stacks[(rng >> 8) % DETAIL_STACKS];
+		if ((rng >> 12) % 4 == 0) {
+			detail_stack_pop(s);
+			continue;
+		}
+		/* The order details.c uses: room first, then a free document. */
+		if (s->count >= DETAIL_DEPTH)
+			assert(detail_stack_drop_oldest(s) >= 0);
+		int slot = detail_pool_free(stacks);
+		assert(slot >= 0 && slot < DETAIL_POOL);
+		assert(detail_stack_push(s, slot) == -1);
+
+		bool seen[DETAIL_POOL] = { false };
+		for (int i = 0; i < DETAIL_STACKS; i++) {
+			assert(stacks[i].count <= DETAIL_DEPTH);
+			for (int j = 0; j < stacks[i].count; j++) {
+				assert(!seen[stacks[i].slot[j]]);
+				seen[stacks[i].slot[j]] = true;
+			}
+		}
+	}
+
+	/* Both stacks full: every document is taken, and the oldest of one
+	 * stack is what makes room. */
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		detail_stack_clear(&stacks[i]);
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		for (int j = 0; j < DETAIL_DEPTH; j++)
+			detail_stack_push(&stacks[i], detail_pool_free(stacks));
+	assert(detail_pool_free(stacks) == -1);
+	int oldest = detail_stack_drop_oldest(&stacks[1]);
+	assert(detail_pool_free(stacks) == oldest);
 }
 
 /* One EntityExtensionData { entity_uri 2, extension_data 3 (Any) } holding a
@@ -1958,6 +2037,8 @@ int main(void)
 	test_meta_parse_album();
 	test_meta_parse_artist();
 	test_meta_parse_batch();
+	test_detail_stack();
+	test_detail_pool();
 	test_http_redirects();
 	test_download_retry_delay();
 	test_power_policy();

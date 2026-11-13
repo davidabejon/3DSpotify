@@ -9,6 +9,7 @@
 #include "ap3ds.h"
 #include "artwork.h"
 #include "cfg3ds.h"
+#include "details.h"
 #include "icons.h"
 #include "lang.h"
 #include "login_logic.h"
@@ -1145,6 +1146,8 @@ static void search_start(const spotify_session *session, const char *query)
 	/* The tracks in the list are about to change under the queue's
 	 * copy. */
 	queue_from_results = false;
+	/* Its details came from the results being replaced. */
+	details_clear(TAB_SEARCH);
 	view_results_searching();
 	/* Below the decoder, like every worker that can overlap playback. */
 	search_thread = threadCreate(search_worker, &search, 16 * 1024,
@@ -1278,6 +1281,7 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		search_poll();
+		details_poll(active_tab, session->host, session->library_token);
 		/* Not stopped on leaving the tab: it only fetches the rows on
 		 * screen and the next ones anyway. */
 		view_results_allow_thumbs(!player_preparing());
@@ -1390,7 +1394,8 @@ static tabs_exit run_tabs(spotify_session *session)
 	}
 }
 
-/* Leaving the tabs: no audio, search or thumbnails survive the session. */
+/* Leaving the tabs: no audio, search, details or thumbnails survive the
+ * session. */
 static void stop_tabs(void)
 {
 	/* Every worker's network wait fails within TLS_ABORT_SLICE_MS, so the
@@ -1398,6 +1403,7 @@ static void stop_tabs(void)
 	tls_set_abort(true);
 	player_stop();
 	search_stop();
+	details_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();
