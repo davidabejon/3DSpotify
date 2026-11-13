@@ -40,6 +40,7 @@ class NativeLogicTests(unittest.TestCase):
                     "-I", str(ROOT / "source" / "deps"),
                     str(ROOT / "tests" / "native_logic_test.c"),
                     str(ROOT / "source" / "platform3ds" / "search_path.c"),
+                    str(ROOT / "source" / "platform3ds" / "spotify_id.c"),
                     str(ROOT / "source" / "lang" / "lang.c"),
                     str(ROOT / "source" / "lang" / "lang_en.c"),
                     str(ROOT / "source" / "lang" / "lang_es.c"),

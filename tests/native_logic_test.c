@@ -13,6 +13,7 @@
 #include "press_logic.h"
 #include "search_path.h"
 #include "spinner_logic.h"
+#include "spotify_id.h"
 #include "settings_logic.h"
 #include "tabs_logic.h"
 #include "text_fit.h"
@@ -23,6 +24,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static void test_search_path_encoding(void)
@@ -40,6 +42,65 @@ static void test_search_path_encoding(void)
 	              "/context-resolve/v1/spotify:search:canci%C3%B3n") == 0);
 	assert(!sp_search_path("", path, sizeof(path)));
 	assert(!sp_search_path("test", path, 4));
+}
+
+static void test_spotify_id(void)
+{
+	/* Real pairs, from probe_meta's log of Mr. Brightside. */
+	static const struct { const char *id, *hex; } VEC[] = {
+		{ "3n3Ppam7vgaVa1iaRUc9Lp", "6ecac90c03f74dcba9e21b408e14719f" },
+		{ "4OHNH3sDzIxnmUADXzv2kT", "9e4c9dd5f8d641e0aaff6b2a560b45af" },
+		{ "0C0XlULifJtAgn6ZNCW2eu", "142571008feb40c881095ffe591b793a" },
+		{ "0000000000000000000000", "00000000000000000000000000000000" },
+		{ "7N42dgm5tFLK9N8MT7fHC7", "ffffffffffffffffffffffffffffffff" },
+	};
+	for (size_t i = 0; i < sizeof(VEC) / sizeof(VEC[0]); i++) {
+		uint8_t gid[16];
+		char hex[33], id[SP_ID_LEN + 1];
+		assert(sp_gid_from_id(VEC[i].id, gid));
+		for (int j = 0; j < 16; j++)
+			snprintf(hex + j * 2, 3, "%02x", gid[j]);
+		assert(strcmp(hex, VEC[i].hex) == 0);
+		sp_id_from_gid(gid, id);
+		assert(strcmp(id, VEC[i].id) == 0);
+	}
+
+	/* Every byte pattern survives the round trip. */
+	uint8_t gid[16], back[16];
+	char id[SP_ID_LEN + 1];
+	for (int seed = 0; seed < 256; seed++) {
+		for (int j = 0; j < 16; j++)
+			gid[j] = (uint8_t)(seed * 31 + j * 97 + (seed ^ j));
+		sp_id_from_gid(gid, id);
+		assert(strlen(id) == SP_ID_LEN);
+		assert(sp_gid_from_id(id, back));
+		assert(memcmp(gid, back, 16) == 0);
+	}
+
+	/* Wrong length, a character outside base62, more than 128 bits. */
+	assert(!sp_gid_from_id(NULL, back));
+	assert(!sp_gid_from_id("", back));
+	assert(!sp_gid_from_id("3n3Ppam7vgaVa1iaRUc9L", back));
+	assert(!sp_gid_from_id("3n3Ppam7vgaVa1iaRUc9Lpp", back));
+	assert(!sp_gid_from_id("3n3Ppam7vgaVa1iaRUc9L-", back));
+	assert(!sp_gid_from_id("7N42dgm5tFLK9N8MT7fHC8", back));   /* 2^128 */
+	assert(!sp_gid_from_id("zzzzzzzzzzzzzzzzzzzzzz", back));
+	for (int j = 0; j < 16; j++)
+		assert(back[j] == 0);
+
+	char uri[SP_URI_MAX];
+	assert(sp_gid_from_id("4OHNH3sDzIxnmUADXzv2kT", gid));
+	assert(sp_uri_from_gid(SP_KIND_ALBUM, gid, uri, sizeof(uri)));
+	assert(strcmp(uri, "spotify:album:4OHNH3sDzIxnmUADXzv2kT") == 0);
+	assert(sp_uri_from_gid(SP_KIND_TRACK, gid, uri, sizeof(uri)));
+	assert(strcmp(uri, "spotify:track:4OHNH3sDzIxnmUADXzv2kT") == 0);
+	/* The longest kind fits SP_URI_MAX with room to spare... */
+	assert(sp_uri_from_gid(SP_KIND_ARTIST, gid, uri, sizeof(uri)));
+	assert(strlen(uri) == 37);
+	/* ...and a short buffer is refused, not truncated. */
+	assert(!sp_uri_from_gid(SP_KIND_ARTIST, gid, uri, 37));
+	assert(uri[0] == '\0');
+	assert(!sp_uri_from_gid((sp_kind)7, gid, uri, sizeof(uri)));
 }
 
 static void test_queue_boundaries(void)
@@ -1552,6 +1613,7 @@ int main(void)
 	test_image_pow2();
 	test_image_copy_to_texture();
 	test_search_path_encoding();
+	test_spotify_id();
 	test_http_redirects();
 	test_download_retry_delay();
 	test_power_policy();
