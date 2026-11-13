@@ -363,6 +363,86 @@ static void test_meta_parse_artist(void)
 	assert(sp_parse_artist(&av, "FR", &a) && a.track_count == 2);
 }
 
+/* One EntityExtensionData { entity_uri 2, extension_data 3 (Any) } holding a
+ * Track that only has a name. */
+static void add_batch_entry(pb *arr, const char *uri, const char *name)
+{
+	uint8_t track_s[64], any_s[96], ed_s[160];
+	pb track, any, ed;
+	pb_init(&track, track_s, sizeof(track_s));
+	pb_str(&track, 2, name);
+	pb_init(&any, any_s, sizeof(any_s));
+	pb_sub(&any, 2, &track);
+	pb_init(&ed, ed_s, sizeof(ed_s));
+	pb_str(&ed, 2, uri);
+	pb_sub(&ed, 3, &any);
+	pb_sub(arr, 3, &ed);
+}
+
+static int parse_batch(pb *arr, const char *const *uris, int n, sp_track *out)
+{
+	static uint8_t body_s[1024];
+	pb body;
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_sub(&body, 2, arr);
+	assert(pb_ok(&body));
+	return sp_parse_track_batch(body.p, body.len, uris, n, out);
+}
+
+static void test_meta_parse_batch(void)
+{
+	static const char *const ASK[] = {
+		"spotify:track:a", "spotify:track:b", "spotify:track:c",
+	};
+	static sp_track out[3];
+	static uint8_t arr_s[768];
+	pb arr;
+
+	/* Shuffled, as the service answers: back in the order asked. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:c", "C");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	add_batch_entry(&arr, "spotify:track:b", "B");
+	assert(parse_batch(&arr, ASK, 3, out) == 3);
+	for (int i = 0; i < 3; i++) {
+		assert(strcmp(out[i].uri, ASK[i]) == 0);
+		assert(out[i].name[0] == 'A' + i && out[i].name[1] == '\0');
+	}
+
+	/* One left out: the others close ranks in order. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:c", "C");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	assert(parse_batch(&arr, ASK, 3, out) == 2);
+	assert(strcmp(out[0].name, "A") == 0 && strcmp(out[1].name, "C") == 0);
+	assert(strcmp(out[1].uri, "spotify:track:c") == 0);
+
+	/* A stray URI arriving first does not steal a slot that a later entry
+	 * names; it takes what is left. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:relinked", "X");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	add_batch_entry(&arr, "spotify:track:c", "C");
+	assert(parse_batch(&arr, ASK, 3, out) == 3);
+	assert(strcmp(out[0].name, "A") == 0);
+	assert(strcmp(out[1].name, "X") == 0 &&
+	       strcmp(out[1].uri, "spotify:track:b") == 0);
+	assert(strcmp(out[2].name, "C") == 0);
+
+	/* The same track asked twice and answered twice fills both. */
+	static const char *const TWICE[] = { "spotify:track:a", "spotify:track:a" };
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	assert(parse_batch(&arr, TWICE, 2, out) == 2);
+
+	/* Nothing usable. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	assert(parse_batch(&arr, ASK, 3, out) == 0);
+	assert(sp_parse_track_batch(arr_s, 0, ASK, 3, out) == 0);
+	assert(sp_parse_track_batch(arr_s, 0, ASK, 0, out) == 0);
+}
+
 static void test_queue_boundaries(void)
 {
 	assert(playback_queue_step(0, 3, -1) == -1);
@@ -1877,6 +1957,7 @@ int main(void)
 	test_meta_parse_track();
 	test_meta_parse_album();
 	test_meta_parse_artist();
+	test_meta_parse_batch();
 	test_http_redirects();
 	test_download_retry_delay();
 	test_power_policy();

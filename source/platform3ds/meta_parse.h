@@ -46,6 +46,16 @@ bool sp_parse_entity(const uint8_t *body, size_t len, pbv *entity);
  * not clear `out` first: the caller does. */
 void sp_parse_track(const pbv *track, sp_track *out);
 
+/* A batch answer for `n` track URIs, into out[0..n), in the order asked.
+ *
+ * The service does NOT answer in that order (an album's 14 tracks came back
+ * as 14, 5, 12, 3, ...), so each EntityExtensionData is placed by its
+ * entity_uri (2). An entry whose URI matches nothing asked takes the first
+ * slot still free; tracks the answer leaves out are dropped and the rest
+ * close ranks, keeping their relative order. Returns how many are filled. */
+int sp_parse_track_batch(const uint8_t *body, size_t len,
+                         const char *const *uris, int n, sp_track *out);
+
 /* Clear `out`, then fill it. False when the message carries no gid. */
 bool sp_parse_album(const pbv *album, sp_album *out);
 bool sp_parse_artist(const pbv *artist, const char *country, sp_artist *out);

@@ -450,26 +450,9 @@ static int metadata_batch_request(const char *host, http_session *sess,
 		return -1;
 	}
 
-	/* One EntityExtensionDataArray comes back per extension kind, holding one
-	 * EntityExtensionData per track, in the order asked. */
-	const uint8_t *body = (const uint8_t *)r.body;
-	int filled = 0;
-	pbv arr;
-	if (pb_get_bytes(body, r.len, 2, &arr)) {
-		size_t at = 0;
-		pbv ed;
-		while (filled < n && pb_next_bytes(&arr, 3, &at, &ed)) {
-			pbv uri, any, track;
-			memset(&out[filled], 0, sizeof(out[filled]));
-			if (pb_get_bytes(ed.p, ed.len, 2, &uri))
-				copy_str(out[filled].uri, sizeof(out[filled].uri), &uri);
-			if (pb_get_bytes(ed.p, ed.len, 3, &any) &&
-			    pb_get_bytes(any.p, any.len, 2, &track))
-				sp_parse_track(&track, &out[filled]);
-			filled++;
-		}
-	}
-
+	/* Placed by URI, not by position: the answer comes back shuffled. */
+	int filled = sp_parse_track_batch((const uint8_t *)r.body, r.len, uris, n,
+	                                  out);
 	http_reply_free(&r);
 	if (filled == 0)
 		snprintf(err, errlen, "no tracks in a %u byte response", (unsigned)r.len);

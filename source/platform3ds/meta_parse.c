@@ -159,6 +159,87 @@ void sp_parse_track(const pbv *t, sp_track *out)
 	}
 }
 
+static bool same_uri(const pbv *v, const char *uri)
+{
+	return strlen(uri) == v->len && memcmp(v->p, uri, v->len) == 0;
+}
+
+/* The asked slot an entry belongs in: the first free one with its URI, or,
+ * with `any_free`, the first free one at all. -1 when there is none. A slot
+ * is taken once its uri is set. */
+static int batch_slot(const pbv *uri, const char *const *uris, int n,
+                      const sp_track *out, bool any_free)
+{
+	for (int j = 0; j < n; j++)
+		if (!out[j].uri[0] && (any_free || (uri && same_uri(uri, uris[j]))))
+			return j;
+	return -1;
+}
+
+static bool batch_placed(const pbv *uri, const char *const *uris, int n,
+                         const sp_track *out)
+{
+	for (int j = 0; j < n; j++)
+		if (out[j].uri[0] && same_uri(uri, uris[j]))
+			return true;
+	return false;
+}
+
+static void batch_fill(const pbv *ed, int slot, const char *const *uris,
+                       sp_track *out)
+{
+	pbv any, track;
+	snprintf(out[slot].uri, sizeof(out[slot].uri), "%s", uris[slot]);
+	if (pb_get_bytes(ed->p, ed->len, 3, &any) &&
+	    pb_get_bytes(any.p, any.len, 2, &track))
+		sp_parse_track(&track, &out[slot]);
+}
+
+int sp_parse_track_batch(const uint8_t *body, size_t len,
+                         const char *const *uris, int n, sp_track *out)
+{
+	for (int j = 0; j < n; j++)
+		memset(&out[j], 0, sizeof(out[j]));
+
+	/* One EntityExtensionDataArray per extension kind; one kind is asked. */
+	pbv arr;
+	if (n <= 0 || !pb_get_bytes(body, len, 2, &arr))
+		return 0;
+
+	/* First the entries that name a track asked for, so that a stray one
+	 * cannot take a slot that belongs to a later entry... */
+	size_t at = 0;
+	pbv ed, uri;
+	while (pb_next_bytes(&arr, 3, &at, &ed)) {
+		if (!pb_get_bytes(ed.p, ed.len, 2, &uri))
+			continue;
+		int slot = batch_slot(&uri, uris, n, out, false);
+		if (slot >= 0)
+			batch_fill(&ed, slot, uris, out);
+	}
+	/* ...then the strays, into whatever is left. */
+	at = 0;
+	while (pb_next_bytes(&arr, 3, &at, &ed)) {
+		bool has_uri = pb_get_bytes(ed.p, ed.len, 2, &uri);
+		if (has_uri && batch_placed(&uri, uris, n, out))
+			continue;
+		int slot = batch_slot(NULL, uris, n, out, true);
+		if (slot < 0)
+			break;
+		batch_fill(&ed, slot, uris, out);
+	}
+
+	int filled = 0;
+	for (int j = 0; j < n; j++) {
+		if (!out[j].uri[0])
+			continue;
+		if (filled != j)
+			out[filled] = out[j];
+		filled++;
+	}
+	return filled;
+}
+
 bool sp_parse_album(const pbv *a, sp_album *out)
 {
 	memset(out, 0, sizeof(*out));

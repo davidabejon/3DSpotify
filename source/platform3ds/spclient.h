@@ -113,7 +113,9 @@ int  sp_track_metadata(const char *host, const char *token, const char *track_ur
 /* Several at once. The service takes a repeated entity_request, so a screenful
  * of tracks costs one round trip instead of one each -- which on this console
  * is the difference between a list that fills instantly and one that crawls.
- * Returns how many were filled in, or -1. */
+ * Returns how many were filled in, or -1. They come back in the order asked
+ * (minus any the service left out), although the service itself answers
+ * shuffled: see sp_parse_track_batch. */
 int  sp_track_metadata_batch(const char *host, const char *token,
                              const char *const *uris, int n,
                              sp_track *out, char *err, size_t errlen);
