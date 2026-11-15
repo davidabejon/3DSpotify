@@ -232,6 +232,68 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("HOME_ACTION_RECONNECT", home)
         self.assertNotIn("HOME_ACTION_PAIR", home)
 
+    def test_home_playlists_follow_style_guide_and_docs(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        lang_dir = build.ROOT / "lang"
+        docs = build.ROOT.parent / "docs"
+        for name in ("tile_grid.c", "tile_grid.h", "grid_logic.h",
+                     "home_feed.c", "home_feed.h", "home_feed_logic.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        # No loose colours or text scales in the new drawing code.
+        for name in ("tile_grid.c", "view_home.c"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
+            self.assertIsNone(re.search(r"\b0\.(?!0f)\d+f\b", source), name)
+            self.assertNotIn("C2D_Color32", source, name)
+        # Rows and tiles share one frame for their states (5.3, 5.16).
+        self.assertIn("ui_item_frame(", (ui_dir / "track_list.c").read_text(
+            encoding="utf-8"))
+        self.assertIn("ui_item_frame(", (ui_dir / "tile_grid.c").read_text(
+            encoding="utf-8"))
+        theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
+        for token in ("TILE_H = TOUCH_MIN", "TILE_COVER", "GRID_GAP"):
+            self.assertIn(token, theme)
+        # The loader keeps credentials only while it runs.
+        feed = (ui_dir / "home_feed.c").read_text(encoding="utf-8")
+        for function in ("bool home_feed_poll(", "void home_feed_stop("):
+            body = feed[feed.index(function):]
+            body = body[:body.index("\n}\n")]
+            self.assertIn("secure_clear(job.token", body)
+            self.assertIn("secure_clear(job.username", body)
+        self.assertIn("background_priority()", feed)
+        self.assertNotIn("api.spotify.com", feed)
+        # Every new string in both languages; Spanish without accents.
+        keys = ("STR_HOME_RECENT", "STR_HOME_YOUR_PLAYLISTS",
+                "STR_HOME_SHOW_MORE", "STR_HOME_EMPTY",
+                "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE")
+        for name in ("lang_en.c", "lang_es.c"):
+            table = (lang_dir / name).read_text(encoding="utf-8")
+            for key in keys:
+                match = re.search(r"\[" + key + r"\] = \"([^\"]+)\"", table)
+                self.assertIsNotNone(match, (name, key))
+                if name == "lang_es.c":
+                    self.assertIsNone(re.search(r"[áéíóúñÁÉÍÓÚÑ]",
+                                                match.group(1)), key)
+        self.assertNotIn("STR_HOME_LAST_SEARCH",
+                         (lang_dir / "lang.h").read_text(encoding="utf-8"))
+        # The style guide and both READMEs describe it.
+        styles = (docs / "STYLES.md").read_text(encoding="utf-8")
+        self.assertIn("### 5.16 Tesela", styles)
+        home = styles[styles.index("### 7.7 Inicio"):
+                      styles.index("### 7.8 Ajustes")]
+        for text in ("Mostrar más", "Recientes", "Tus playlists", "[Y] Buscar"):
+            self.assertIn(text, home)
+        self.assertIn("Playlist:", styles[styles.index("### 7.12"):])
+        self.assertIn("TILE_H = TOUCH_MIN", styles)
+        readme = (build.ROOT.parent / "README.md").read_text(encoding="utf-8")
+        readme_es = (build.ROOT.parent / "README_es.md").read_text(
+            encoding="utf-8")
+        self.assertIn("Show more", readme)
+        self.assertIn("**Playlist:**", readme)
+        self.assertIn("Mostrar", readme_es)
+        self.assertIn("**Playlist:**", readme_es)
+
     def test_ui_follows_style_guide(self):
         import re
         ui_dir = build.ROOT / "ui"
@@ -632,7 +694,7 @@ class BuildTests(unittest.TestCase):
         for section in ("### 5.14 Enlace", "### 5.15 Texto que rueda",
                         "### 7.9 Detalles: navegación común",
                         "### 7.10 Detalle de canción",
-                        "### 7.11 Detalle de álbum y de artista",
+                        "### 7.11 Detalle de álbum, de artista y de playlist",
                         "### 7.12 Ficha de detalle (pantalla superior)"):
             self.assertIn(section, style)
         self.assertIn("[A] Reproducir [X] Detalle [Y] Buscar [B] Volver",
