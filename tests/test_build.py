@@ -402,33 +402,38 @@ class BuildTests(unittest.TestCase):
         self.assertIn("track_list_allow_thumbs(allow);",
                       allow[:allow.index("\n}\n")])
         allow = rows[rows.index("void track_list_allow_thumbs("):]
+        self.assertIn("thumbs_allow(allow);", allow[:allow.index("\n}\n")])
+        allow = thumbs[thumbs.index("void thumbs_allow("):]
         self.assertIn("thumbs_stop();", allow[:allow.index("\n}\n")])
         self.assertIn("thumbs_init();", app)
         self.assertLess(app.index("thumbs_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
-        # thumbs.c serves one list: the one on screen claims it from its
-        # view's update, where the uploads happen too; a list ready before
-        # it is shown only takes it when no other list has it.
-        frame = rows[rows.index("void track_list_thumbs_frame("):]
+        # thumbs.c serves one client (a list or a grid): the one on screen
+        # claims it from its view's update, where the uploads happen too; a
+        # list ready before it is shown only takes it when no other has it.
+        frame = thumbs[thumbs.index("void thumbs_client_frame("):]
         frame = frame[:frame.index("\n}\n")]
-        self.assertIn("if (thumbs_list != l)", frame)
+        self.assertIn("if (owner != c)", frame)
         self.assertIn("thumbs_poll()", frame)
-        offer = rows[rows.index("void track_list_offer_thumbs("):]
-        self.assertIn("thumbs_list)", offer[:offer.index("\n}\n")])
+        offer = thumbs[thumbs.index("void thumbs_client_offer("):]
+        self.assertIn("if (owner)", offer[:offer.index("\n}\n")])
+        self.assertIn("thumbs_client_frame(&l->thumbs);", rows)
+        self.assertIn("thumbs_client_offer(&l->thumbs);", rows)
         self.assertIn("track_list_thumbs_frame(&list);", results)
         self.assertIn("track_list_thumbs_frame(&list);", detail)
         self.assertIn("track_list_offer_thumbs(&list);", results)
         # A fixed-size slot either way.
-        self.assertIn("thumbs_image(index, &image)", rows)
-        self.assertIn("thumbs_set_window(l->first)", rows)
-        # Only the list thumbs.c serves follows the scroll with downloads.
-        self.assertIn("if (l->style == TRACK_LIST_THUMBS && l == thumbs_list "
-                      "&& l->thumbs_synced)\n"
-                      "\t\tthumbs_set_window(l->first);", rows)
-        # Nothing thumbs.c holds for another list is drawn.
-        self.assertIn("l == thumbs_list &&\n"
-                      "\t             l->thumbs_synced && "
-                      "thumbs_image(index, &image)", rows)
+        self.assertIn("thumbs_client_image(&l->thumbs, index, &image)", rows)
+        self.assertIn("thumbs_client_window(&l->thumbs, l->first)", rows)
+        # Only the client thumbs.c serves follows the scroll with downloads.
+        window = thumbs[thumbs.index("void thumbs_client_window("):]
+        self.assertIn("if (owner == c && c->synced)\n"
+                      "\t\tthumbs_set_window(first);",
+                      window[:window.index("\n}\n")])
+        # Nothing thumbs.c holds for another client is drawn.
+        image = thumbs[thumbs.index("bool thumbs_client_image("):]
+        self.assertIn("owner == c && c->synced &&",
+                      image[:image.index("\n}\n")])
 
     def test_results_play_directly_and_scroll_by_touch(self):
         ui_dir = build.ROOT / "ui"
