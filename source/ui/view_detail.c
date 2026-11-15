@@ -30,11 +30,15 @@ typedef enum {
 } detail_mode;
 
 /* The button bar (STYLES.md 5.6). */
-enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X" };
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X", "Y" };
 static const u32 glyph_colors[GLYPH_COUNT] = {
-	COL_BTN_A, COL_BTN_B, COL_BTN_X
+	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y
 };
+
+/* What the bubble (5.9) says: the language after SELECT, or the order
+ * after Y. A new one replaces the last. */
+typedef enum { BUBBLE_LANGUAGE, BUBBLE_SHUFFLE } bubble_kind;
 
 /* Parsed text, for `parsed_doc` as it was at `parsed_serial` and
  * `parsed_state`, in `parsed_lang`. */
@@ -42,8 +46,9 @@ static C2D_TextBuf text_buf, scratch_buf;
 static C2D_Text button_text[DETAIL_BUTTON_COUNT];
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_choose, hint_play, hint_detail, hint_back, hint_cancel,
-                hint_retry;
-static C2D_Text bubble_text, loading_text, empty_text, retry_text;
+                hint_retry, hint_shuffle_on, hint_shuffle_off;
+static C2D_Text bubble_text, shuffle_on_text, shuffle_off_text, loading_text,
+                empty_text, retry_text;
 static C2D_Text notice_title_text, notice_body_text;
 static lang_id parsed_lang = LANG_COUNT;
 static const detail_doc *parsed_doc;
@@ -69,7 +74,10 @@ static press_state press_retry;
 static press_state press_glyph[GLYPH_COUNT];
 static touch_track touch = { -1 };
 static int bubble_frames = -1;
+static bubble_kind bubble = BUBBLE_LANGUAGE;
 static int loader_frames;
+/* Whether a list's queue plays shuffled: the app's setting, shown on Y. */
+static bool shuffle;
 static detail_action pending = DETAIL_ACTION_NONE;
 static const press_state *pending_press;
 
@@ -80,6 +88,8 @@ typedef struct {
 	bool retry;
 	bool glyph[GLYPH_COUNT];
 	bool bubble;
+	bubble_kind bubble_kind;
+	bool shuffle;
 	bool more;
 	int loader_step;
 	track_list_look list;
@@ -183,7 +193,11 @@ static void parse_text(const detail_doc *doc)
 	parse(&hint_back, tr(STR_HINT_BACK));
 	parse(&hint_cancel, tr(STR_HINT_CANCEL));
 	parse(&hint_retry, tr(STR_HINT_RETRY));
+	parse(&hint_shuffle_on, tr(STR_HINT_SHUFFLE_ON));
+	parse(&hint_shuffle_off, tr(STR_HINT_SHUFFLE_OFF));
 	parse(&bubble_text, tr(STR_LANG_NAME));
+	parse(&shuffle_on_text, tr(STR_SHUFFLE_ON));
+	parse(&shuffle_off_text, tr(STR_SHUFFLE_OFF));
 	parse(&loading_text, tr(STR_DETAIL_LOADING));
 	parse(&empty_text, tr(STR_DETAIL_EMPTY));
 	parse(&retry_text, tr(STR_RESULTS_RETRY));
@@ -264,6 +278,8 @@ static detail_look current_look(void)
 		.focus = focus,
 		.retry = press_down(&press_retry),
 		.bubble = bubble_frames >= 0,
+		.bubble_kind = bubble,
+		.shuffle = shuffle,
 		.more = loading_more,
 		.loader_step = mode == MODE_LOADING || loading_more
 		               ? loader_frames / LOADER_STEP : 0,
@@ -279,7 +295,8 @@ static detail_look current_look(void)
 static bool same_look(const detail_look *a, const detail_look *b)
 {
 	if (a->mode != b->mode || a->focus != b->focus || a->retry != b->retry ||
-	    a->bubble != b->bubble || a->more != b->more ||
+	    a->bubble != b->bubble || a->bubble_kind != b->bubble_kind ||
+	    a->shuffle != b->shuffle || a->more != b->more ||
 	    a->loader_step != b->loader_step ||
 	    !track_list_same_look(&a->list, &b->list))
 		return false;
@@ -355,6 +372,8 @@ static void release_keys(u32 up)
 		press_end(&press_glyph[GLYPH_B]);
 	if (up & KEY_X)
 		press_end(&press_glyph[GLYPH_X]);
+	if (up & KEY_Y)
+		press_end(&press_glyph[GLYPH_Y]);
 }
 
 /* The buttons of the track and error states. Returns true while the
@@ -414,6 +433,11 @@ static detail_action update(u32 down)
 		detail_action action = pending;
 		pending = DETAIL_ACTION_NONE;
 		pending_press = NULL;
+		/* The caller switches the order; the bubble shows the new one. */
+		if (action == DETAIL_ACTION_SHUFFLE) {
+			bubble = BUBBLE_SHUFFLE;
+			bubble_frames = 0;
+		}
 		return action;
 	}
 
@@ -457,11 +481,14 @@ static detail_action update(u32 down)
 		press_key(GLYPH_A, DETAIL_ACTION_RETRY, &press_retry);
 	} else if ((down & KEY_X) && mode == MODE_LIST) {
 		press_key(GLYPH_X, DETAIL_ACTION_OPEN_TRACK, NULL);
+	} else if ((down & KEY_Y) && mode == MODE_LIST) {
+		press_key(GLYPH_Y, DETAIL_ACTION_SHUFFLE, NULL);
 	} else if (down & KEY_B) {
 		/* While loading this cancels: going back forgets the load. */
 		press_key(GLYPH_B, DETAIL_ACTION_BACK, NULL);
 	} else if (down & KEY_SELECT) {
 		/* No language control on screen: a bubble with the result (6.5). */
+		bubble = BUBBLE_LANGUAGE;
 		bubble_frames = 0;
 		return DETAIL_ACTION_LANGUAGE;
 	}
@@ -479,6 +506,11 @@ detail_action view_detail_update(detail_doc *doc, u32 down)
 		doc->first = list.first;
 	}
 	return action;
+}
+
+void view_detail_set_shuffle(bool on)
+{
+	shuffle = on;
 }
 
 bool view_detail_dirty(const detail_doc *doc)
@@ -527,6 +559,8 @@ static void draw_bar(const detail_look *look)
 	case MODE_LIST:
 		hints[n++] = hint(GLYPH_A, &hint_play, look);
 		hints[n++] = hint(GLYPH_X, &hint_detail, look);
+		hints[n++] = hint(GLYPH_Y, look->shuffle ? &hint_shuffle_on
+		                                         : &hint_shuffle_off, look);
 		break;
 	case MODE_FAILED:
 		hints[n++] = hint(GLYPH_A, &hint_retry, look);
@@ -590,10 +624,13 @@ void view_detail_draw_bottom(const detail_doc *doc)
 		slot = 1;
 	}
 	if (look.bubble) {
-		C2D_Image globe = icon_image(ICON_LANGUAGE);
-		ui_bubble(list_bubble_slot_rect(ui_bubble_content_width(&bubble_text),
-		                                slot),
-		          &globe, &bubble_text);
+		bool order = look.bubble_kind == BUBBLE_SHUFFLE;
+		const C2D_Text *text = !order ? &bubble_text
+		                       : look.shuffle ? &shuffle_on_text
+		                                      : &shuffle_off_text;
+		C2D_Image icon = icon_image(order ? ICON_SHUFFLE : ICON_LANGUAGE);
+		ui_bubble(list_bubble_slot_rect(ui_bubble_content_width(text), slot),
+		          &icon, text);
 	}
 
 	drawn = look;

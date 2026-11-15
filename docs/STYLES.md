@@ -283,8 +283,8 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Iconos sobre `clorofila`, `coral`, `ambar`: `tinta`. Sobre `capa`, `capa_alta` y fondo:
   `texto`.
 - Conjunto: reproducir, pausa, anterior, siguiente, volumen, buscar, cuenta, Wi-Fi, error,
-  aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador) y ajustes
-  (engranaje).
+  aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador), ajustes
+  (engranaje) y aleatorio (dos flechas cruzadas).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 - El logotipo no es un icono: se carga en tiempo de ejecución desde `romfs:/gfx/logo.png`
   (directorio `romfs/` del repositorio, empaquetado en el `.3dsx` y el `.cia`). PNG RGBA de
@@ -849,7 +849,14 @@ Error:
   espera «Cargando...» (§5.9) mientras llega; la lista sigue respondiendo. Hasta 500 pistas.
   Los episodios y archivos locales se omiten.
 - A, o tocar la fila en foco, reproduce desde ella con la lista como cola; X abre el detalle
-  de canción. Barra: `[A] Reproducir [X] Detalle [B] Volver`.
+  de canción. Barra: `[A] Reproducir [X] Detalle [Y] Aleatorio [B] Volver`.
+- Y alterna el aleatorio. Es un ajuste de la app, el mismo para todas las listas, y se
+  recuerda entre sesiones. La etiqueta de Y dice cómo está ahora («Aleatorio» o «En orden»)
+  y al cambiarlo sale una burbuja (§5.9) con el icono de aleatorio y «Aleatorio activado» o
+  «Aleatorio desactivado».
+- Con aleatorio, la pista elegida suena primero y el resto de la lista le sigue en orden
+  aleatorio; sin él, la lista suena en su orden desde la elegida. Si lo que suena es una
+  lista, cambiarlo la reordena al momento sin cortar la pista.
 - Cargando: filas esqueleto y burbuja de espera «Cargando...» (§5.9). B cancela y cierra.
 - Error: aviso (§5.8) con el detalle y botón primario «Reintentar»; A reintenta.
 - Sin pistas: mensaje centrado «No hay canciones».

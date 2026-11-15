@@ -39,6 +39,10 @@ const char *const lang_strings_es[STR_COUNT] = {
 
 	/* Vistas de detalle. */
 	[STR_HINT_DETAIL] = "Detalle",
+	[STR_HINT_SHUFFLE_ON] = "Aleatorio",
+	[STR_HINT_SHUFFLE_OFF] = "En orden",
+	[STR_SHUFFLE_ON] = "Aleatorio activado",
+	[STR_SHUFFLE_OFF] = "Aleatorio desactivado",
 	[STR_DETAIL_PLAY] = "Reproducir",
 	[STR_DETAIL_ARTIST_FMT] = "Artista: %s",
 	[STR_DETAIL_ALBUM_FMT] = "Album: %s",

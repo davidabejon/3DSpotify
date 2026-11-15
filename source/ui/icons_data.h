@@ -17,6 +17,7 @@ typedef enum {
 	ICON_PREV,
 	ICON_HEART,
 	ICON_NEXT,
+	ICON_SHUFFLE,
 	ICON_COUNT
 } icon_id;
 

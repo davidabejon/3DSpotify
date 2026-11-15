@@ -100,6 +100,10 @@ static int playback_queue_count;
 static int playback_order[PLAYBACK_QUEUE_MAX];
 static int queue_pos;
 static uint32_t queue_rng;
+/* Lists play shuffled: the setting, kept in the config. It applies to a
+ * queue that came from a list (an album, an artist, a playlist). */
+static bool shuffle_on;
+static bool queue_from_list;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
 /* The image of the detail card on the top screen, apart from cover_art:
@@ -185,6 +189,15 @@ static void language_init(void)
 		cfguExit();
 	}
 	lang_set(system == CFG_LANGUAGE_ES ? LANG_ES : LANG_EN);
+}
+
+/* Shuffle, as it was left. */
+static void shuffle_init(void)
+{
+	char value[4];
+	shuffle_on = cfg_get("shuffle", value, sizeof(value)) &&
+	             strcmp(value, "1") == 0;
+	view_detail_set_shuffle(shuffle_on);
 }
 
 /* SELECT, or the language button in Settings, switches the language from
@@ -1271,9 +1284,10 @@ static void keyboard_search(const spotify_session *session,
 	switch_tab(TAB_SEARCH);
 }
 
-/* Makes `count` tracks the queue, a copy, and plays track `index` of it. */
+/* Makes `count` tracks the queue, a copy, and plays track `index` of it.
+ * A list's queue follows the shuffle setting. */
 static void queue_play(spotify_session *session, const sp_track *tracks,
-                       int count, int index)
+                       int count, int index, bool list)
 {
 	if (count > PLAYBACK_QUEUE_MAX)
 		count = PLAYBACK_QUEUE_MAX;
@@ -1281,9 +1295,24 @@ static void queue_play(spotify_session *session, const sp_track *tracks,
 		return;
 	memcpy(playback_queue, tracks, (size_t)count * sizeof(playback_queue[0]));
 	playback_queue_count = count;
+	queue_from_list = list;
 	queue_rng ^= (uint32_t)svcGetSystemTick();
 	player_play(session, queue_order_start(playback_order, count, index,
-	                                       false, &queue_rng));
+	                                       list && shuffle_on, &queue_rng));
+}
+
+/* Y in a list: the setting switches and is kept. A list's queue playing
+ * now follows at once, from the track playing, which goes on. */
+static void toggle_shuffle(void)
+{
+	shuffle_on = !shuffle_on;
+	cfg_set("shuffle", shuffle_on ? "1" : "0");
+	view_detail_set_shuffle(shuffle_on);
+	if (!queue_from_list || player.phase == PLAYER_PHASE_IDLE)
+		return;
+	queue_rng ^= (uint32_t)svcGetSystemTick();
+	queue_pos = queue_order_reshuffle(playback_order, playback_queue_count,
+	                                  queue_pos, shuffle_on, &queue_rng);
 }
 
 /* Plays the results from `index`, straight from the list: there is no
@@ -1295,7 +1324,7 @@ static void play_from_results(spotify_session *session, int index)
 	 * (STYLES.md 9); they resume, kept, once its download starts. */
 	view_results_allow_thumbs(false);
 	queue_from_results = true;
-	queue_play(session, search.tracks, search.count, index);
+	queue_play(session, search.tracks, search.count, index, false);
 	switch_tab(TAB_PLAYER);
 }
 
@@ -1321,7 +1350,7 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		 * (STYLES.md 9). */
 		view_results_allow_thumbs(false);
 		queue_from_results = false;
-		queue_play(session, doc->tracks, doc->count, doc->selected);
+		queue_play(session, doc->tracks, doc->count, doc->selected, true);
 	}
 	/* The Playing tab shows the player, not a detail left open there; the
 	 * queue is copied, so this may be the document just played. */
@@ -1404,6 +1433,9 @@ static void detail_input(spotify_session *session, u32 down)
 		break;
 	case DETAIL_ACTION_LANGUAGE:
 		switch_language();
+		break;
+	case DETAIL_ACTION_SHUFFLE:
+		toggle_shuffle();
 		break;
 	default:
 		break;
@@ -2109,6 +2141,7 @@ int main(int argc, char **argv)
 	}
 	cfg_set_path(NULL);
 	language_init();
+	shuffle_init();
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
 	bool soc_ready = false;

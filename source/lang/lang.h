@@ -61,6 +61,12 @@ typedef enum {
 
 	/* Detail views (docs/plan_vistas_detalle.md). */
 	STR_HINT_DETAIL,
+	/* Y in a list: the order its queue plays in, as it is now, and the
+	 * bubble when it changes. */
+	STR_HINT_SHUFFLE_ON,
+	STR_HINT_SHUFFLE_OFF,
+	STR_SHUFFLE_ON,
+	STR_SHUFFLE_OFF,
 	STR_DETAIL_PLAY,
 	STR_DETAIL_ARTIST_FMT,
 	STR_DETAIL_ALBUM_FMT,

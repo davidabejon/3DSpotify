@@ -38,6 +38,10 @@ const char *const lang_strings_en[STR_COUNT] = {
 
 	/* Detail views. */
 	[STR_HINT_DETAIL] = "Detail",
+	[STR_HINT_SHUFFLE_ON] = "Shuffle",
+	[STR_HINT_SHUFFLE_OFF] = "In order",
+	[STR_SHUFFLE_ON] = "Shuffle on",
+	[STR_SHUFFLE_OFF] = "Shuffle off",
 	[STR_DETAIL_PLAY] = "Play",
 	[STR_DETAIL_ARTIST_FMT] = "Artist: %s",
 	[STR_DETAIL_ALBUM_FMT] = "Album: %s",
