@@ -1,6 +1,7 @@
 #include "art_url.h"
 #include "detail_logic.h"
 #include "detail_nav.h"
+#include "grid_logic.h"
 #include "home_logic.h"
 #include "http_logic.h"
 #include "image_util.h"
@@ -1480,6 +1481,105 @@ static void test_thumb_queue(void)
 	assert(!thumb_keep(THUMB_LOADING, true));
 }
 
+static void test_grid_layout(void)
+{
+	/* §3.3 of the home plan: widths, columns and text per column. */
+	static const int widths[3][3] = { { 304 }, { 150, 150 }, { 99, 99, 98 } };
+	static const int xs[3][3] = { { 8 }, { 8, 162 }, { 8, 111, 214 } };
+	static const int text[3][3] = { { 260 }, { 106, 106 }, { 55, 55, 54 } };
+	for (int cols = 1; cols <= 3; cols++) {
+		grid_geom g = { cols, 36, 5 };
+		int sum = 0;
+		for (int c = 0; c < cols; c++) {
+			assert(grid_col_width(&g, c) == widths[cols - 1][c]);
+			assert(grid_col_x(&g, c) == xs[cols - 1][c]);
+			assert(grid_text_width(&g, c) == text[cols - 1][c]);
+			sum += grid_col_width(&g, c);
+		}
+		assert(sum + (cols - 1) * GRID_GAP == 304);
+		/* No overlap, every cell inside the screen with its margins. */
+		for (int i = 0; i < 3 * cols; i++)
+			for (int j = i + 1; j < 3 * cols; j++) {
+				ui_rect a = grid_cell_rect(&g, i, 0);
+				ui_rect b = grid_cell_rect(&g, j, 0);
+				assert(a.x + a.w <= b.x || b.x + b.w <= a.x ||
+				       a.y + a.h <= b.y || b.y + b.h <= a.y);
+				assert(a.x >= SP_2 && a.x + a.w <= SCREEN_BOTTOM_W - SP_2);
+			}
+	}
+	assert(TILE_H >= TOUCH_MIN);
+	assert(TILE_COVER + 2 * SP_1 == TILE_H);
+
+	/* Five rows from 36 fill the space between the bars exactly. */
+	grid_geom more = { 2, 36, 5 };
+	ui_rect area = grid_area(&more);
+	assert(area.y == TAB_H && area.y + area.h == SCREEN_H - BAR_H);
+	ui_rect last = grid_cell_rect(&more, 9, 0);
+	assert(last.y + last.h + SP_1 == SCREEN_H - BAR_H);
+	/* The home grid of six: three rows from 56 end at 160. */
+	grid_geom six = { 2, 56, 3 };
+	ui_rect six_last = grid_cell_rect(&six, 5, 0);
+	assert(six_last.y == 128 && six_last.y + six_last.h == 160);
+	assert(grid_max_scroll(&six, 6) == 0);
+
+	/* Hits: tiles only, not gaps, not past the count, not outside. */
+	assert(grid_hit(&more, 24, 10, 40, 0) == 0);
+	assert(grid_hit(&more, 24, 170, 40, 0) == 1);
+	assert(grid_hit(&more, 24, 159, 40, 0) == -1);   /* column gap */
+	assert(grid_hit(&more, 24, 10, 69, 0) == -1);    /* row gap */
+	assert(grid_hit(&more, 24, 10, 73, 0) == 2);
+	assert(grid_hit(&more, 3, 170, 73, 0) == -1);    /* past the count */
+	assert(grid_hit(&more, 24, 10, 220, 0) == -1);   /* on the button bar */
+	assert(grid_hit(&more, 24, 10, 40, GRID_PITCH) == 2);
+
+	/* Scrolling: 24 tiles in 2 columns are 12 rows, 7 beyond the five. */
+	assert(grid_rows(&more, 24) == 12);
+	assert(grid_max_scroll(&more, 24) == 7 * GRID_PITCH);
+	assert(grid_snap(&more, GRID_PITCH / 2, 24) == 1);
+	assert(grid_snap(&more, 10000, 24) == 7);
+	assert(grid_row_whole(&more, 4, 0) && !grid_row_whole(&more, 5, 0));
+	/* The SP_1 margin above the first row: four pixels of scroll still
+	 * leave it whole, the fifth cuts it under the tab bar. */
+	assert(grid_row_whole(&more, 0, SP_1));
+	assert(!grid_row_whole(&more, 0, SP_1 + 1));
+	assert(grid_align(&more, 0, 11, 24) == 1);       /* row 5 into view */
+	assert(grid_align(&more, 7 * GRID_PITCH, 0, 24) == 0);
+	ui_rect thumb = grid_scroll_thumb(&more, 0, 24);
+	ui_rect track = grid_scroll_track(&more);
+	assert(thumb.y == track.y && thumb.h < track.h);
+	thumb = grid_scroll_thumb(&more, grid_max_scroll(&more, 24), 24);
+	assert(thumb.y + thumb.h == track.y + track.h);
+	assert(grid_scroll_thumb(&six, 0, 6).h == grid_scroll_track(&six).h);
+}
+
+static void test_grid_focus(void)
+{
+	grid_geom g = { 2, 36, 5 };
+	int dx, dy;
+	/* Down keeps the column; into a shorter last row, its last tile. */
+	assert(grid_move(&g, 5, 1, GRID_DOWN, &dx, &dy) == 3 && !dx && !dy);
+	assert(grid_move(&g, 5, 3, GRID_DOWN, &dx, &dy) == 4);
+	assert(grid_move(&g, 5, 4, GRID_DOWN, &dx, &dy) == 4 && dy == 1);
+	assert(grid_move(&g, 5, 2, GRID_UP, &dx, &dy) == 0 && !dy);
+	assert(grid_move(&g, 5, 1, GRID_UP, &dx, &dy) == 1 && dy == -1);
+	/* Left/right within the row; no wrap at either side. */
+	assert(grid_move(&g, 5, 0, GRID_RIGHT, &dx, &dy) == 1 && !dx);
+	assert(grid_move(&g, 5, 1, GRID_RIGHT, &dx, &dy) == 1 && dx == 1);
+	assert(grid_move(&g, 5, 2, GRID_LEFT, &dx, &dy) == 2 && dx == -1);
+	assert(grid_move(&g, 5, 4, GRID_RIGHT, &dx, &dy) == 4 && dx == 1);
+	/* One column: left/right jump a page. */
+	grid_geom one = { 1, 36, 5 };
+	assert(grid_move(&one, 12, 0, GRID_RIGHT, &dx, &dy) == 5 && !dy);
+	assert(grid_move(&one, 12, 9, GRID_RIGHT, &dx, &dy) == 11);
+	assert(grid_move(&one, 12, 11, GRID_RIGHT, &dx, &dy) == 11 && dy == 1);
+	assert(grid_move(&one, 12, 3, GRID_LEFT, &dx, &dy) == 0 && !dy);
+	/* Three columns, a row of one at the end. */
+	grid_geom three = { 3, 36, 5 };
+	assert(grid_move(&three, 7, 5, GRID_DOWN, &dx, &dy) == 6);
+	assert(grid_move(&three, 7, 6, GRID_UP, &dx, &dy) == 3);
+	assert(grid_move(&three, 0, 0, GRID_DOWN, &dx, &dy) == 0);
+}
+
 static void test_list_drag(void)
 {
 	/* Pixel geometry: one row per LIST_PITCH. */
@@ -2350,6 +2450,8 @@ int main(void)
 	test_spinner();
 	test_top_mode();
 	test_list_drag();
+	test_grid_layout();
+	test_grid_focus();
 	test_art_url();
 	test_thumb_queue();
 	test_list_logic();

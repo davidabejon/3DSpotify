@@ -363,26 +363,8 @@ static void draw_row(const track_list *l, ui_rect row, int index,
 	bool pressed = index >= 0 && index == look->pressed;
 	if (focused)
 		row = ui_rect_offset(row, 0, look->edge);
-	if (pressed)
-		row = ui_rect_offset(row, PRESS_SHIFT, PRESS_SHIFT);
-
-	u32 title_ink = COL_TEXTO;
-	u32 meta_ink = COL_TEXTO_2;
-	if (pressed || focused) {
-		/* Focused: `clorofila` with a `musgo` bottom band; pressed: the
-		 * dark fill (6.3). Text in `tinta` either way. */
-		ui_fill(row, COL_TINTA);
-		ui_rect inside = ui_rect_inset(row, OUTLINE_W);
-		ui_fill(inside, pressed ? COL_MUSGO : COL_CLOROFILA);
-		if (!pressed) {
-			ui_rect band = { inside.x, inside.y + inside.h - BEVEL_W,
-			                 inside.w, BEVEL_W };
-			ui_fill(band, COL_MUSGO);
-		}
-		title_ink = meta_ink = COL_TINTA;
-	} else {
-		ui_panel(row);
-	}
+	u32 title_ink, meta_ink;
+	row = ui_item_frame(row, focused, pressed, &title_ink, &meta_ink);
 	if (index >= 0 && l->style == TRACK_LIST_NUMBERS)
 		draw_number(l, row, index);
 	else

@@ -70,6 +70,10 @@ enum {
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,
 	PROGRESS_H = 8, VOLUME_H = 6,
+	/* §5.16 tesela: la fila de resultados en compacto, de una línea. */
+	TILE_H = TOUCH_MIN,
+	TILE_COVER = TILE_H - 2 * SP_1,
+	GRID_GAP = SP_1,
 };
 
 /* Movimiento (frames a 60 Hz) */

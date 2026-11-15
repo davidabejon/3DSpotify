@@ -45,6 +45,27 @@ void ui_panel(ui_rect r)
 	outlined(r, COL_CAPA);
 }
 
+ui_rect ui_item_frame(ui_rect r, bool focused, bool pressed, u32 *ink,
+                      u32 *meta_ink)
+{
+	if (pressed)
+		r = ui_rect_offset(r, PRESS_SHIFT, PRESS_SHIFT);
+	if (!pressed && !focused) {
+		ui_panel(r);
+		*ink = COL_TEXTO;
+		*meta_ink = COL_TEXTO_2;
+		return r;
+	}
+	ui_rect inside = outlined(r, pressed ? COL_MUSGO : COL_CLOROFILA);
+	if (!pressed) {
+		ui_rect band = { inside.x, inside.y + inside.h - BEVEL_W, inside.w,
+		                 BEVEL_W };
+		ui_fill(band, COL_MUSGO);
+	}
+	*ink = *meta_ink = COL_TINTA;
+	return r;
+}
+
 void ui_focus_ring(ui_rect r)
 {
 	ui_rect o = ui_rect_inset(r, -(FOCUS_GAP + FOCUS_W));
