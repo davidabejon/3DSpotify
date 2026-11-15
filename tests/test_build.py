@@ -579,6 +579,54 @@ class BuildTests(unittest.TestCase):
         self.assertLess(app.index("view_detail_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
 
+    def test_detail_views_follow_style_guide_and_docs(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        # Pure logic, testable on the host.
+        marquee = (ui_dir / "marquee_logic.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", marquee)
+        self.assertNotIn("#include <citro", marquee)
+        # The detail views: no loose colours, text scales or primitives.
+        for name in ("view_detail.c", "top_detail.c", "top_now.c"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
+            self.assertIsNone(re.search(r"\b0\.(?!0f)\d+f\b", source), name)
+            for call in ("C2D_DrawCircle", "C2D_DrawTriangle",
+                         "C2D_DrawRect", "C2D_DrawEllipse"):
+                self.assertNotIn(call, source, name)
+        # The detail card is centred and rolls what does not fit instead
+        # of cutting it (STYLES.md 5.15, 7.12); the clipping lives in draw.c.
+        card = (ui_dir / "top_detail.c").read_text(encoding="utf-8")
+        self.assertIn("top_now_draw_header(art, true,", card)
+        self.assertNotIn("ui_parse_fitted", card)
+        self.assertIn("marquee_offset(", card)
+        top_now = (ui_dir / "top_now.c").read_text(encoding="utf-8")
+        self.assertIn("ui_text_marquee(", top_now)
+        draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
+        self.assertIn("C3D_SetScissor(GPU_SCISSOR_DISABLE", draw)
+        # The loader's own errors come from the language tables.
+        details = (ui_dir / "details.c").read_text(encoding="utf-8")
+        self.assertIn("tr(STR_ERR_DETAIL_CONNECT_FMT)", details)
+        self.assertIn("tr(STR_ERR_DETAIL_THREAD)", details)
+        self.assertIsNone(re.search(r'snprintf\([^;]*"[a-z][^"%]*[a-z]"',
+                                    details))
+        # Documented: the components, the screens and the controls.
+        style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
+            encoding="utf-8")
+        for section in ("### 5.14 Enlace", "### 5.15 Texto que rueda",
+                        "### 7.9 Detalles: navegación común",
+                        "### 7.10 Detalle de canción",
+                        "### 7.11 Detalle de álbum y de artista",
+                        "### 7.12 Ficha de detalle (pantalla superior)"):
+            self.assertIn(section, style)
+        self.assertIn("[A] Reproducir [X] Detalle [Y] Buscar [B] Volver",
+                      style)
+        for readme, heading in (("README.md", "### Details"),
+                                ("README_es.md", "### Detalles")):
+            text = (build.ROOT.parent / readme).read_text(encoding="utf-8")
+            self.assertIn(heading, text, readme)
+            self.assertIn("#3FA2FF", text, readme)
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(

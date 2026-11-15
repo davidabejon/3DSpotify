@@ -109,6 +109,8 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_SEARCH_CHECK_WIFI] = "Check the Wi-Fi and try again.",
 	[STR_ERR_SEARCH_LOAD] = "Could not load the results.",
 	[STR_ERR_SEARCH_THREAD] = "Could not start the search task.",
+	[STR_ERR_DETAIL_CONNECT_FMT] = "No connection to %s.",
+	[STR_ERR_DETAIL_THREAD] = "Could not start the loading task.",
 	[STR_RESULTS_EMPTY] = "No songs found.",
 	[STR_RESULTS_IDLE] = "Nothing searched yet.",
 

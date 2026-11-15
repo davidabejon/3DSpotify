@@ -155,6 +155,10 @@ icon:
   **Playing** tab shows the cover large instead.
 - While a search runs, the **Search** tab adds a floating "Searching…" bubble
   with the loading indicator over the logo or the card.
+- With a detail open ([Details](#details)), the top screen shows its card instead:
+  the cover or portrait, the name and up to four lines (artist, album, length and
+  track number, year, label…). A line too long to fit scrolls sideways so it can be
+  read in full.
 
 ### Home
 
@@ -182,6 +186,7 @@ Results show four songs at a time. The **bottom screen** shows the list with thu
 **Button hints:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — plays the highlighted song
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to the Home tab
+- <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> — opens the highlighted song's detail ([Details](#details))
 - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — enters a new search
 - Left/right — jump four songs at a time
 
@@ -201,7 +206,8 @@ Results show four songs at a time. The **bottom screen** shows the list with thu
 
 The chosen track plays locally with the rest of the results as the queue, and keeps playing when you switch tabs.
 - The **top screen** shows the album artwork large (a note placeholder until it arrives).
-- The **bottom screen** shows the title, artist and place in the queue ("3 of 24"), the previous, play/pause and next buttons, the time, the progress bar (with the download ahead of it) and the volume bar.
+- The **bottom screen** shows the title, artist, album and place in the queue ("3 of 24"), the previous, play/pause and next buttons, the time, the progress bar (with the download ahead of it) and the volume bar.
+- Tap the **title**, the **artist** or the **album** to open its detail ([Details](#details)). They work while the track loads, plays or has finished; the text turns lime with an underline while pressed.
 
 **Playback controls:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pauses/resumes; once the track has finished, plays it again; after an error, retries
@@ -212,6 +218,23 @@ The chosen track plays locally with the rest of the results as the queue, and ke
 
 The queue follows search-result order and does not wrap at either end: there, the previous or next button shows as disabled. Complete playback, artwork,
 and controls still need validation on real hardware. The probes remain available as separate targets.
+
+### Details
+
+From a song you can open its detail, and from there its artist and album:
+
+- **Song:** **Play**, **Artist: …** and **Album: …** buttons (up/down and **A**, or
+  tap). Play starts the song with the list it came from as the queue.
+- **Album:** its tracks, numbered. **Artist:** their popular tracks, with thumbnails.
+  **A** (or tapping the highlighted row) plays from that song with the list as the
+  queue; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> opens the song's detail.
+- **B** goes back one level; with no detail left, it does what it always does on that
+  tab. **L/R** change tab and keep each tab's details where you left them.
+- Album and artist details load in the background: **B** cancels, and if loading
+  fails **A** retries.
+
+Details open from **Search** (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> on a result) and from **Playing** (tap the
+title, artist or album). A new search closes the details open in **Search**.
 
 ### Settings
 

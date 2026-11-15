@@ -161,6 +161,10 @@ pestañas, cada una con su icono:
 - Mientras hay una búsqueda en curso, la pestaña **Búsqueda** añade encima
   del logo o de la ficha una burbuja flotante «Buscando…» con el indicador de
   carga.
+- Con un detalle abierto ([Detalles](#detalles)), la pantalla superior muestra su
+  ficha: la carátula o el retrato, el nombre y hasta cuatro líneas (artista, álbum,
+  duración y número de pista, año, sello…). Una línea demasiado larga se desplaza de
+  lado para poder leerla entera.
 
 ### Inicio
 
@@ -188,6 +192,7 @@ Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** mues
 **Indicadores de acción:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — reproduce la canción resaltada
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Inicio
+- <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> — abre el detalle de la canción resaltada ([Detalles](#detalles))
 - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — inicia una nueva búsqueda
 - Izquierda/derecha — salta de cuatro en cuatro
 
@@ -207,7 +212,8 @@ Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** mues
 
 La canción elegida se reproduce localmente con el resto de resultados como cola, y sigue sonando aunque cambies de pestaña.
 - La **pantalla superior** muestra la carátula en grande (con el marcador de la nota hasta que llega).
-- La **pantalla inferior** muestra el título, el artista y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
+- La **pantalla inferior** muestra el título, el artista, el álbum y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
+- Toca el **título**, el **artista** o el **álbum** para abrir su detalle ([Detalles](#detalles)). Funcionan mientras la pista carga, suena o ha terminado; al pulsarlos, el texto pasa a color lima y se subraya.
 
 **Controles de reproducción:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda; con la pista terminada, la vuelve a empezar; con un error, reintenta
@@ -217,6 +223,26 @@ La canción elegida se reproduce localmente con el resto de resultados como cola
 - **START** — detiene y sale
 
 La cola sigue el orden de los resultados y no envuelve en sus extremos: en ellos, el botón anterior o siguiente aparece deshabilitado. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
+
+### Detalles
+
+Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su álbum:
+
+- **Canción:** botones **Reproducir**, **Artista: …** y **Album: …** (arriba/abajo y
+  **A**, o tocando). Reproducir empieza la canción con la lista de la que salió como
+  cola.
+- **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares, con
+  miniaturas. **A** (o tocar la fila resaltada) reproduce desde esa canción con la
+  lista como cola; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> abre el detalle de la canción.
+- **B** vuelve un nivel atrás; sin detalles abiertos, hace lo de siempre en esa
+  pestaña. **L/R** cambian de pestaña y conservan los detalles de cada una donde los
+  dejaste.
+- Los detalles de álbum y artista se cargan en segundo plano: **B** cancela y, si la
+  carga falla, **A** reintenta.
+
+Los detalles se abren desde **Búsqueda** (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> sobre un resultado) y desde
+**Reproducción** (tocando el título, el artista o el álbum). Una búsqueda nueva cierra
+los detalles abiertos en **Búsqueda**.
 
 ### Ajustes
 

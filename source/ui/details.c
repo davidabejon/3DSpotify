@@ -1,6 +1,7 @@
 #include "details.h"
 
 #include "http3ds.h"
+#include "lang.h"
 #include "worker_priority.h"
 
 #include <3ds.h>
@@ -75,8 +76,8 @@ static void worker_main(void *arg)
 	int rc = -1;
 	http_session *sess = http_session_open(job.host);
 	if (!sess) {
-		snprintf(job.error, sizeof(job.error), "no connection to %s",
-		         job.host);
+		snprintf(job.error, sizeof(job.error),
+		         tr(STR_ERR_DETAIL_CONNECT_FMT), job.host);
 		goto done;
 	}
 	if (job.kind == DETAIL_ALBUM) {
@@ -178,7 +179,8 @@ static void start(int slot, const char *host, const char *token)
 	if (!worker) {
 		secure_clear(job.token, sizeof(job.token));
 		d->state = DETAIL_FAILED;
-		snprintf(d->error, sizeof(d->error), "loader thread did not start");
+		snprintf(d->error, sizeof(d->error), "%s",
+		         tr(STR_ERR_DETAIL_THREAD));
 	}
 }
 
