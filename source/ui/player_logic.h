@@ -1,4 +1,4 @@
-/* The player's queue steps and the layout of the Playing tab
+/* The player's phases and the layout of the Playing tab
  * (docs/STYLES.md 5.4, 5.5 and 7.5). Pure C with no 3DS headers, tested
  * in tests/native_logic_test.c. Whole pixels throughout.
  *
@@ -35,18 +35,6 @@ typedef enum {
 	PLAYER_PHASE_FINISHED,
 	PLAYER_PHASE_FAILED
 } player_phase;
-
-/* The track `direction` (-1 or +1) steps from `index` in a queue of
- * `count`, or -1: the queue does not wrap. */
-static inline int playback_queue_step(int index, int count, int direction)
-{
-	if (count <= 0 || index < 0 || index >= count ||
-	    (direction != -1 && direction != 1))
-		return -1;
-
-	int next = index + direction;
-	return next >= 0 && next < count ? next : -1;
-}
 
 /* --- Layout of the Playing tab --------------------------------------- */
 

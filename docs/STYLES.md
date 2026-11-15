@@ -714,8 +714,10 @@ Error:
 - Anterior y siguiente se deshabilitan (§6.1) en los extremos de la cola.
 - Mientras carga (carátula, clave de audio, conexión): indicador de carga (§5.7) y el paso
   actual en `t_cuerpo` · `texto` en lugar de los controles; aún no suena nada.
-- Pista terminada: el botón central muestra «reproducir» y vuelve a empezarla; la barra de
-  progreso queda llena y «Pista terminada» sustituye a los tiempos.
+- Al terminar una pista empieza sola la siguiente de la cola. Solo al final de la cola queda
+  «Pista terminada»: el botón central muestra «reproducir» y vuelve a empezarla; la barra de
+  progreso queda llena y «Pista terminada» sustituye a los tiempos. Una pista con error no
+  salta a la siguiente.
 - Error: aviso de error (§5.8) con el detalle; A reintenta.
 - Sin nada en reproducción: mensaje centrado «Todavía no suena nada».
 - El audio sigue sonando en cualquier pestaña. B vuelve a «Búsqueda» sin cortarlo; con un

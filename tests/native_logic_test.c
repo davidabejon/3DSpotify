@@ -15,6 +15,7 @@
 #include "now_layout.h"
 #include "player_logic.h"
 #include "qrcodegen.h"
+#include "queue_logic.h"
 #include "power_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
@@ -959,14 +960,107 @@ static void test_meta_parse_batch(void)
 
 static void test_queue_boundaries(void)
 {
-	assert(playback_queue_step(0, 3, -1) == -1);
-	assert(playback_queue_step(0, 3, 1) == 1);
-	assert(playback_queue_step(1, 3, -1) == 0);
-	assert(playback_queue_step(1, 3, 1) == 2);
-	assert(playback_queue_step(2, 3, 1) == -1);
-	assert(playback_queue_step(0, 0, 1) == -1);
-	assert(playback_queue_step(3, 3, -1) == -1);
-	assert(playback_queue_step(1, 3, 0) == -1);
+	assert(queue_step(0, 3, -1) == -1);
+	assert(queue_step(0, 3, 1) == 1);
+	assert(queue_step(1, 3, -1) == 0);
+	assert(queue_step(1, 3, 1) == 2);
+	assert(queue_step(2, 3, 1) == -1);
+	assert(queue_step(0, 0, 1) == -1);
+	assert(queue_step(3, 3, -1) == -1);
+	assert(queue_step(1, 3, 0) == -1);
+
+	assert(!queue_wants_more(-1, 3));
+	assert(!queue_wants_more(0, 4));
+	assert(queue_wants_more(0, 3));
+	assert(queue_wants_more(5, 6));
+}
+
+/* Every index of 0..count-1 exactly once. */
+static bool queue_is_permutation(const int *order, int count)
+{
+	bool seen[64] = {0};
+	assert(count <= 64);
+	for (int i = 0; i < count; i++) {
+		if (order[i] < 0 || order[i] >= count || seen[order[i]])
+			return false;
+		seen[order[i]] = true;
+	}
+	return true;
+}
+
+static void test_queue_order(void)
+{
+	int order[64];
+	uint32_t rng = 12345;
+
+	/* In order: the list from the chosen track, the earlier ones behind. */
+	assert(queue_order_start(order, 5, 2, false, &rng) == 2);
+	for (int i = 0; i < 5; i++)
+		assert(order[i] == i);
+	assert(queue_order_start(order, 5, 5, false, &rng) == -1);
+	assert(queue_order_start(order, 0, 0, true, &rng) == -1);
+
+	/* Shuffled: the chosen track first, every track once, and not the
+	 * list's order every time. */
+	bool moved = false;
+	for (int round = 0; round < 20; round++) {
+		assert(queue_order_start(order, 40, 7, true, &rng) == 0);
+		assert(order[0] == 7);
+		assert(queue_is_permutation(order, 40));
+		for (int i = 1; i < 40 && !moved; i++)
+			moved = order[i] != (i == 7 ? 0 : i);
+	}
+	assert(moved);
+	/* A single track, and the first one, shuffle fine. */
+	assert(queue_order_start(order, 1, 0, true, &rng) == 0 && order[0] == 0);
+	assert(queue_order_start(order, 3, 0, true, &rng) == 0 && order[0] == 0);
+	assert(queue_is_permutation(order, 3));
+
+	/* Switched off while position 4 plays: the list's order again, from
+	 * that same track. */
+	queue_order_start(order, 10, 3, true, &rng);
+	int track = order[4];
+	int pos = queue_order_reshuffle(order, 10, 4, false, &rng);
+	assert(pos == track && order[pos] == track);
+	for (int i = 0; i < 10; i++)
+		assert(order[i] == i);
+	/* Switched on: that track first, the rest after it. */
+	pos = queue_order_reshuffle(order, 10, pos, true, &rng);
+	assert(pos == 0 && order[0] == track);
+	assert(queue_is_permutation(order, 10));
+
+	/* Appended in order: after the rest. */
+	queue_order_start(order, 3, 1, false, &rng);
+	assert(queue_order_append(order, 3, 2, 1, false, &rng) == 5);
+	for (int i = 0; i < 5; i++)
+		assert(order[i] == i);
+	/* Appended shuffled: what already played keeps its place. */
+	queue_order_start(order, 6, 4, true, &rng);
+	int played[3] = { order[0], order[1], order[2] };
+	assert(queue_order_append(order, 6, 20, 2, true, &rng) == 26);
+	assert(queue_is_permutation(order, 26));
+	for (int i = 0; i < 3; i++)
+		assert(order[i] == played[i]);
+}
+
+static void test_queue_drop_known(void)
+{
+	static sp_track queue[2], fresh[5];
+	memset(queue, 0, sizeof(queue));
+	memset(fresh, 0, sizeof(fresh));
+	strcpy(queue[0].uri, "spotify:track:a");
+	strcpy(queue[1].uri, "spotify:track:b");
+	strcpy(fresh[0].uri, "spotify:track:a");   /* the seed back */
+	strcpy(fresh[1].uri, "spotify:track:c");
+	strcpy(fresh[2].uri, "spotify:track:c");   /* twice in one batch */
+	/* fresh[3]: no URI */
+	strcpy(fresh[4].uri, "spotify:track:d");
+	strcpy(fresh[4].name, "D");
+	assert(queue_drop_known(queue, 2, fresh, 5) == 2);
+	assert(strcmp(fresh[0].uri, "spotify:track:c") == 0);
+	assert(strcmp(fresh[1].uri, "spotify:track:d") == 0);
+	assert(strcmp(fresh[1].name, "D") == 0);
+	assert(queue_drop_known(queue, 2, fresh, 0) == 0);
 }
 
 /* The conversion specifiers of a printf format, flags and widths included,
@@ -2673,6 +2767,8 @@ int main(void)
 	test_download_retry_delay();
 	test_power_policy();
 	test_queue_boundaries();
+	test_queue_order();
+	test_queue_drop_known();
 	test_language_tables();
 	test_language_switching();
 	return 0;

@@ -465,7 +465,7 @@ class BuildTests(unittest.TestCase):
         play = app[app.index("static void play_from_results("):
                    app.index("static void switch_tab(app_tab tab)\n{")]
         self.assertLess(play.index("view_results_allow_thumbs(false);"),
-                        play.index("player_play(session, index);"))
+                        play.index("queue_play(session, "))
         loop = app[app.index("static tabs_exit run_tabs("):
                    app.index("static void stop_tabs(")]
         # Paused while the track prepares, not for the whole download.
@@ -537,7 +537,7 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("STR_KEYS_SELECTION_", source)
         play = app[app.index("static void play_from_results("):
                    app.index("static void switch_tab(app_tab tab)\n{")]
-        self.assertIn("player_play(session, index);", play)
+        self.assertIn("queue_play(session, ", play)
         self.assertIn("switch_tab(TAB_PLAYER);", play)
         self.assertNotIn("hidKeysDown", play)
         # Dragging (6.9) and the scroll indicator (5.11).
@@ -616,7 +616,7 @@ class BuildTests(unittest.TestCase):
         play = app[app.index("static void play_from_detail("):
                    app.index("static void open_result_detail(")]
         self.assertLess(play.index("view_results_allow_thumbs(false);"),
-                        play.index("player_play(session, doc->selected);"))
+                        play.index("queue_play(session, "))
         self.assertIn("queue_from_results = false;", play)
         # Albums and artists: the track's buttons open them on the same
         # tab, X on their rows opens a track detail with the list, and a
@@ -758,12 +758,17 @@ class BuildTests(unittest.TestCase):
         )
         skip = app[app.index("static void player_skip("):
                    app.index("static void player_hold(")]
-        self.assertIn("playback_queue_step(player.index, playback_queue_count",
-                      skip)
-        logic = (build.ROOT / "ui" / "player_logic.h").read_text(
+        self.assertIn("queue_step(queue_pos, playback_queue_count", skip)
+        logic = (build.ROOT / "ui" / "queue_logic.h").read_text(
             encoding="utf-8"
         )
         self.assertIn("next >= 0 && next < count", logic)
+        # A finished track hands over to the next one by itself; a failed
+        # one does not.
+        pump = app[app.index("static void player_pump(void)"):
+                   app.index("static void player_toggle(")]
+        self.assertIn("player.phase == PLAYER_PHASE_FINISHED", pump)
+        self.assertNotIn("PLAYER_PHASE_FAILED", pump)
         cleanup = app[app.index("static void player_release(void)"):
                       app.index("static void player_fail(")]
         # The download is stopped (or abandoned) before the decoder and the

@@ -19,6 +19,7 @@
 #include "pair3ds.h"
 #include "player_logic.h"
 #include "power_logic.h"
+#include "queue_logic.h"
 #include "spclient.h"
 #include "tabbar.h"
 #include "thumbs.h"
@@ -93,6 +94,12 @@ static Thread search_thread;
 #define PLAYBACK_QUEUE_MAX DETAIL_PLAYLIST_MAX
 static sp_track playback_queue[PLAYBACK_QUEUE_MAX];
 static int playback_queue_count;
+/* What plays when: playback_queue's indexes in the order they play, and
+ * the position playing (queue_logic.h). The tracks keep their list's
+ * order, so shuffling only rewrites this. */
+static int playback_order[PLAYBACK_QUEUE_MAX];
+static int queue_pos;
+static uint32_t queue_rng;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
 /* The image of the detail card on the top screen, apart from cover_art:
@@ -320,7 +327,7 @@ typedef struct {
 
 typedef struct {
 	player_phase phase;
-	int index;              /* into playback_queue */
+	int index;              /* into playback_queue: playback_order[queue_pos] */
 	unsigned serial;        /* bumped by every player_play */
 	str_id stage;           /* while loading */
 	char error[256];        /* when failed */
@@ -519,15 +526,17 @@ static void player_apply_pause(void)
 		ndspChnSetPaused(0, player.paused || player.held);
 }
 
-/* Starts track `index` of playback_queue: the cover first, then
- * player_pump goes on with the audio once it has arrived. */
-static void player_play(spotify_session *session, int index)
+/* Starts the track at position `pos` of the queue's order: the cover
+ * first, then player_pump goes on with the audio once it has arrived. */
+static void player_play(spotify_session *session, int pos)
 {
-	if (index < 0 || index >= playback_queue_count)
+	if (pos < 0 || pos >= playback_queue_count)
 		return;
+	int index = playback_order[pos];
 	player_release();
 	player.session = session;
 	player.serial++;
+	queue_pos = pos;
 	player.index = index;
 	player.paused = false;
 	player.error[0] = '\0';
@@ -843,6 +852,16 @@ static void player_pump(void)
 		}
 		return;
 	}
+	if (player.phase == PLAYER_PHASE_FINISHED) {
+		/* The next track follows on its own. At the end of the queue the
+		 * player waits: a radio's next batch, once it comes, starts it. A
+		 * failed track does not skip: without a connection that would
+		 * run through the whole queue. */
+		int next = queue_step(queue_pos, playback_queue_count, 1);
+		if (next >= 0)
+			player_play(player.session, next);
+		return;
+	}
 	if (player.phase != PLAYER_PHASE_PLAYING)
 		return;
 	for (int step = 0; step < PLAYER_PUMP_MAX_STEPS; step++)
@@ -859,14 +878,13 @@ static void player_toggle(void)
 		player_apply_pause();
 	} else if (player.phase == PLAYER_PHASE_FINISHED ||
 	           player.phase == PLAYER_PHASE_FAILED) {
-		player_play(player.session, player.index);
+		player_play(player.session, queue_pos);
 	}
 }
 
 static void player_skip(int direction)
 {
-	int next = playback_queue_step(player.index, playback_queue_count,
-	                               direction);
+	int next = queue_step(queue_pos, playback_queue_count, direction);
 	if (next >= 0)
 		player_play(player.session, next);
 }
@@ -939,7 +957,7 @@ static player_info player_snapshot(void)
 		.phase = player.phase,
 		.track = track,
 		.serial = player.serial,
-		.index = player.index,
+		.index = queue_pos,
 		.count = playback_queue_count,
 		.stage = player.stage,
 		.paused = player.paused,
@@ -1253,11 +1271,19 @@ static void keyboard_search(const spotify_session *session,
 	switch_tab(TAB_SEARCH);
 }
 
-static void prepare_queue(void)
+/* Makes `count` tracks the queue, a copy, and plays track `index` of it. */
+static void queue_play(spotify_session *session, const sp_track *tracks,
+                       int count, int index)
 {
-	playback_queue_count = search.count;
-	memcpy(playback_queue, search.tracks,
-	       (size_t)playback_queue_count * sizeof(playback_queue[0]));
+	if (count > PLAYBACK_QUEUE_MAX)
+		count = PLAYBACK_QUEUE_MAX;
+	if (index < 0 || index >= count)
+		return;
+	memcpy(playback_queue, tracks, (size_t)count * sizeof(playback_queue[0]));
+	playback_queue_count = count;
+	queue_rng ^= (uint32_t)svcGetSystemTick();
+	player_play(session, queue_order_start(playback_order, count, index,
+	                                       false, &queue_rng));
 }
 
 /* Plays the results from `index`, straight from the list: there is no
@@ -1268,9 +1294,8 @@ static void play_from_results(spotify_session *session, int index)
 	/* The thumbnails must not compete with the track's preparation
 	 * (STYLES.md 9); they resume, kept, once its download starts. */
 	view_results_allow_thumbs(false);
-	prepare_queue();
 	queue_from_results = true;
-	player_play(session, index);
+	queue_play(session, search.tracks, search.count, index);
 	switch_tab(TAB_PLAYER);
 }
 
@@ -1295,12 +1320,8 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		/* As from the results: the thumbnails wait for the preparation
 		 * (STYLES.md 9). */
 		view_results_allow_thumbs(false);
-		playback_queue_count = doc->count < PLAYBACK_QUEUE_MAX
-		                       ? doc->count : PLAYBACK_QUEUE_MAX;
-		memcpy(playback_queue, doc->tracks,
-		       (size_t)playback_queue_count * sizeof(playback_queue[0]));
 		queue_from_results = false;
-		player_play(session, doc->selected);
+		queue_play(session, doc->tracks, doc->count, doc->selected);
 	}
 	/* The Playing tab shows the player, not a detail left open there; the
 	 * queue is copied, so this may be the document just played. */
