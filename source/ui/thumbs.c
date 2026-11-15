@@ -18,7 +18,8 @@
 
 #define THUMB_TEX_SIZE 64
 #define THUMB_TEXEL_BYTES (THUMB_TEX_SIZE * THUMB_TEX_SIZE * 4)
-/* art_small is a 64 px JPEG of a few KB: generous caps, far below the
+/* art_small is a 64 px JPEG of a few KB, a playlist cover a 300 px one of
+ * 15-30 KB (probe_meta step 15.4): generous caps, far below the
  * artwork's. */
 #define THUMB_MAX_BYTES (128 * 1024)
 #define THUMB_MAX_DIMENSION 640
@@ -223,7 +224,7 @@ static void settle_worker(void)
 		start_worker();
 }
 
-void thumbs_set_tracks(const sp_track *tracks, int n)
+void thumbs_set_urls(const char *const *list, int n)
 {
 	if (pool_size == 0)
 		return;
@@ -235,7 +236,7 @@ void thumbs_set_tracks(const sp_track *tracks, int n)
 	LightLock_Lock(&lock);
 	generation++;
 	for (int i = 0; i < THUMBS_MAX; i++) {
-		const char *url = i < n ? tracks[i].art_small : "";
+		const char *url = i < n && list[i] ? list[i] : "";
 		bool same = i < count && strcmp(urls[i], url) == 0;
 		if (i < n && thumb_keep(states[i], same))
 			continue;
@@ -328,4 +329,90 @@ bool thumbs_stopping(void)
 {
 	settle_worker();
 	return worker && !want_worker;
+}
+
+/* --- Clients ------------------------------------------------------------ */
+
+/* The client the pool serves: the last one shown with covers. */
+static thumbs_client *owner;
+static bool allowed = true;
+
+/* Gives the pool the client's URLs when allowed; until then nothing it
+ * holds is drawn for it. */
+static void hold(thumbs_client *c)
+{
+	if (!c)
+		return;
+	c->synced = false;
+	if (!allowed || c->count == 0)
+		return;
+	/* Visible items first (STYLES.md 9). */
+	thumbs_set_urls(c->urls, c->count);
+	thumbs_set_window(c->first);
+	c->synced = true;
+}
+
+void thumbs_client_set(thumbs_client *c, const char *const *list, int n)
+{
+	if (n < 0 || !list)
+		n = 0;
+	if (n > THUMBS_MAX)
+		n = THUMBS_MAX;
+	for (int i = 0; i < THUMBS_MAX; i++)
+		c->urls[i] = i < n ? list[i] : NULL;
+	c->count = n;
+	c->first = 0;
+	c->synced = false;
+	/* New content: the pool is handed it by the next claim. */
+	if (owner == c)
+		owner = NULL;
+}
+
+void thumbs_client_window(thumbs_client *c, int first)
+{
+	c->first = first;
+	if (owner == c && c->synced)
+		thumbs_set_window(first);
+}
+
+void thumbs_client_frame(thumbs_client *c)
+{
+	if (owner != c) {
+		owner = c;
+		hold(c);
+	}
+	if (thumbs_poll())
+		c->serial++;
+}
+
+void thumbs_client_offer(thumbs_client *c)
+{
+	if (owner)
+		return;
+	owner = c;
+	hold(c);
+}
+
+void thumbs_client_release(thumbs_client *c)
+{
+	if (owner == c)
+		owner = NULL;
+}
+
+bool thumbs_client_image(const thumbs_client *c, int index, C2D_Image *out)
+{
+	return c && index >= 0 && index < c->count && owner == c && c->synced &&
+	       thumbs_image(index, out);
+}
+
+void thumbs_allow(bool allow)
+{
+	if (allow == allowed)
+		return;
+	allowed = allow;
+	/* Stopped, what was fetched stays usable; nothing new arrives. */
+	if (allow)
+		hold(owner);
+	else
+		thumbs_stop();
 }

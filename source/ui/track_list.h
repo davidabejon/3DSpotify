@@ -25,6 +25,7 @@
 #include "list_logic.h"
 #include "press_logic.h"
 #include "spclient.h"
+#include "thumbs.h"
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -62,10 +63,8 @@ typedef struct {
 	int selected;
 	int first;             /* first visible row: scroll / LIST_PITCH */
 	int scroll;            /* px; whole rows except while dragging */
-	/* thumbs.c holds this list's covers, so its images are this list's.
-	 * Until then the placeholder shows. */
-	bool thumbs_synced;
-	int thumbs_serial;
+	/* The covers, through thumbs.c's pool (TRACK_LIST_THUMBS only). */
+	thumbs_client thumbs;
 
 	press_state press;     /* the focused row's, for A and taps */
 	int press_index;
@@ -113,9 +112,7 @@ void track_list_thumbs_frame(track_list *l);
  * before it is on screen (results arriving on another tab) starts its
  * covers early, without taking them from a list on screen. */
 void track_list_offer_thumbs(track_list *l);
-/* Whether the thumbnails may download (STYLES.md 9: not while a track
- * prepares). Disallowing asks the worker to stop without waiting for it
- * (thumbs_stop); what it fetched stays on screen. */
+/* Whether the thumbnails may download: thumbs_allow, for every client. */
 void track_list_allow_thumbs(bool allow);
 
 /* The stylus on the list: tapping a row focuses it, tapping the focused
