@@ -248,8 +248,9 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
   fuera de los extremos cuenta como el extremo.
 - Volumen: sigue al dedo en el mismo frame (§6.7).
 - Progreso: el tirador y el tiempo transcurrido siguen al dedo; la pista salta a ese punto al
-  levantar el lápiz, no antes. Solo mientras la pista suena o está en pausa (no cargando ni
-  terminada). Si cambia la pista durante el arrastre, el arrastre se pierde.
+  levantar el lápiz, no antes. Solo con la pista entera descargada (la capa de descarga
+  llena) y mientras suena o está en pausa (no cargando ni terminada); antes, tocar la barra no
+  hace nada. Si cambia la pista durante el arrastre, el arrastre se pierde.
 
 ### 5.6 Barra de botones
 
@@ -749,10 +750,9 @@ Error:
   desde el punto elegido, pausada si lo estaba. La posición en bytes es una estimación
   (Vorbis tiene tasa variable): el tiempo se corrige con la posición real en cuanto el
   decodificador la encuentra, y si cae a más de 2 s del punto pedido se corrige una vez.
-- Si el punto aún no se ha descargado, la descarga se mueve allí y la pista queda en silencio
-  hasta que llega, con el tiempo en el punto elegido. Al terminar, la descarga vuelve a por
-  los huecos que queden, empezando por lo que sigue a lo que suena. La capa de descarga de la
-  barra muestra hasta dónde puede seguir sonando sin esperar.
+- Solo se salta con la pista entera descargada: saltar a una parte aún sin descargar dejaba
+  la pista en silencio en la consola. La descarga por bloques (`stream_chunks.h`) sigue
+  preparada para ello.
 - El teclado (`swkbd`) bloquea el hilo principal: la pista se pausa mientras está abierto y
   sigue al cerrarlo.
 

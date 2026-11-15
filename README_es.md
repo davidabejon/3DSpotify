@@ -243,8 +243,8 @@ La canción elegida se reproduce localmente y sigue sonando aunque cambies de pe
 - Arriba/abajo — ajusta el volumen local
 - **Tocar la barra de volumen** — fija el volumen; arrastra para ajustarlo
 - **Arrastrar la barra de progreso** — el tirador y el tiempo siguen al dedo; la pista salta
-  ahí al levantar el lápiz. Si esa parte aún no se ha descargado, se descarga primero: la
-  pista queda en silencio hasta que llega, y luego se completa el resto del archivo.
+  ahí al levantar el lápiz. Solo con la canción entera descargada (la capa de descarga de la
+  barra llena).
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Búsqueda sin cortar la música
 - **START** — detiene y sale
 

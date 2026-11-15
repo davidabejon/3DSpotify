@@ -233,8 +233,8 @@ The chosen track plays locally and keeps playing when you switch tabs. When it e
 - Up/down — adjusts local volume
 - **Touch the volume bar** — sets the volume; drag to adjust it
 - **Drag the progress bar** — the handle and the time follow; the track jumps there when you
-  lift the stylus. A part not downloaded yet is fetched first: the track stays silent until it
-  arrives, then the rest of the file fills in behind.
+  lift the stylus. Only once the whole track is downloaded (the download layer of the bar is
+  full).
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to the Search tab without stopping the music
 - **START** — stops and exits
 

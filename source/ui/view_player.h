@@ -36,8 +36,8 @@ typedef struct {
 	unsigned duration_s;
 	unsigned download_pct;
 	unsigned volume_pct;
-	/* The track can move to another point: playing, with its length and
-	 * its file's size known. */
+	/* The track can move to another point: playing, with its length
+	 * known and its whole file downloaded. */
 	bool seekable;
 	const char *error;      /* when failed */
 } player_info;

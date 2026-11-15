@@ -1452,6 +1452,11 @@ class BuildTests(unittest.TestCase):
         self.assertIn("return PLAYER_ACTION_SEEK;", view)
         self.assertIn("return PLAYER_ACTION_VOLUME_SET;", view)
         self.assertIn("player_seek(view_player_value());", app)
+        # Only with the whole file downloaded.
+        self.assertIn("dl.stream.dl_done &&", app)
+        seek_fn = app[app.index("static void player_seek("):
+                      app.index("/* One step of download")]
+        self.assertIn("!dl.stream.dl_done", seek_fn)
         # A seek drops the queued audio, flushes the decoder and sends the
         # download where it is needed.
         seek = app[app.index("static void seek_to_byte("):

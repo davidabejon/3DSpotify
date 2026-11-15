@@ -794,16 +794,15 @@ static void seek_settle(int samples)
 	s->displayed_played_frames = s->completed_audio_frames;
 }
 
-/* Moves the track playing to `permille` of its length, paused or not. Only
- * once the decoder is open and the file's size known; whatever of it is
- * not downloaded yet is asked for first, and the track stays silent until
- * it comes. */
+/* Moves the track playing to `permille` of its length, paused or not.
+ * Only once the whole file is downloaded: seeking into a part still on
+ * its way left the track silent on the console. */
 static void player_seek(int permille)
 {
 	player_stream *s = &player.s;
 	const sp_track *track = player_track();
 	if (player.phase != PLAYER_PHASE_PLAYING || !s->decoder_open ||
-	    dl_abandoned || !dl.stream.data ||
+	    dl_abandoned || !dl.stream.data || !dl.stream.dl_done ||
 	    dl.stream.len <= SPOTIFY_OGG_HEADER || !track ||
 	    track->duration_ms <= 0)
 		return;
@@ -1118,6 +1117,7 @@ static player_info player_snapshot(void)
 		.volume_pct = (unsigned)(playback_volume * 100.0f + 0.5f),
 		.seekable = player.phase == PLAYER_PHASE_PLAYING &&
 		            player.s.decoder_open && !dl_abandoned &&
+		            dl.stream.dl_done &&
 		            dl.stream.len > SPOTIFY_OGG_HEADER && duration > 0,
 		.error = player.error,
 	};
