@@ -645,6 +645,317 @@ static void probe_client_calls(const char *host, const char *token,
 	http_session_close(sess);
 }
 
+/* ------------------------------------------------------- home tab (step 15)
+ *
+ * Phase 0 of the home tab plan: what the rootlist really carries per entry
+ * (names, covers in their several shapes, folders, owners, lengths), whether
+ * a playback history answers on spclient with the login5 token, how heavy a
+ * long playlist is and whether it takes a range, and how big a playlist cover
+ * is next to the thumbnail limits. playlist4_external.proto names used here:
+ *   SelectedListContent { length 2, attributes 3, contents 5, owner 16 }
+ *   ListItems { items 3, meta_items 4 }   Item { uri 1 }
+ *   MetaItem { attributes 2, length 3, owner_username 5 }
+ *   ListAttributes { name 1, description 2, picture 3,
+ *                    format_attributes 11? 12? { key 1, value 2 },
+ *                    picture_size 13 { target_name 1, url 2 } }
+ * The field numbers in doubt are exactly what the dump settles. */
+
+#define HOME_PROBE_MAX 64
+
+static struct {
+	char uri[80];
+	char pic_hex[41];
+	int  length;
+} home_rows[HOME_PROBE_MAX];
+
+/* JPEG width/height off the first SOFn marker; 0 when not a JPEG. */
+static bool jpeg_size(const uint8_t *p, size_t len, int *w, int *h)
+{
+	if (len < 4 || p[0] != 0xFF || p[1] != 0xD8)
+		return false;
+	size_t at = 2;
+	while (at + 9 < len) {
+		if (p[at] != 0xFF) {
+			at++;
+			continue;
+		}
+		uint8_t m = p[at + 1];
+		size_t seg = ((size_t)p[at + 2] << 8) | p[at + 3];
+		if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
+			*h = (p[at + 5] << 8) | p[at + 6];
+			*w = (p[at + 7] << 8) | p[at + 8];
+			return true;
+		}
+		at += 2 + seg;
+	}
+	return false;
+}
+
+static void show_attrs(const pbv *attrs)
+{
+	dump_fields("ListAttributes", attrs);
+	pbv v;
+	if (pb_get_bytes(attrs->p, attrs->len, 3, &v))
+		say("     picture: %u bytes\n", (unsigned)v.len);
+	for (uint32_t f = 11; f <= 13; f++) {
+		size_t at = 0;
+		pbv sub;
+		while (next_bytes(attrs, f, &at, &sub)) {
+			pbv k, val;
+			char ks[40] = "", vs[100] = "";
+			if (pb_get_bytes(sub.p, sub.len, 1, &k))
+				pbv_str(&k, ks, sizeof(ks));
+			if (pb_get_bytes(sub.p, sub.len, 2, &val))
+				pbv_str(&val, vs, sizeof(vs));
+			say("     f%u { 1:\"%s\" 2:(%u) \"%.60s\" }\n", f, ks,
+			    (unsigned)(val.p ? val.len : 0), vs);
+		}
+	}
+}
+
+static void probe_cover(const char *url)
+{
+	http_reply r;
+	if (http_get_url(url, 1024 * 1024, &r) != 0) {
+		say("     GET %s: %s\n", url, r.err);
+		return;
+	}
+	int w = 0, h = 0;
+	bool jpg = jpeg_size((const uint8_t *)r.body, r.len, &w, &h);
+	say("     %.70s\n       HTTP %d, %u bytes, %s %dx%d\n", url, r.status,
+	    (unsigned)r.len, jpg ? "jpeg" : "not jpeg", w, h);
+	http_reply_free(&r);
+}
+
+static void probe_home(const char *host, const char *token,
+                       const char *username)
+{
+	say("\n15. Home tab data\n");
+	char err[256];
+
+	/* 15.1 the decorated rootlist, raw. */
+	say(" 15.1 rootlist, decorated\n");
+	char path[320];
+	snprintf(path, sizeof(path),
+	         "/playlist/v2/user/%s/rootlist?decorate=revision,attributes,length",
+	         username);
+	http_reply r;
+	int nrows = 0, folders = 0, others = 0;
+	if (http_get_proto(host, path, token, &r) != 0) {
+		say("   failed: %s\n", r.err);
+	} else if (r.status != 200) {
+		say("   HTTP %d\n", r.status);
+		http_reply_free(&r);
+	} else {
+		pbv whole = { (const uint8_t *)r.body, r.len };
+		dump_fields("SelectedListContent", &whole);
+		pbv contents;
+		if (pb_get_bytes(whole.p, whole.len, 5, &contents)) {
+			dump_fields("ListItems", &contents);
+			size_t ai = 0, am = 0;
+			pbv item, meta;
+			int i = 0;
+			while (next_bytes(&contents, 3, &ai, &item)) {
+				bool has_meta = next_bytes(&contents, 4, &am, &meta);
+				pbv u;
+				char uri[80] = "";
+				if (pb_get_bytes(item.p, item.len, 1, &u))
+					pbv_str(&u, uri, sizeof(uri));
+				if (strncmp(uri, "spotify:start-group:", 20) == 0 ||
+				    strncmp(uri, "spotify:end-group:", 18) == 0)
+					folders++;
+				else if (strncmp(uri, "spotify:playlist:", 17) != 0)
+					others++;
+				say("   [%d] %s\n", i, uri);
+				if (i == 0)
+					dump_fields("Item", &item);
+				uint64_t length = 0;
+				if (has_meta) {
+					pb_get_varint(meta.p, meta.len, 3, &length);
+					pbv attrs, owner;
+					if (i < 4) {
+						dump_fields("MetaItem", &meta);
+						if (pb_get_bytes(meta.p, meta.len, 2, &attrs))
+							show_attrs(&attrs);
+					} else if (pb_get_bytes(meta.p, meta.len, 2, &attrs)) {
+						pbv nm, pic;
+						char ns[64] = "";
+						if (pb_get_bytes(attrs.p, attrs.len, 1, &nm))
+							pbv_str(&nm, ns, sizeof(ns));
+						say("     \"%s\" pic %u, len %llu\n", ns,
+						    pb_get_bytes(attrs.p, attrs.len, 3, &pic)
+						        ? (unsigned)pic.len : 0,
+						    (unsigned long long)length);
+					}
+					say("     owner is %s\n",
+					    pb_get_bytes(meta.p, meta.len, 5, &owner)
+					        ? (owner.len == strlen(username) &&
+					           memcmp(owner.p, username, owner.len) == 0
+					               ? "the user" : "someone else")
+					        : "absent");
+				}
+				if (i < HOME_PROBE_MAX) {
+					snprintf(home_rows[i].uri, sizeof(home_rows[i].uri),
+					         "%s", uri);
+					home_rows[i].length = (int)length;
+					home_rows[i].pic_hex[0] = '\0';
+					pbv attrs, pic;
+					if (has_meta &&
+					    pb_get_bytes(meta.p, meta.len, 2, &attrs) &&
+					    pb_get_bytes(attrs.p, attrs.len, 3, &pic) &&
+					    pic.len == 20)
+						to_hex(pic.p, 20, home_rows[i].pic_hex);
+					nrows = i + 1;
+				}
+				i++;
+			}
+			say("   %d entries: %d folder markers, %d not playlists\n", i,
+			    folders, others);
+		}
+		http_reply_free(&r);
+	}
+
+	/* 15.2 playback history, as the desktop client asks for it. */
+	say(" 15.2 recently played\n");
+	static const char *const HIST[] = {
+		"/recently-played/v3/user/%s/recently-played"
+		"?format=json&offset=0&limit=50&filter=default,collection-new-episodes",
+		"/recently-played/v3/user/%s/recently-played?format=json&limit=20",
+		"/recently-played/v2/user/%s/recently-played?format=json&limit=20",
+	};
+	for (size_t k = 0; k < sizeof(HIST) / sizeof(HIST[0]); k++) {
+		snprintf(path, sizeof(path), HIST[k], username);
+		const char *q = strchr(path, '?');
+		say("   v%c ...%s\n", path[18], q ? q : "");
+		if (http_get(host, path, token, &r) != 0) {
+			say("     failed: %s\n", r.err);
+			continue;
+		}
+		say("     HTTP %d, %u bytes\n", r.status, (unsigned)r.len);
+		if (r.len) {
+			/* Contexts only: print each "uri" value, not the whole body. */
+			int shown = 0;
+			for (const char *s = r.body; (s = strstr(s, "spotify:")) && shown < 12;
+			     s++) {
+				const char *e = s;
+				while (*e && *e != '"' && e - s < 70)
+					e++;
+				say("       %.*s\n", (int)(e - s), s);
+				shown++;
+				s = e;
+			}
+			if (!shown)
+				say("     body: %.200s\n", r.body);
+			/* The shape around the URIs, for the parser. */
+			for (size_t at = 0; at < r.len && at < 900; at += 150)
+				say("     | %.150s\n", r.body + at);
+		}
+		http_reply_free(&r);
+		if (r.status == 200)
+			break;
+	}
+
+	/* 15.3 the longest playlist: whole, then with a range. */
+	say(" 15.3 playlist size and range\n");
+	int big = -1;
+	for (int i = 0; i < nrows; i++)
+		if (strncmp(home_rows[i].uri, "spotify:playlist:", 17) == 0 &&
+		    (big < 0 || home_rows[i].length > home_rows[big].length))
+			big = i;
+	if (big < 0) {
+		say("   no playlist\n");
+	} else {
+		const char *id = home_rows[big].uri + 17;
+		say("   %s, %d tracks by the rootlist\n", home_rows[big].uri,
+		    home_rows[big].length);
+		static const char *const Q[] = {
+			"", "?from=0&length=24", "?decorate=attributes,length&from=0&length=24",
+		};
+		for (size_t k = 0; k < sizeof(Q) / sizeof(Q[0]); k++) {
+			snprintf(path, sizeof(path), "/playlist/v2/playlist/%s%s", id, Q[k]);
+			say("   %s\n", Q[k][0] ? Q[k] : "(whole)");
+			if (http_get_proto(host, path, token, &r) != 0) {
+				say("     failed: %s\n", r.err);
+				continue;
+			}
+			say("     HTTP %d, %u bytes\n", r.status, (unsigned)r.len);
+			if (r.status == 200) {
+				pbv whole = { (const uint8_t *)r.body, r.len }, contents, attrs;
+				if (k == 0) {
+					dump_fields("SelectedListContent", &whole);
+					if (pb_get_bytes(whole.p, whole.len, 3, &attrs))
+						show_attrs(&attrs);
+				}
+				if (pb_get_bytes(whole.p, whole.len, 5, &contents)) {
+					dump_fields("ListItems", &contents);
+					size_t at = 0;
+					pbv item;
+					int n = 0, tracks = 0;
+					while (next_bytes(&contents, 3, &at, &item)) {
+						pbv u;
+						if (pb_get_bytes(item.p, item.len, 1, &u) &&
+						    u.len > 14 && memcmp(u.p, "spotify:track:", 14) == 0)
+							tracks++;
+						else if (n < 40 && pb_get_bytes(item.p, item.len, 1, &u)) {
+							char us[64];
+							pbv_str(&u, us, sizeof(us));
+							say("     non-track: %s\n", us);
+						}
+						n++;
+					}
+					say("     %d items, %d tracks\n", n, tracks);
+				}
+				pbv owner;
+				if (pb_get_bytes(whole.p, whole.len, 16, &owner))
+					say("     owner_username (16): %u chars\n",
+					    (unsigned)owner.len);
+			}
+			http_reply_free(&r);
+		}
+	}
+
+	/* 15.4 covers: picture ids through i.scdn.co. */
+	say(" 15.4 covers\n");
+	int covers = 0;
+	for (int i = 0; i < nrows && covers < 3; i++) {
+		if (!home_rows[i].pic_hex[0])
+			continue;
+		char url[96];
+		snprintf(url, sizeof(url), "https://i.scdn.co/image/%s",
+		         home_rows[i].pic_hex);
+		probe_cover(url);
+		covers++;
+	}
+	if (!covers)
+		say("   no 20-byte picture in the rootlist\n");
+	/* 15.5 a playlist's own header without its tracks: what a recent
+	 * playlist missing from the rootlist can be named and drawn from. */
+	say(" 15.5 header only\n");
+	static const char *const HDR[] = {
+		"5pi5MhptTMnmV8L8Q6cJv1", "37i9dQZF1EYkqdzj48dyYq",
+		"7ccWAm7GdeAUpA2Eu9YI5q",
+	};
+	for (size_t k = 0; k < sizeof(HDR) / sizeof(HDR[0]); k++) {
+		snprintf(path, sizeof(path),
+		         "/playlist/v2/playlist/%s?decorate=attributes,length&from=0&length=0",
+		         HDR[k]);
+		say("   %s\n", HDR[k]);
+		if (http_get_proto(host, path, token, &r) != 0) {
+			say("     failed: %s\n", r.err);
+			continue;
+		}
+		say("     HTTP %d, %u bytes\n", r.status, (unsigned)r.len);
+		if (r.status == 200) {
+			pbv whole = { (const uint8_t *)r.body, r.len }, attrs;
+			dump_fields("SelectedListContent", &whole);
+			if (pb_get_bytes(whole.p, whole.len, 3, &attrs))
+				show_attrs(&attrs);
+		}
+		http_reply_free(&r);
+	}
+	(void)err;
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -869,6 +1180,7 @@ int main(int argc, char **argv)
 
 	probe_details(sp_host, l5.access_token, info.country);
 	probe_client_calls(sp_host, l5.access_token, info.country);
+	probe_home(sp_host, l5.access_token, info.username);
 
 hold:
 	say("\nSTART exits.\n");
