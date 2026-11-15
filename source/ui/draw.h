@@ -138,6 +138,13 @@ float ui_measure(C2D_TextBuf scratch, const char *string, float scale);
 void ui_parse_fitted(C2D_Text *text, C2D_TextBuf buf, C2D_TextBuf scratch,
                      const char *string, float scale, int width);
 
+/* Text that rolls inside `width` px from `x` (marquee_logic.h): drawn
+ * `offset` px to the left, a second copy MARQUEE_GAP px behind it, and
+ * both clipped to the box. `screen_w` is the width of the screen being
+ * drawn, for the scissor. */
+void ui_text_marquee(const C2D_Text *text, int x, int cy, float scale,
+                     u32 color, int width, int offset, int screen_w);
+
 /* A mask icon in `color`, top-left at (x, y), at its own size. */
 void ui_icon(const C2D_Image *icon, int x, int y, u32 color);
 

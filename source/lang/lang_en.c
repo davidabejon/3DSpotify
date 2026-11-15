@@ -37,6 +37,16 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_DETAIL_LOADING] = "Loading...",
 	[STR_DETAIL_EMPTY] = "No tracks here",
 	[STR_DETAIL_FAILED_TITLE] = "Could not load it",
+	[STR_DETAIL_TRACK_NUMBER_FMT] = "track %d",
+	[STR_DETAIL_DISC_FMT] = "disc %d",
+	[STR_ALBUM_TYPE_ALBUM] = "Album",
+	[STR_ALBUM_TYPE_SINGLE] = "Single",
+	[STR_ALBUM_TYPE_COMPILATION] = "Compilation",
+	[STR_ALBUM_TYPE_EP] = "EP",
+	[STR_ALBUM_TRACK_ONE] = "1 track",
+	[STR_ALBUM_TRACKS_FMT] = "%d tracks",
+	[STR_ALBUM_TRACKS_CUT_FMT] = "%d of %d tracks",
+	[STR_ARTIST_TOP_TRACKS] = "Popular tracks",
 
 	/* Settings tab. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",

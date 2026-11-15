@@ -558,6 +558,23 @@ class BuildTests(unittest.TestCase):
                       app.index("static void detail_input(")]
         self.assertIn("details_open_track(TAB_PLAYER, playback_queue, "
                       "playback_queue_count,", opening)
+        # The detail card has its own image: cover_art stays the playing
+        # track's, which the player waits for before preparing it.
+        self.assertEqual(app.count("artwork_request(&cover_art"), 1)
+        self.assertIn("artwork_request(&cover_art, playback_queue[index]",
+                      app)
+        self.assertIn("artwork_request(&detail_art, detail_art_url);", app)
+        self.assertIn("artwork_poll(&detail_art);", frame)
+        self.assertIn("top_set_detail(top_detail_sync(), &detail_art);",
+                      frame)
+        keyboard = app[app.index("static bool ask_search_query("):
+                       app.index("static void keyboard_search(")]
+        self.assertIn("artwork_invalidate(&detail_art);", keyboard)
+        self.assertLess(app.index("artwork_close(&detail_art);",
+                                  app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        top_logic = (ui_dir / "top_logic.h").read_text(encoding="utf-8")
+        self.assertIn("if (detail_on)\n\t\treturn TOP_DETAIL;", top_logic)
         self.assertIn("view_detail_init()", app)
         self.assertLess(app.index("view_detail_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))

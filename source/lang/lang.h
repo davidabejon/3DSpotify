@@ -60,6 +60,18 @@ typedef enum {
 	STR_DETAIL_LOADING,
 	STR_DETAIL_EMPTY,
 	STR_DETAIL_FAILED_TITLE,
+	/* The detail card on the top screen. Lowercase: they follow a duration
+	 * on the same line ("3:42 - track 2 - disc 2"). */
+	STR_DETAIL_TRACK_NUMBER_FMT,
+	STR_DETAIL_DISC_FMT,
+	STR_ALBUM_TYPE_ALBUM,
+	STR_ALBUM_TYPE_SINGLE,
+	STR_ALBUM_TYPE_COMPILATION,
+	STR_ALBUM_TYPE_EP,
+	STR_ALBUM_TRACK_ONE,
+	STR_ALBUM_TRACKS_FMT,
+	STR_ALBUM_TRACKS_CUT_FMT,
+	STR_ARTIST_TOP_TRACKS,
 
 	/* Settings tab. */
 	STR_SETTINGS_LANGUAGE_FMT,

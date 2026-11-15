@@ -2,10 +2,14 @@
 
 #include "draw.h"
 #include "logo.h"
+#include "top_detail.h"
 #include "top_logic.h"
 #include "top_now.h"
 
 static player_phase phase = PLAYER_PHASE_IDLE;
+/* The detail on top of the active tab and its image, or NULL. */
+static const detail_doc *detail;
+static artwork_state *detail_art;
 static top_mode drawn_mode;
 static bool drawn_valid;
 /* The spinner: whether it shows, its frame count, and what was drawn. */
@@ -22,11 +26,16 @@ static int spinner_step(void)
 bool top_init(void)
 {
 	drawn_valid = false;
-	return top_now_init();
+	if (!top_now_init() || !top_detail_init()) {
+		top_exit();
+		return false;
+	}
+	return true;
 }
 
 void top_exit(void)
 {
+	top_detail_exit();
 	top_now_exit();
 }
 
@@ -40,9 +49,15 @@ void top_set(const player_info *info)
 	spinner_frames = spinning ? spinner_frames + 1 : 0;
 }
 
+void top_set_detail(const detail_doc *doc, artwork_state *art)
+{
+	detail = doc && art ? doc : NULL;
+	detail_art = art;
+}
+
 bool top_dirty(app_tab tab, const artwork_state *art)
 {
-	top_mode mode = top_mode_for(tab, phase);
+	top_mode mode = top_mode_for(tab, phase, detail != NULL);
 	if (!drawn_valid || mode != drawn_mode || spinning != drawn_spinning ||
 	    (spinning && spinner_step() != drawn_step))
 		return true;
@@ -51,6 +66,8 @@ bool top_dirty(app_tab tab, const artwork_state *art)
 		return top_now_dirty(false, art);
 	case TOP_ART_BIG:
 		return top_now_dirty(true, art);
+	case TOP_DETAIL:
+		return top_detail_dirty(detail, detail_art);
 	default:
 		/* The logo never changes by itself. */
 		return false;
@@ -59,13 +76,16 @@ bool top_dirty(app_tab tab, const artwork_state *art)
 
 void top_draw(app_tab tab, artwork_state *art)
 {
-	top_mode mode = top_mode_for(tab, phase);
+	top_mode mode = top_mode_for(tab, phase, detail != NULL);
 	switch (mode) {
 	case TOP_NOW_CARD:
 		top_now_draw_card(art);
 		break;
 	case TOP_ART_BIG:
 		top_now_draw_big(art);
+		break;
+	case TOP_DETAIL:
+		top_detail_draw(detail, detail_art);
 		break;
 	default:
 		logo_draw_centered(SCREEN_TOP_W / 2, SCREEN_H / 2);

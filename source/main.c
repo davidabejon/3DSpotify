@@ -88,6 +88,12 @@ static sp_track playback_queue[SEARCH_LIMIT];
 static int playback_queue_count;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
+/* The image of the detail card on the top screen, apart from cover_art:
+ * the player waits for that one before preparing a track, so a detail
+ * must never ask it for another image. `detail_art_url` is what it holds,
+ * so going back to the same detail costs no download. */
+static artwork_state detail_art;
+static char detail_art_url[80];
 /* The last confirmed query, for the home view's repeat button. */
 static char home_query[SEARCH_QUERY_SIZE];
 /* Who owns the screens: the login view for the session start-up, pairing
@@ -987,11 +993,28 @@ static void power_poll(void)
 		aptSetSleepAllowed(!awake);
 }
 
+/* The detail on top of the active tab, if any, for the top screen; its
+ * image is asked for when it changes. Opening a detail with no image (an
+ * album still loading) drops the last one, so no other detail's picture
+ * shows on its card. */
+static const detail_doc *top_detail_sync(void)
+{
+	const detail_doc *doc = active_view == VIEW_TABS &&
+	                        details_active(active_tab)
+	                        ? details_top(active_tab) : NULL;
+	if (doc && strcmp(doc->art, detail_art_url) != 0) {
+		snprintf(detail_art_url, sizeof(detail_art_url), "%s", doc->art);
+		artwork_request(&detail_art, detail_art_url);
+	}
+	return doc;
+}
+
 static void frame(void)
 {
 	/* 0: the login view; 1 + tab: that tab. */
 	static int drawn_screen = -1;
 	artwork_poll(&cover_art);
+	artwork_poll(&detail_art);
 	power_poll();
 	if (screens_dark) {
 		/* Nobody can see them: drawing would only cost battery. The
@@ -1010,6 +1033,7 @@ static void frame(void)
 		player_info info = player_snapshot();
 		view_player_set(&info);
 		top_set(&info);
+		top_set_detail(top_detail_sync(), &detail_art);
 		changed = tabbar_dirty() || top_dirty(active_tab, &cover_art);
 		if (details_active(active_tab))
 			changed |= view_detail_dirty(details_top(active_tab));
@@ -1204,6 +1228,7 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 		memcpy(query, typed, sizeof(typed));
 	/* The keyboard applet takes over both screens. */
 	artwork_invalidate(&cover_art);
+	artwork_invalidate(&detail_art);
 	screens_lost = true;
 	return confirmed;
 }
@@ -2102,6 +2127,7 @@ failed:
 done:
 	stop_tabs();
 	artwork_close(&cover_art);
+	artwork_close(&detail_art);
 	secure_clear(&session, sizeof(session));
 	secure_clear(&search, sizeof(search));
 	secure_clear(playback_queue, sizeof(playback_queue));

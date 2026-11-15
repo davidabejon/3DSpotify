@@ -7,6 +7,7 @@
 #include "lang.h"
 #include "layout.h"
 #include "list_logic.h"
+#include "marquee_logic.h"
 #include "login_logic.h"
 #include "meta_parse.h"
 #include "now_layout.h"
@@ -618,6 +619,7 @@ static void test_language_tables(void)
 			       strcmp(text, "Error") == 0 ||
 			       strcmp(text, "Album") == 0 ||
 			       strcmp(text, "Album: %s") == 0 ||
+			       strcmp(text, "EP") == 0 ||
 			       strcmp(text, "3DSpotify") == 0);
 			/* The tables stay ASCII until lifted on purpose (lang.h). */
 			for (const char *p = text; *p; p++)
@@ -813,6 +815,36 @@ static bool ends_with_ellipsis(const char *s)
 {
 	size_t n = strlen(s), e = strlen(TEXT_FIT_ELLIPSIS);
 	return n >= e && strcmp(s + n - e, TEXT_FIT_ELLIPSIS) == 0;
+}
+
+static void test_marquee(void)
+{
+	/* A text that fits never moves. */
+	assert(!marquee_rolls(200, 200));
+	for (unsigned ms = 0; ms < 20000; ms += 37)
+		assert(marquee_offset(ms, 150, 200) == 0);
+
+	int w = 320, box = 200;
+	assert(marquee_rolls(w, box));
+	unsigned period = marquee_period_ms(w);
+	assert(period == MARQUEE_PAUSE_MS +
+	                 (unsigned)(w + MARQUEE_GAP) * 1000u / MARQUEE_SPEED);
+	/* It waits at its start, then slides left, never backwards, and
+	 * stays inside one span. */
+	assert(marquee_offset(0, w, box) == 0);
+	assert(marquee_offset(MARQUEE_PAUSE_MS - 1, w, box) == 0);
+	assert(marquee_offset(MARQUEE_PAUSE_MS + 1000, w, box) == MARQUEE_SPEED);
+	int last = 0;
+	for (unsigned ms = MARQUEE_PAUSE_MS; ms < period; ms++) {
+		int offset = marquee_offset(ms, w, box);
+		assert(offset >= last && offset < marquee_span(w));
+		last = offset;
+	}
+	/* It reaches the copy's start, then begins again from rest. */
+	assert(last >= marquee_span(w) - 1);
+	assert(marquee_offset(period, w, box) == 0);
+	assert(marquee_offset(period + MARQUEE_PAUSE_MS + 1000, w, box) ==
+	       marquee_offset(MARQUEE_PAUSE_MS + 1000, w, box));
 }
 
 static void test_text_fit(void)
@@ -1669,6 +1701,35 @@ static void test_now_layout(void)
 		assert(now_album_cy(title_h, body_h) -
 		       now_artist_cy(title_h, body_h) == body_h);
 		assert(text.y + text.h <= art.y + art.h);
+		/* The detail card's lines follow on, one t_cuerpo line each, and
+		 * all NOW_LINES of them still end beside the cover. */
+		assert(now_line_cy(title_h, body_h, 0) ==
+		       now_artist_cy(title_h, body_h));
+		assert(now_line_cy(title_h, body_h, 1) ==
+		       now_album_cy(title_h, body_h));
+		for (int n = 1; n < NOW_LINES; n++)
+			assert(now_line_cy(title_h, body_h, n) -
+			       now_line_cy(title_h, body_h, n - 1) == body_h);
+		assert(now_line_cy(title_h, body_h, NOW_LINES - 1) + body_h / 2 + 1 <=
+		       art.y + art.h);
+
+		/* The detail card: the cover centred on the screen's height,
+		 * shadow included on screen, and the text block centred on it. */
+		ui_rect dart = now_detail_art_rect();
+		assert(dart.x == art.x && dart.w == art.w && dart.h == art.h);
+		assert(dart.y == SCREEN_H - dart.y - dart.h);
+		assert(on_top_screen(ui_rect_offset(dart, ART_SHADOW_OFF,
+		                                    ART_SHADOW_OFF), SP_3));
+		for (int count = 0; count <= NOW_LINES; count++) {
+			int dy = now_detail_text_dy(title_h, body_h, count);
+			int top = now_title_cy(title_h) + dy - title_h / 2;
+			int bottom = count ? now_line_cy(title_h, body_h, count - 1) +
+			                     dy + body_h / 2
+			                   : top + title_h;
+			int above = top - dart.y, below = dart.y + dart.h - bottom;
+			assert(above >= 0 && below >= 0);
+			assert(above - below <= 2 && below - above <= 2);
+		}
 
 		/* Times e4 under the cover, the bar below with its handle
 		 * clear of their line, everything inside e3. */
@@ -1777,7 +1838,9 @@ static void test_top_mode(void)
 			             phase == PLAYER_PHASE_PLAYING ||
 			             phase == PLAYER_PHASE_FINISHED;
 			assert(top_music_on(phase) == music);
-			top_mode mode = top_mode_for((app_tab)tab, phase);
+			/* A detail on the tab takes the top screen, music or not. */
+			assert(top_mode_for((app_tab)tab, phase, true) == TOP_DETAIL);
+			top_mode mode = top_mode_for((app_tab)tab, phase, false);
 			if (!music)
 				assert(mode == TOP_LOGO);
 			else if (tab == TAB_PLAYER)
@@ -2122,6 +2185,7 @@ int main(void)
 	test_theme_colors();
 	test_theme_contrast();
 	test_text_fit();
+	test_marquee();
 	test_home_layout();
 	test_home_focus();
 	test_image_fit();

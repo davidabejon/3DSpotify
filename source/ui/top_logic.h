@@ -13,7 +13,9 @@
 typedef enum {
 	TOP_LOGO,
 	TOP_NOW_CARD,
-	TOP_ART_BIG
+	TOP_ART_BIG,
+	/* The detail on top of the active tab: its card (plan 3.5). */
+	TOP_DETAIL
 } top_mode;
 
 /* Music counts as playing while loading, playing (paused too) and once
@@ -26,8 +28,13 @@ static inline bool top_music_on(player_phase phase)
 	       phase == PLAYER_PHASE_FINISHED;
 }
 
-static inline top_mode top_mode_for(app_tab tab, player_phase phase)
+/* `detail_on`: the active tab shows a detail, which takes the top screen
+ * whatever plays. */
+static inline top_mode top_mode_for(app_tab tab, player_phase phase,
+                                    bool detail_on)
 {
+	if (detail_on)
+		return TOP_DETAIL;
 	if (!top_music_on(phase))
 		return TOP_LOGO;
 	return tab == TAB_PLAYER ? TOP_ART_BIG : TOP_NOW_CARD;

@@ -46,9 +46,38 @@ static inline int now_artist_cy(int title_h, int body_h)
 	return SP_3 + title_h + SP_1 + body_h / 2;
 }
 
+/* Line `n` of t_cuerpo under the title, 0 being the artist's. The card
+ * of a detail uses up to NOW_LINES of them. */
+#define NOW_LINES 4
+
+static inline int now_line_cy(int title_h, int body_h, int n)
+{
+	return now_artist_cy(title_h, body_h) + n * body_h;
+}
+
 static inline int now_album_cy(int title_h, int body_h)
 {
-	return now_artist_cy(title_h, body_h) + body_h;
+	return now_line_cy(title_h, body_h, 1);
+}
+
+/* The detail card has no times nor bar: its cover is centred on the
+ * screen's height, and its title with `count` lines centred beside it.
+ * The text is laid out as on the card, moved down by now_detail_text_dy. */
+static inline ui_rect now_detail_art_rect(void)
+{
+	ui_rect r = { SP_3, (SCREEN_H - ART_SIZE) / 2, ART_SIZE, ART_SIZE };
+	return r;
+}
+
+static inline int now_detail_text_dy(int title_h, int body_h, int count)
+{
+	if (count < 0)
+		count = 0;
+	if (count > NOW_LINES)
+		count = NOW_LINES;
+	int block_h = title_h + (count > 0 ? SP_1 + count * body_h : 0);
+	ui_rect art = now_detail_art_rect();
+	return art.y + (art.h - block_h) / 2 - SP_3;
 }
 
 /* The times line, e4 under the cover; `meta_h` is t_meta's line. */

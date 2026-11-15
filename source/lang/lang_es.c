@@ -38,6 +38,16 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_DETAIL_LOADING] = "Cargando...",
 	[STR_DETAIL_EMPTY] = "No hay canciones",
 	[STR_DETAIL_FAILED_TITLE] = "No se pudo cargar",
+	[STR_DETAIL_TRACK_NUMBER_FMT] = "pista %d",
+	[STR_DETAIL_DISC_FMT] = "disco %d",
+	[STR_ALBUM_TYPE_ALBUM] = "Album",
+	[STR_ALBUM_TYPE_SINGLE] = "Sencillo",
+	[STR_ALBUM_TYPE_COMPILATION] = "Recopilatorio",
+	[STR_ALBUM_TYPE_EP] = "EP",
+	[STR_ALBUM_TRACK_ONE] = "1 cancion",
+	[STR_ALBUM_TRACKS_FMT] = "%d canciones",
+	[STR_ALBUM_TRACKS_CUT_FMT] = "%d de %d canciones",
+	[STR_ARTIST_TOP_TRACKS] = "Canciones populares",
 
 	/* Pestana de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",

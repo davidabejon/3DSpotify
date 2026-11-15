@@ -31,6 +31,19 @@ void top_now_invalidate(void);
 bool top_now_dirty(bool big, const artwork_state *art);
 
 void top_now_draw_card(artwork_state *art);
+
+/* The card's head, shared with the detail card (top_detail.h): the cover
+ * from `art` at 160x160 with its hard shadow, `title` in t_titulo and up
+ * to NOW_LINES `lines` in t_cuerpo under it, right of the cover. The
+ * texts must be fitted to now_text_w(). `centred` (the detail card, with
+ * no bar under it) centres the cover on the screen's height and the texts
+ * beside it (now_detail_art_rect, now_detail_text_dy). `rolls`, NULL for
+ * none, holds 1 + count entries, the title's first: -1 for a text drawn
+ * as it is, otherwise how far it has rolled inside now_text_w()
+ * (marquee_logic.h; such a text is the whole string, not fitted). */
+void top_now_draw_header(artwork_state *art, bool centred,
+                         const C2D_Text *title, const C2D_Text *const *lines,
+                         int count, const int *rolls);
 void top_now_draw_big(artwork_state *art);
 
 #endif
