@@ -419,6 +419,109 @@ static void test_meta_parse_rootlist(void)
 	assert(strcmp(small, "a") == 0);
 }
 
+static void test_meta_parse_rootlist_live(void)
+{
+	static uint8_t items_s[1024], body_s[1100], fa_s[64], attrs_s[128],
+	               meta_s[160], item_s[64];
+	pb items, body, fa, attrs, meta, item;
+	pb_init(&items, items_s, sizeof(items_s));
+	add_root_entry(&items, "spotify:playlist:7ccWAm7GdeAUpA2Eu9YI5q", "relax",
+	               0, NULL, 32);
+	/* The DJ, as the rootlist decorates it. */
+	pb_init(&item, item_s, sizeof(item_s));
+	pb_str(&item, 1, "spotify:playlist:37i9dQZF1EYkqdzj48dyYq");
+	pb_init(&fa, fa_s, sizeof(fa_s));
+	pb_str(&fa, 1, "lexicon_context_url");
+	pb_str(&fa, 2, "hm://lexicon-session-provider/x");
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	pb_str(&attrs, 1, "DJ");
+	pb_sub(&attrs, 12, &fa);
+	pb_init(&meta, meta_s, sizeof(meta_s));
+	pb_sub(&meta, 2, &attrs);
+	pb_sub(&items, 3, &item);
+	pb_sub(&items, 4, &meta);
+	add_root_entry(&items, "spotify:playlist:4FScOx76dqrpgQbhk258xR",
+	               "Alterna2026", 0, NULL, 132);
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 3);
+	pb_sub(&body, 5, &items);
+	assert(pb_ok(&body));
+
+	static sp_playlist_ref refs[4];
+	int n = sp_parse_rootlist(body.p, body.len, refs, 4, NULL);
+	assert(n == 2);
+	assert(strcmp(refs[0].name, "relax") == 0);
+	/* The entry after it still reads its own meta_item. */
+	assert(strcmp(refs[1].name, "Alterna2026") == 0 && refs[1].length == 132);
+}
+
+static void test_list_window(void)
+{
+	/* A list that fits is its own window. */
+	assert(list_window_base(0, 0, 24, 24) == 0);
+	assert(list_window_base(5, 19, 24, 24) == 0);
+	/* Rows 0-17 on screen leave the window at 0; 18 moves it, centred. */
+	assert(list_window_base(0, 17, 200, 24) == 0);
+	assert(list_window_base(0, 18, 200, 24) == 9);
+	/* The rows on screen (5, the peek row included) are always inside. */
+	int base = 0;
+	for (int first = 0; first <= 195; first++) {
+		base = list_window_base(base, first, 200, 24);
+		assert(first >= base && first + 5 <= base + 24);
+	}
+	for (int first = 195; first >= 0; first--) {
+		base = list_window_base(base, first, 200, 24);
+		assert(first >= base && first + 5 <= base + 24);
+	}
+	assert(base == 0);
+	/* Never past the end, and a window left past a shorter list comes
+	 * back inside it. */
+	assert(list_window_base(0, 195, 200, 24) == 176);
+	assert(list_window_base(150, 10, 60, 24) == 1);
+}
+
+static void test_detail_paging(void)
+{
+	/* 50 loaded, 4 rows on screen, 8 ahead. */
+	assert(!detail_wants_more(0, 0, 4, 50, 8));
+	assert(!detail_wants_more(37, 37, 4, 50, 8));    /* last shown 40 */
+	assert(detail_wants_more(38, 38, 4, 50, 8));     /* last shown 41 */
+	/* The focus counts even when a drag left it below the rows shown. */
+	assert(detail_wants_more(0, 45, 4, 50, 8));
+	/* Nothing loaded yet (a first page of episodes only): ask. */
+	assert(detail_wants_more(0, 0, 4, 0, 8));
+}
+
+static void test_thumb_reuse(void)
+{
+	const char *old_urls[4] = { "a", "b", "c", "d" };
+	thumb_state old_states[4] = { THUMB_READY, THUMB_READY, THUMB_DECODED,
+	                              THUMB_READY };
+	int src[4];
+	bool kept[4];
+	/* The window moved by two: c and d come forward with their textures,
+	 * except c, still waiting for its upload in its own staging buffer. */
+	const char *moved[4] = { "c", "d", "e", "f" };
+	thumb_reuse_plan(old_urls, old_states, 4, moved, 4, 4, src, kept);
+	assert(src[1] == 3 && kept[1]);
+	assert(!kept[0] && !kept[2] && !kept[3]);
+	/* Every texture goes somewhere, once. */
+	bool seen[4] = { false };
+	for (int i = 0; i < 4; i++) {
+		assert(src[i] >= 0 && src[i] < 4 && !seen[src[i]]);
+		seen[src[i]] = true;
+	}
+	/* Unchanged positions keep their own, a decoded one included. */
+	thumb_reuse_plan(old_urls, old_states, 4, old_urls, 4, 4, src, kept);
+	for (int i = 0; i < 4; i++)
+		assert(src[i] == i && kept[i]);
+	/* A shorter list: the slots past it keep nothing. */
+	const char *two[2] = { "d", "a" };
+	thumb_reuse_plan(old_urls, old_states, 4, two, 2, 4, src, kept);
+	assert(src[0] == 3 && kept[0] && src[1] == 0 && kept[1]);
+	assert(!kept[2] && !kept[3]);
+}
+
 static void test_meta_parse_playlist(void)
 {
 	static uint8_t items_s[4096], attrs_s[128], body_s[4400];
@@ -453,16 +556,50 @@ static void test_meta_parse_playlist(void)
 	assert(strcmp(pl.uri, pl_uri) == 0);
 	assert(strcmp(pl.name, "TWICE Relaxing Songs") == 0 && !pl.art[0]);
 	assert(pl.total_tracks == 1275);
-	assert(pl.skipped == 2);
-	assert(pl.track_count == SP_PLAYLIST_MAX_TRACKS);
+	/* A page of 30 items: 28 tracks, an episode and a local file. */
+	assert(pl.skipped == 2 && pl.items == 30 && !pl.live);
+	assert(pl.track_count == 28);
 	assert(strcmp(pl.track_uris[0], "spotify:track:0000000000000000000000") == 0);
 	assert(strcmp(pl.track_uris[1], "spotify:track:0000000000000000000003") == 0);
 	for (int i = 0; i < pl.track_count; i++)
 		assert(sp_is_track_uri(pl.track_uris[i]));
 
+	/* A full page stops reading: `items` says where the next one starts,
+	 * past the two skipped items it went through. */
+	sp_parse_playlist(body.p, body.len, pl_uri, 5, &pl);
+	assert(pl.track_count == 5 && pl.items == 7 && pl.skipped == 2);
+	assert(strcmp(pl.track_uris[4], "spotify:track:0000000000000000000006") == 0);
+
 	/* A header alone: nothing read, the total still known. */
 	sp_parse_playlist(body.p, body.len, pl_uri, 0, &pl);
-	assert(pl.track_count == 0 && pl.total_tracks == 1275);
+	assert(pl.track_count == 0 && pl.items == 0 && pl.total_tracks == 1275);
+
+	/* The DJ: lexicon format attributes and no items. */
+	static uint8_t fa_s[64], dj_attrs_s[160], dj_s[200];
+	pb fa, dj_attrs, dj;
+	pb_init(&fa, fa_s, sizeof(fa_s));
+	pb_str(&fa, 1, "lexicon_set_type");
+	pb_str(&fa, 2, "your_dj");
+	pb_init(&dj_attrs, dj_attrs_s, sizeof(dj_attrs_s));
+	pb_str(&dj_attrs, 1, "DJ");
+	pb_sub(&dj_attrs, 12, &fa);
+	pb_init(&dj, dj_s, sizeof(dj_s));
+	pb_sub(&dj, 3, &dj_attrs);
+	assert(pb_ok(&dj));
+	sp_parse_playlist(dj.p, dj.len, "spotify:playlist:37i9dQZF1EYkqdzj48dyYq",
+	                  SP_PLAYLIST_PAGE, &pl);
+	assert(pl.live && pl.track_count == 0 && strcmp(pl.name, "DJ") == 0);
+	pbv djv = { dj_attrs.p, dj_attrs.len };
+	assert(sp_list_is_live(&djv));
+	/* Other format attributes (a blend's) are not a session. */
+	pb_init(&fa, fa_s, sizeof(fa_s));
+	pb_str(&fa, 1, "madeFor.username");
+	pb_str(&fa, 2, "someone");
+	pb_init(&dj_attrs, dj_attrs_s, sizeof(dj_attrs_s));
+	pb_sub(&dj_attrs, 12, &fa);
+	djv.p = dj_attrs.p;
+	djv.len = dj_attrs.len;
+	assert(!sp_list_is_live(&djv));
 
 	assert(sp_is_track_uri("spotify:track:3n3Ppam7vgaVa1iaRUc9Lp"));
 	assert(!sp_is_track_uri("spotify:track:"));
@@ -2503,6 +2640,10 @@ int main(void)
 	test_meta_parse_batch();
 	test_meta_parse_rootlist();
 	test_meta_parse_playlist();
+	test_meta_parse_rootlist_live();
+	test_list_window();
+	test_detail_paging();
+	test_thumb_reuse();
 	test_meta_parse_recent();
 	test_home_merge();
 	test_detail_stack();

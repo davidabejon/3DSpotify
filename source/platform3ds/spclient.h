@@ -115,22 +115,31 @@ typedef struct {
 	int  length;
 } sp_playlist_ref;
 
-/* A list's worth, as for albums and artists. */
-#define SP_PLAYLIST_MAX_TRACKS 24
+/* Items asked for per request: a page of a long playlist, named afterwards
+ * by one metadata batch (the batch takes this many at once). */
+#define SP_PLAYLIST_PAGE 50
 
-/* A playlist's header and the track URIs among its first items. Episodes
- * and local files are left out of track_uris and counted in `skipped`;
- * total_tracks is what the service reports for the whole list, all kinds
- * included. Probed (probe_meta step 15) on playlist4_external.proto:
- * SelectedListContent { length 2, attributes 3, contents 5 }. */
+/* A playlist's header and the track URIs among one range of its items.
+ * Episodes and local files are left out of track_uris and counted in
+ * `skipped`; `items` is every item the range held, so the next page starts
+ * at from + items. total_tracks is what the service reports for the whole
+ * list, all kinds included. Probed (probe_meta step 15) on
+ * playlist4_external.proto: SelectedListContent { length 2, attributes 3,
+ * contents 5 }.
+ *
+ * `live`: not a list but a live session another service plays (the AI DJ),
+ * marked by `lexicon_*` format attributes. It holds no tracks and this
+ * client cannot play it, so it is never shown. */
 typedef struct {
 	char uri[SP_URI_MAX];
 	char name[128];
 	char art[80];
 	int  total_tracks;
+	int  items;
 	int  skipped;
+	bool live;
 	int  track_count;
-	char track_uris[SP_PLAYLIST_MAX_TRACKS][SP_URI_MAX];
+	char track_uris[SP_PLAYLIST_PAGE][SP_URI_MAX];
 } sp_playlist_info;
 
 /* Which spclient host to use. Falls back to the well-known name when apresolve
@@ -185,7 +194,7 @@ int  sp_radio(const char *host, const char *token, const char *seed_uri,
 /* The user's playlist folder, decorated: one request brings every entry's
  * name, cover and length along in meta_items, where naming each playlist on
  * its own would be one request per row. Only playlists are kept, folders
- * flattened. `total` (may be NULL) gets the entries the rootlist holds.
+ * flattened, live sessions (the AI DJ) left out. `total` (may be NULL) gets the entries the rootlist holds.
  * Returns how many were kept (up to `max`), or -1. An empty rootlist is a
  * valid answer, not an error. `username` is the canonical one from the
  * access point; it is percent-encoded into the path here. */
@@ -201,12 +210,13 @@ int  sp_recent_playlists_s(http_session *sess, const char *token,
                            const char *username, char uris[][SP_URI_MAX],
                            int max, char *err, size_t errlen);
 
-/* One playlist's header and its first `max_tracks` items (0 asks for the
- * header alone, a few hundred bytes). The range is asked of the service,
- * so a list of thousands costs no more than a short one. `uri` is the full
- * spotify:playlist: URI. Returns 0 or -1. */
+/* One playlist's header and `max_tracks` items from item `from` (at most
+ * SP_PLAYLIST_PAGE; 0 asks for the header alone, a few hundred bytes). The
+ * range is asked of the service, so each page of a list of thousands costs
+ * what a short list does. `uri` is the full spotify:playlist: URI. Returns
+ * 0 or -1. */
 int  sp_playlist_s(http_session *sess, const char *token, const char *uri,
-                   int max_tracks, sp_playlist_info *out,
+                   int from, int max_tracks, sp_playlist_info *out,
                    char *err, size_t errlen);
 
 /* Liked Songs. This one answers JSON, not protobuf, and carries the whole

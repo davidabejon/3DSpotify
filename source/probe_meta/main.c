@@ -1126,8 +1126,8 @@ int main(int argc, char **argv)
 		say("   no playlist in the rootlist\n");
 	} else {
 		static sp_playlist_info pl;
-		if (sp_playlist_s(plsess, l5.access_token, refs[0].uri,
-		                  SP_PLAYLIST_MAX_TRACKS, &pl, err, sizeof(err)) != 0) {
+		if (sp_playlist_s(plsess, l5.access_token, refs[0].uri, 0,
+		                  SP_PLAYLIST_PAGE, &pl, err, sizeof(err)) != 0) {
 			say("   failed: %s\n", err);
 		} else {
 			say("   \"%s\": %d tracks, %d read, %d skipped\n", pl.name,

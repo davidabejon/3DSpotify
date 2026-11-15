@@ -32,8 +32,13 @@
 
 #include <stdbool.h>
 
-/* As many as a search returns (SEARCH_LIMIT, THUMBS_MAX). */
-#define TRACK_LIST_MAX 24
+/* The rows kept ready at once, text and covers: a search's worth
+ * (SEARCH_LIMIT), and the thumbnail pool (THUMBS_MAX). */
+#define TRACK_LIST_WINDOW 24
+/* The longest list: a playlist's loaded pages (DETAIL_PLAYLIST_MAX). Past
+ * the window, its rows are prepared as the list scrolls to them
+ * (list_window_base). */
+#define TRACK_LIST_MAX 500
 
 typedef enum {
 	TRACK_LIST_THUMBS,     /* the cover thumbnail, via thumbs.h */
@@ -62,6 +67,7 @@ typedef struct {
 	int count;
 	int selected;
 	int first;             /* first visible row: scroll / LIST_PITCH */
+	int base;              /* first row of the window kept ready */
 	int scroll;            /* px; whole rows except while dragging */
 	/* The covers, through thumbs.c's pool (TRACK_LIST_THUMBS only). */
 	thumbs_client thumbs;
@@ -76,11 +82,12 @@ typedef struct {
 	C2D_TextBuf buf, scratch;
 	bool stale;
 	lang_id parsed_lang;
-	C2D_Text title[TRACK_LIST_MAX];
-	C2D_Text artist[TRACK_LIST_MAX];
-	C2D_Text duration[TRACK_LIST_MAX];
-	C2D_Text number[TRACK_LIST_MAX];
-	float duration_width[TRACK_LIST_MAX];
+	/* Row base + i is entry i. */
+	C2D_Text title[TRACK_LIST_WINDOW];
+	C2D_Text artist[TRACK_LIST_WINDOW];
+	C2D_Text duration[TRACK_LIST_WINDOW];
+	C2D_Text number[TRACK_LIST_WINDOW];
+	float duration_width[TRACK_LIST_WINDOW];
 } track_list;
 
 /* After ui_init. False when the text buffers cannot be made. */
@@ -95,6 +102,10 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 /* Back to where a list was left: `first` as the first visible row, on
  * whole rows, with the focus kept in view. */
 void track_list_scroll_to(track_list *l, int first);
+/* The same tracks, more of them: a page appended at the end of the array
+ * `l` already shows (which must not have moved). Focus, scroll and the
+ * covers already fetched stay. */
+void track_list_extend(track_list *l, int count);
 /* No press, touch, drag or nudge in progress: entering the view. */
 void track_list_reset_input(track_list *l);
 

@@ -232,14 +232,45 @@ void thumbs_set_urls(const char *const *list, int n)
 		n = 0;
 	if (n > THUMBS_MAX)
 		n = THUMBS_MAX;
+	const char *wanted[THUMBS_MAX];
+	for (int i = 0; i < THUMBS_MAX; i++)
+		wanted[i] = i < n && list[i] ? list[i] : "";
+	/* The slots as they were: covers that only changed position move with
+	 * their texture (the pool is all or nothing, so any slot may take any
+	 * texture). The worker's result for a slot is dropped anyway once the
+	 * generation moves on. */
+	static char old_urls[THUMBS_MAX][THUMB_URL_SIZE];
+	static thumb_state old_states[THUMBS_MAX];
+	static C3D_Tex old_tex[THUMBS_MAX];
+	static Tex3DS_SubTexture old_sub[THUMBS_MAX];
+	static int old_sizes[THUMBS_MAX][2];
+	const char *old_ptrs[THUMBS_MAX];
+	int src[THUMBS_MAX];
+	bool kept[THUMBS_MAX];
 	bool work = false;
 	LightLock_Lock(&lock);
 	generation++;
+	memcpy(old_urls, urls, sizeof(old_urls));
+	memcpy(old_states, states, sizeof(old_states));
+	memcpy(old_tex, textures, sizeof(old_tex));
+	memcpy(old_sub, subtex, sizeof(old_sub));
+	memcpy(old_sizes, sizes, sizeof(old_sizes));
+	for (int i = 0; i < THUMBS_MAX; i++)
+		old_ptrs[i] = old_urls[i];
+	thumb_reuse_plan(old_ptrs, old_states, count, wanted, n, THUMBS_MAX, src,
+	                 kept);
 	for (int i = 0; i < THUMBS_MAX; i++) {
-		const char *url = i < n && list[i] ? list[i] : "";
-		bool same = i < count && strcmp(urls[i], url) == 0;
-		if (i < n && thumb_keep(states[i], same))
+		int j = src[i];
+		textures[i] = old_tex[j];
+		subtex[i] = old_sub[j];
+		sizes[i][0] = old_sizes[j][0];
+		sizes[i][1] = old_sizes[j][1];
+		if (kept[i]) {
+			memcpy(urls[i], old_urls[j], sizeof(urls[i]));
+			states[i] = old_states[j];
 			continue;
+		}
+		const char *url = wanted[i];
 		snprintf(urls[i], sizeof(urls[i]), "%s", url);
 		bool fetchable = i < n && art_url_allowed(url) &&
 		                 strlen(url) < sizeof(urls[i]);
@@ -366,6 +397,29 @@ void thumbs_client_set(thumbs_client *c, const char *const *list, int n)
 	/* New content: the pool is handed it by the next claim. */
 	if (owner == c)
 		owner = NULL;
+}
+
+void thumbs_client_replace(thumbs_client *c, const char *const *list, int n)
+{
+	if (n < 0 || !list)
+		n = 0;
+	if (n > THUMBS_MAX)
+		n = THUMBS_MAX;
+	for (int i = 0; i < THUMBS_MAX; i++)
+		c->urls[i] = i < n ? list[i] : NULL;
+	c->count = n;
+	if (owner != c)
+		return;   /* handed over by the next claim, as after a set */
+	if (allowed) {
+		/* Still this client's: covers already here move to their new
+		 * places in the same frame, so the rows on screen keep them. */
+		thumbs_set_urls(c->urls, c->count);
+		thumbs_set_window(c->first);
+		c->synced = true;
+		c->serial++;
+	} else {
+		c->synced = false;
+	}
 }
 
 void thumbs_client_window(thumbs_client *c, int first)

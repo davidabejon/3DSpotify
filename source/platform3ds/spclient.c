@@ -243,7 +243,7 @@ int sp_recent_playlists_s(http_session *sess, const char *token,
 }
 
 int sp_playlist_s(http_session *sess, const char *token, const char *uri,
-                  int max_tracks, sp_playlist_info *out,
+                  int from, int max_tracks, sp_playlist_info *out,
                   char *err, size_t errlen)
 {
 	memset(out, 0, sizeof(*out));
@@ -251,17 +251,19 @@ int sp_playlist_s(http_session *sess, const char *token, const char *uri,
 		snprintf(err, errlen, "not a playlist: %s", uri);
 		return -1;
 	}
-	if (max_tracks > SP_PLAYLIST_MAX_TRACKS)
-		max_tracks = SP_PLAYLIST_MAX_TRACKS;
+	if (max_tracks > SP_PLAYLIST_PAGE)
+		max_tracks = SP_PLAYLIST_PAGE;
 	if (max_tracks < 0)
 		max_tracks = 0;
+	if (from < 0)
+		from = 0;
 
 	/* from/length is honoured (a 1275-track list: 110 KB whole, 2.3 KB for
 	 * 24); without the decoration the header came back with no length. */
 	char path[192];
 	snprintf(path, sizeof(path),
 	         "/playlist/v2/playlist/%s?decorate=attributes,length"
-	         "&from=0&length=%d", uri + 17, max_tracks);
+	         "&from=%d&length=%d", uri + 17, from, max_tracks);
 	http_reply r;
 	if (session_get_proto(sess, token, path, "playlist", &r, err, errlen) != 0)
 		return -1;

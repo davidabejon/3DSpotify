@@ -328,6 +328,22 @@ bool sp_is_track_uri(const char *uri)
 	return uri && strncmp(uri, "spotify:track:", 14) == 0 && uri[14];
 }
 
+bool sp_list_is_live(const pbv *attrs)
+{
+	/* The DJ's attributes (probe_meta step 15.5): lexicon_set_type
+	 * "your_dj", lexicon_context_url "hm://lexicon-session-provider/...".
+	 * Any lexicon_ key marks a session that service builds as it plays. */
+	size_t at = 0;
+	pbv entry;
+	while (pb_next_bytes(attrs, 12, &at, &entry)) {
+		pbv key;
+		if (pb_get_bytes(entry.p, entry.len, 1, &key) &&
+		    has_prefix(key.p, key.len, "lexicon_"))
+			return true;
+	}
+	return false;
+}
+
 void sp_parse_list_attributes(const pbv *attrs, char *name, size_t namelen,
                               char *art, size_t artlen)
 {
@@ -399,25 +415,25 @@ int sp_parse_rootlist(const uint8_t *body, size_t len, sp_playlist_ref *out,
 	while (n < max && pb_next_bytes(&contents, 3, &ai, &item)) {
 		pbv meta = { NULL, 0 };
 		bool has_meta = pb_next_bytes(&contents, 4, &am, &meta);
-		pbv uri;
+		pbv uri, attrs = { NULL, 0 };
 		if (!pb_get_bytes(item.p, item.len, 1, &uri) ||
 		    !has_prefix(uri.p, uri.len, "spotify:playlist:") ||
 		    uri.len >= SP_URI_MAX)
+			continue;
+		bool has_attrs = has_meta && pb_get_bytes(meta.p, meta.len, 2, &attrs);
+		if (has_attrs && sp_list_is_live(&attrs))
 			continue;
 
 		sp_playlist_ref *r = &out[n++];
 		memset(r, 0, sizeof(*r));
 		memcpy(r->uri, uri.p, uri.len);
 		r->uri[uri.len] = '\0';
-		if (has_meta) {
-			pbv attrs;
-			uint64_t tracks = 0;
-			if (pb_get_bytes(meta.p, meta.len, 2, &attrs))
-				sp_parse_list_attributes(&attrs, r->name, sizeof(r->name),
-				                         r->art, sizeof(r->art));
-			if (pb_get_varint(meta.p, meta.len, 3, &tracks))
-				r->length = (int)tracks;
-		}
+		if (has_attrs)
+			sp_parse_list_attributes(&attrs, r->name, sizeof(r->name),
+			                         r->art, sizeof(r->art));
+		uint64_t tracks = 0;
+		if (has_meta && pb_get_varint(meta.p, meta.len, 3, &tracks))
+			r->length = (int)tracks;
 	}
 	return n;
 }
@@ -428,33 +444,37 @@ void sp_parse_playlist(const uint8_t *body, size_t len, const char *uri,
 	memset(out, 0, sizeof(*out));
 	if (uri)
 		snprintf(out->uri, sizeof(out->uri), "%s", uri);
-	if (max_tracks > SP_PLAYLIST_MAX_TRACKS)
-		max_tracks = SP_PLAYLIST_MAX_TRACKS;
+	if (max_tracks > SP_PLAYLIST_PAGE)
+		max_tracks = SP_PLAYLIST_PAGE;
 
 	uint64_t length = 0;
 	if (pb_get_varint(body, len, 2, &length))
 		out->total_tracks = (int)length;
 	pbv attrs;
-	if (pb_get_bytes(body, len, 3, &attrs))
+	if (pb_get_bytes(body, len, 3, &attrs)) {
 		sp_parse_list_attributes(&attrs, out->name, sizeof(out->name),
 		                         out->art, sizeof(out->art));
+		out->live = sp_list_is_live(&attrs);
+	}
 
 	pbv contents;
 	if (!pb_get_bytes(body, len, 5, &contents))
 		return;
+	/* `items` counts what was read, so the next page starts right after:
+	 * past a full page nothing more is read, even if the service sent
+	 * more than was asked. */
 	size_t at = 0;
 	pbv item;
-	while (pb_next_bytes(&contents, 3, &at, &item)) {
+	while (out->track_count < max_tracks &&
+	       pb_next_bytes(&contents, 3, &at, &item)) {
+		out->items++;
 		pbv u;
-		if (!pb_get_bytes(item.p, item.len, 1, &u))
-			continue;
-		if (!has_prefix(u.p, u.len, "spotify:track:") || u.len >= SP_URI_MAX ||
+		if (!pb_get_bytes(item.p, item.len, 1, &u) ||
+		    !has_prefix(u.p, u.len, "spotify:track:") || u.len >= SP_URI_MAX ||
 		    u.len <= 14) {
 			out->skipped++;
 			continue;
 		}
-		if (out->track_count >= max_tracks)
-			continue;
 		char *dst = out->track_uris[out->track_count++];
 		memcpy(dst, u.p, u.len);
 		dst[u.len] = '\0';

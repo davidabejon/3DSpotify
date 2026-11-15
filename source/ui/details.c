@@ -1,23 +1,37 @@
 #include "details.h"
 
+#include "detail_logic.h"
 #include "http3ds.h"
+#include "list_logic.h"
 #include "lang.h"
 #include "worker_priority.h"
 
 #include <3ds.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* An http_session, a TLS handshake and a metadata batch: what the
  * thumbnails' worker needs too. */
 #define DETAIL_WORKER_STACK (32 * 1024)
+/* The most tracks one load names: a playlist page (SP_PLAYLIST_PAGE) or a
+ * whole album or artist (DETAIL_MAX_TRACKS). */
+#define DETAIL_JOB_MAX (SP_PLAYLIST_PAGE > DETAIL_MAX_TRACKS \
+                        ? SP_PLAYLIST_PAGE : DETAIL_MAX_TRACKS)
+/* After a playlist page failed, the next try waits this long, so a list
+ * resting at its end does not ask again every frame. */
+#define DETAIL_MORE_RETRY_MS 5000
 
 /* One load at a time. Everything the worker touches is here, so a load
  * that nobody wants any more can finish on its own without harm. Global,
  * never on a thread's stack: the tracks alone are ~23 KB. */
 typedef struct {
 	detail_kind kind;
+	/* A further page of a playlist already shown, from item `from`; the
+	 * first load is a page from 0 that also brings the header. */
+	bool page;
+	int  from;
 	char uri[SP_URI_MAX];
 	char host[128];
 	char token[1024];
@@ -26,8 +40,8 @@ typedef struct {
 	sp_album  album;
 	sp_artist artist;
 	sp_playlist_info playlist;
-	const char *uris[DETAIL_MAX_TRACKS];
-	sp_track tracks[DETAIL_MAX_TRACKS];
+	const char *uris[DETAIL_JOB_MAX];
+	sp_track tracks[DETAIL_JOB_MAX];
 	int  count;
 	int  result;                  /* 0 or -1 */
 	char error[192];
@@ -90,8 +104,9 @@ static void worker_main(void *arg)
 	} else if (job.kind == DETAIL_PLAYLIST) {
 		/* Only the first items are asked for: the service honours the
 		 * range, so a list of thousands costs what a short one does. */
-		rc = sp_playlist_s(sess, job.token, job.uri, DETAIL_MAX_TRACKS,
-		                   &job.playlist, job.error, sizeof(job.error));
+		rc = sp_playlist_s(sess, job.token, job.uri, job.from,
+		                   SP_PLAYLIST_PAGE, &job.playlist, job.error,
+		                   sizeof(job.error));
 		n = job.playlist.track_count;
 		for (int i = 0; i < n; i++)
 			job.uris[i] = job.playlist.track_uris[i];
@@ -122,6 +137,22 @@ done:
 	job.done = true;
 }
 
+/* A playlist page onto the end of its document, as much as fits. */
+static void append_page(detail_doc *d)
+{
+	int room = d->capacity - d->count;
+	int n = job.count < room ? job.count : room;
+	if (n > 0)
+		memcpy(d->tracks + d->count, job.tracks,
+		       (size_t)n * sizeof(d->tracks[0]));
+	d->count += n;
+	d->next_from += job.playlist.items;
+	d->total_tracks = job.playlist.total_tracks;
+	/* An empty page means the end, whatever the total said. */
+	d->more = job.playlist.items > 0 && d->next_from < d->total_tracks &&
+	          d->count < d->capacity;
+}
+
 /* The finished load into its document, unless the document moved on. */
 static void apply(detail_doc *d)
 {
@@ -143,7 +174,13 @@ static void apply(detail_doc *d)
 		const sp_playlist_info *p = &job.playlist;
 		snprintf(d->title, sizeof(d->title), "%s", p->name);
 		snprintf(d->art, sizeof(d->art), "%s", p->art);
-		d->total_tracks = p->total_tracks;
+		d->count = 0;
+		d->next_from = 0;
+		append_page(d);
+		d->selected = 0;
+		d->first = 0;
+		d->state = DETAIL_READY;
+		return;
 	} else {
 		const sp_artist *a = &job.artist;
 		snprintf(d->title, sizeof(d->title), "%s", a->name);
@@ -170,6 +207,17 @@ static bool reap(void)
 	secure_clear(job.token, sizeof(job.token));
 
 	detail_doc *d = &docs[job.doc];
+	if (job.page) {
+		if (job.cancel_requested || d->serial != job.serial ||
+		    d->state != DETAIL_READY || !d->loading_more)
+			return false;   /* still asked for if wanted: started again */
+		d->loading_more = false;
+		if (job.result == 0)
+			append_page(d);
+		else
+			d->retry_at = osGetTime() + DETAIL_MORE_RETRY_MS;
+		return on_top(job.doc);
+	}
 	if (job.cancel_requested || d->serial != job.serial ||
 	    d->state != DETAIL_LOADING)
 		return false;   /* still LOADING if wanted: started again */
@@ -182,6 +230,8 @@ static void start(int slot, const char *host, const char *token)
 	detail_doc *d = &docs[slot];
 	memset(&job, 0, sizeof(job));
 	job.kind = d->kind;
+	job.page = d->state == DETAIL_READY;
+	job.from = job.page ? d->next_from : 0;
 	job.doc = slot;
 	job.serial = d->serial;
 	snprintf(job.uri, sizeof(job.uri), "%s", d->uri);
@@ -190,7 +240,11 @@ static void start(int slot, const char *host, const char *token)
 	/* Below the decoder, like every worker that can overlap playback. */
 	worker = threadCreate(worker_main, NULL, DETAIL_WORKER_STACK,
 	                      background_priority(), -2, false);
-	if (!worker) {
+	if (!worker && job.page) {
+		secure_clear(job.token, sizeof(job.token));
+		d->loading_more = false;
+		d->retry_at = osGetTime() + DETAIL_MORE_RETRY_MS;
+	} else if (!worker) {
 		secure_clear(job.token, sizeof(job.token));
 		d->state = DETAIL_FAILED;
 		snprintf(d->error, sizeof(d->error), "%s",
@@ -207,7 +261,8 @@ static int waiting(app_tab active)
 		int i = first < 0 ? k : (first + k) % DETAIL_STACKS;
 		int top = detail_stack_top(&stacks[i]);
 		if (top >= 0 && docs[top].kind != DETAIL_TRACK &&
-		    docs[top].state == DETAIL_LOADING)
+		    (docs[top].state == DETAIL_LOADING ||
+		     (docs[top].state == DETAIL_READY && docs[top].loading_more)))
 			return top;
 	}
 	return -1;
@@ -229,8 +284,13 @@ static detail_doc *push(app_tab tab)
 		return NULL;   /* cannot happen: see detail_pool_free */
 	detail_doc *d = &docs[slot];
 	unsigned serial = d->serial + 1;
+	/* No stack holds it, and nothing else points at its buffer: the view
+	 * re-sets its list before it draws a level again. */
+	free(d->owned);
 	memset(d, 0, sizeof(*d));
 	d->serial = serial;
+	d->tracks = d->inline_tracks;
+	d->capacity = DETAIL_MAX_TRACKS;
 	detail_stack_push(s, slot);
 	return d;
 }
@@ -293,6 +353,16 @@ static void open_entity(app_tab tab, detail_kind kind, const char *uri)
 	d->kind = kind;
 	d->state = DETAIL_LOADING;
 	snprintf(d->uri, sizeof(d->uri), "%s", uri);
+	if (kind == DETAIL_PLAYLIST) {
+		/* Made once, at its full size: a buffer that grew would move under
+		 * the list and the thumbnails pointing into it. Without the memory
+		 * the playlist still shows its first DETAIL_MAX_TRACKS. */
+		d->owned = malloc(DETAIL_PLAYLIST_MAX * sizeof(sp_track));
+		if (d->owned) {
+			d->tracks = d->owned;
+			d->capacity = DETAIL_PLAYLIST_MAX;
+		}
+	}
 }
 
 void details_open_album(app_tab tab, const char *uri)
@@ -318,6 +388,17 @@ bool details_back(app_tab tab)
 		return false;
 	forget_load(slot);
 	return true;
+}
+
+void details_follow(app_tab tab)
+{
+	detail_doc *d = details_top(tab);
+	if (!d || d->kind != DETAIL_PLAYLIST || d->state != DETAIL_READY ||
+	    !d->more || d->loading_more || osGetTime() < d->retry_at)
+		return;
+	if (detail_wants_more(d->first, d->selected, RESULTS_PER_PAGE, d->count,
+	                      DETAIL_MORE_AHEAD))
+		d->loading_more = true;
 }
 
 void details_retry(app_tab tab)
@@ -363,4 +444,13 @@ void details_stop(void)
 	secure_clear(job.token, sizeof(job.token));
 	for (int i = 0; i < DETAIL_STACKS; i++)
 		detail_stack_clear(&stacks[i]);
+	/* Nothing shows them any more: the views re-set their lists on the
+	 * next session's first level. */
+	for (int i = 0; i < DETAIL_POOL; i++) {
+		free(docs[i].owned);
+		docs[i].owned = NULL;
+		docs[i].tracks = docs[i].inline_tracks;
+		docs[i].capacity = DETAIL_MAX_TRACKS;
+		docs[i].count = 0;
+	}
 }

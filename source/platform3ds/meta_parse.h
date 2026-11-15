@@ -74,6 +74,12 @@ bool sp_parse_artist(const pbv *artist, const char *country, sp_artist *out);
  * playlist may also hold spotify:episode: and spotify:local: entries. */
 bool sp_is_track_uri(const char *uri);
 
+/* Whether a ListAttributes is a live session rather than a list: any
+ * format attribute (12, { key 1, value 2 }) whose key starts with
+ * "lexicon_", which is how the AI DJ comes. Those have no tracks to read
+ * and only the official client's session service plays them. */
+bool sp_list_is_live(const pbv *attrs);
+
 /* A ListAttributes' name and cover. The cover is the `picture` id as an
  * i.scdn.co URL, else a picture_size URL on i.scdn.co ("small" first) that
  * fits `artlen`; anything else leaves `art` empty. A name cut to fit stays
@@ -83,16 +89,18 @@ void sp_parse_list_attributes(const pbv *attrs, char *name, size_t namelen,
 
 /* A decorated rootlist answer. Keeps spotify:playlist: entries only (folder
  * markers spotify:start-group:/end-group: and anything else are skipped, so
- * folders come out flattened), each with its meta_item's name, cover and
- * length. `total` (may be NULL) gets SelectedListContent.length. Returns
+ * folders come out flattened) and not live sessions (sp_list_is_live), each
+ * with its meta_item's name, cover and length. `total` (may be NULL) gets SelectedListContent.length. Returns
  * how many were kept, at most `max`. */
 int  sp_parse_rootlist(const uint8_t *body, size_t len, sp_playlist_ref *out,
                        int max, int *total);
 
 /* A playlist answer (header and a range of items) into `out`, which is
  * cleared first; `uri` is copied in as given. Track URIs go to
- * track_uris (at most SP_PLAYLIST_MAX_TRACKS and at most `max_tracks`);
- * other items count in `skipped`. */
+ * track_uris (at most SP_PLAYLIST_PAGE and at most `max_tracks`); other
+ * items count in `skipped`. Reading stops once the page is full: `items`
+ * says how many items were read, for where the next page starts. `live`
+ * marks a session (sp_list_is_live). */
 void sp_parse_playlist(const uint8_t *body, size_t len, const char *uri,
                        int max_tracks, sp_playlist_info *out);
 

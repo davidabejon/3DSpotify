@@ -30,6 +30,8 @@ static int drawn_rolls[1 + NOW_LINES];
 static const detail_doc *parsed_doc;
 static unsigned parsed_serial;
 static detail_state parsed_state;
+/* A playlist's count grows as its pages arrive. */
+static int parsed_count;
 static lang_id parsed_lang = LANG_COUNT;
 static bool drawn_valid;
 
@@ -189,7 +191,8 @@ static void parse(const detail_doc *d)
 static bool changed(const detail_doc *d)
 {
 	return d != parsed_doc || d->serial != parsed_serial ||
-	       d->state != parsed_state || parsed_lang != lang_get();
+	       d->state != parsed_state || d->count != parsed_count ||
+	       parsed_lang != lang_get();
 }
 
 /* --- State and drawing ------------------------------------------------- */
@@ -220,6 +223,7 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art)
 		parsed_doc = doc;
 		parsed_serial = doc->serial;
 		parsed_state = doc->state;
+		parsed_count = doc->count;
 		parsed_lang = lang_get();
 		parsed_ms = osGetTime();
 	}

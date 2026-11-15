@@ -495,9 +495,14 @@ class BuildTests(unittest.TestCase):
         self.assertIn("track_list_thumbs_frame(&list);", results)
         self.assertIn("track_list_thumbs_frame(&list);", detail)
         self.assertIn("track_list_offer_thumbs(&list);", results)
-        # A fixed-size slot either way.
-        self.assertIn("thumbs_client_image(&l->thumbs, index, &image)", rows)
-        self.assertIn("thumbs_client_window(&l->thumbs, l->first)", rows)
+        # A fixed-size slot either way. A long list keeps a window of rows
+        # in the pool, so rows are offset by its base; a moved window
+        # keeps the pool and the covers that only changed place.
+        self.assertIn("thumbs_client_image(&l->thumbs, index - l->base,", rows)
+        self.assertIn("thumbs_client_window(&l->thumbs, l->first - l->base)",
+                      rows)
+        self.assertIn("thumbs_client_replace(&l->thumbs, urls, n);", rows)
+        self.assertIn("thumb_reuse_plan(", thumbs)
         # Only the client thumbs.c serves follows the scroll with downloads.
         window = thumbs[thumbs.index("void thumbs_client_window("):]
         self.assertIn("if (owner == c && c->synced)\n"

@@ -67,6 +67,11 @@ typedef struct {
 
 /* New content (count 0 empties it): handed to the pool by the next claim. */
 void thumbs_client_set(thumbs_client *c, const char *const *urls, int count);
+/* Other URLs for the same widget (a long list's window moved, or a page
+ * was appended): the client keeps the pool if it had it, and covers that
+ * only changed position keep their texture. */
+void thumbs_client_replace(thumbs_client *c, const char *const *urls,
+                           int count);
 /* The first visible item moved: the fetch priority follows it. */
 void thumbs_client_window(thumbs_client *c, int first);
 /* Once per frame from the update of the view showing the widget: claims

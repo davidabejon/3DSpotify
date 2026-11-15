@@ -172,7 +172,8 @@ La pestaña muestra tus seis playlists reproducidas más recientemente como tese
 nombre, en dos columnas), que se cargan en segundo plano mientras se ven teselas de espera.
 Primero van las que escuchaste por última vez y después el resto de tu carpeta de playlists.
 Si la cuenta no tiene historial, la etiqueta dice **«Tus playlists»** y la carpeta conserva su
-propio orden.
+propio orden. El DJ de Spotify no aparece: es una sesión en vivo de otro servicio, sin lista
+de canciones que este cliente pueda reproducir.
 
 - Muévete entre teselas con la cruceta; bajando desde la última fila llegas a **«Mostrar
   más»**, que lista hasta 24 playlists en una rejilla con desplazamiento. **B** vuelve a las
@@ -246,8 +247,10 @@ Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su 
   **A**, o tocando). Reproducir empieza la canción con la lista de la que salió como
   cola.
 - **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares, con
-  miniaturas. **Playlist:** sus primeras 24 canciones, con miniaturas (los episodios y
-  archivos locales se omiten); la pantalla superior indica cuántas de cuántas muestra.
+  miniaturas. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
+  siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
+  «Cargando…»), hasta 500. Los episodios y archivos locales se omiten; la pantalla
+  superior indica cuántas de cuántas hay cargadas.
   **A** (o tocar la fila resaltada) reproduce desde esa canción con la
   lista como cola; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> abre el detalle de la canción.
 - **B** vuelve un nivel atrás; sin detalles abiertos, hace lo de siempre en esa

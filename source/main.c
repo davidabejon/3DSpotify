@@ -88,7 +88,10 @@ typedef struct {
 
 static search_job search;
 static Thread search_thread;
-static sp_track playback_queue[SEARCH_LIMIT];
+/* The results (SEARCH_LIMIT) or a detail's list, a playlist's loaded pages
+ * included (DETAIL_PLAYLIST_MAX, ~1 KB a track). */
+#define PLAYBACK_QUEUE_MAX DETAIL_PLAYLIST_MAX
+static sp_track playback_queue[PLAYBACK_QUEUE_MAX];
 static int playback_queue_count;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
@@ -1289,7 +1292,8 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		/* As from the results: the thumbnails wait for the preparation
 		 * (STYLES.md 9). */
 		view_results_allow_thumbs(false);
-		playback_queue_count = doc->count;
+		playback_queue_count = doc->count < PLAYBACK_QUEUE_MAX
+		                       ? doc->count : PLAYBACK_QUEUE_MAX;
 		memcpy(playback_queue, doc->tracks,
 		       (size_t)playback_queue_count * sizeof(playback_queue[0]));
 		queue_from_results = false;
@@ -1338,6 +1342,8 @@ static void detail_input(spotify_session *session, u32 down)
 {
 	detail_doc *doc = details_top(active_tab);
 	detail_action action = view_detail_update(doc, down);
+	/* A playlist near the end of what is loaded asks for its next page. */
+	details_follow(active_tab);
 	/* The track the action is about: the one shown, or the focused row,
 	 * as the view has just written it back. Opening a level copies what
 	 * it needs from this one, which stays on the stack under it. */

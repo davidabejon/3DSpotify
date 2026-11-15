@@ -88,14 +88,17 @@ static void worker_main(void *arg)
 	                       HOME_MAX_PLAYLISTS, &job.total);
 
 	/* Recent playlists outside the folder: their own header names them.
-	 * One that does not answer (deleted, private) is left out. */
+	 * One that does not answer (deleted, private) is left out, and so is a
+	 * live session: the DJ is in the history and in the folder, but the
+	 * rootlist parser already dropped it there, so it lands here as
+	 * missing and its header says what it is. */
 	for (int i = 0; i < job.count && !job.cancel_requested; ) {
 		if (!job.missing[i]) {
 			i++;
 			continue;
 		}
-		if (sp_playlist_s(sess, job.token, job.out[i].uri, 0, &job.header,
-		                  detail, sizeof(detail)) == 0) {
+		if (sp_playlist_s(sess, job.token, job.out[i].uri, 0, 0, &job.header,
+		                  detail, sizeof(detail)) == 0 && !job.header.live) {
 			snprintf(job.out[i].name, sizeof(job.out[i].name), "%s",
 			         job.header.name);
 			snprintf(job.out[i].art, sizeof(job.out[i].art), "%s",

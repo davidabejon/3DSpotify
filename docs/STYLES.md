@@ -748,7 +748,8 @@ Error:
 - Las playlists vienen del historial de reproducción de la cuenta (las más recientes
   primero), seguidas del resto de la carpeta de playlists en su orden, sin repetir; hasta
   24. Sin historial, solo la carpeta, y la etiqueta dice «Tus playlists» en lugar de
-  «Recientes».
+  «Recientes». El DJ de Spotify no aparece: es una sesión en vivo de otro servicio
+  (atributos `lexicon_*`), sin lista de pistas que este cliente pueda leer ni reproducir.
 - Rejilla de 6: etiqueta en `t_meta` · `texto_2` en 36..52; 3 filas × 2 columnas de teselas
   (§5.16) en 56..160; «Mostrar más» como botón secundario (§5.2) a todo el ancho, a `e4`
   debajo (176..208), solo si hay más de 6.
@@ -829,9 +830,11 @@ Error:
 
 - Lista de 4 filas como resultados (§7.4), con su arrastre (§6.9) e indicador (§5.11). Álbum:
   filas con número (§5.3), en orden de disco; de más de 24 pistas se muestran las 24
-  primeras. Artista: sus canciones populares, con miniatura. Playlist: sus primeras 24
-  pistas, con miniatura (cada una es de un álbum distinto); los episodios y archivos locales
-  se omiten.
+  primeras. Artista: sus canciones populares, con miniatura. Playlist: sus pistas con
+  miniatura (cada una es de un álbum distinto), por páginas de 50: la siguiente se pide sola
+  cuando la lista muestra una fila a 8 o menos de la última cargada, con la burbuja de
+  espera «Cargando...» (§5.9) mientras llega; la lista sigue respondiendo. Hasta 500 pistas.
+  Los episodios y archivos locales se omiten.
 - A, o tocar la fila en foco, reproduce desde ella con la lista como cola; X abre el detalle
   de canción. Barra: `[A] Reproducir [X] Detalle [B] Volver`.
 - Cargando: filas esqueleto y burbuja de espera «Cargando...» (§5.9). B cancela y cierra.
@@ -848,7 +851,8 @@ Error:
     año.
   - Álbum: artista / «Album - 2004» / «11 canciones» o «24 de 31 canciones» / sello.
   - Artista: «Canciones populares».
-  - Playlist: «Playlist» / «11 canciones» o «24 de 312 canciones». Sin propietario: el
+  - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
+    página). Sin propietario: el
     servicio solo da un id de usuario opaco.
   - Cargando o con error: su estado como título.
 - El texto que no cabe en la columna rueda (§5.15).
@@ -885,8 +889,11 @@ Error:
   avanza un píxel (§5.15); si todo cabe, queda quieta.
 - Los detalles de álbum, artista y playlist se cargan en un hilo por debajo del
   decodificador, con una sola sesión keep-alive para la entidad y el lote de pistas. Abrir
-  otro detalle cancela la carga en curso sin esperarla. De una playlist solo se pide el
-  rango que se muestra.
+  otro detalle cancela la carga en curso sin esperarla. De una playlist se piden páginas
+  de 50 (`from`/`length`), cada una con su lote de nombres; las pistas van en un buffer
+  propio del documento, hecho al abrirlo y liberado al reutilizarlo. La lista solo prepara
+  el texto y las miniaturas de una ventana de 24 filas alrededor de lo visible; al moverse
+  la ventana, las miniaturas que ya estaban se recolocan sin volver a descargarse.
 - Las playlists de «Inicio» se cargan una vez al entrar en las pestañas, en otro hilo por
   debajo del decodificador y con una sesión keep-alive (historial, carpeta y la cabecera de
   las recientes que no están en ella). La rejilla solo marca `dirty` por pulsación, llegada
