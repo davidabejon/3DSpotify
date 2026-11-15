@@ -1,6 +1,7 @@
 #include "draw.h"
 
 #include "icons.h"
+#include "marquee_logic.h"
 #include "player_logic.h"
 #include "spinner_logic.h"
 #include "text_fit.h"
@@ -90,6 +91,23 @@ void ui_text(const C2D_Text *text, int x, int cy, float scale, u32 color)
 {
 	int y = cy - ui_line_height(scale) / 2;
 	C2D_DrawText(text, C2D_WithColor, x, y, 0.0f, scale, scale, color);
+}
+
+void ui_text_marquee(const C2D_Text *text, int x, int cy, float scale,
+                     u32 color, int width, int offset, int screen_w)
+{
+	int text_w = ui_px_ceil(ui_text_width(text, scale));
+	/* The scissor works on the framebuffer, which is the screen turned
+	 * 90 degrees: its x runs down the screen's height, from the bottom,
+	 * and its y along the width, from the right. Whatever is batched so
+	 * far goes out first, unclipped. */
+	C2D_Flush();
+	C3D_SetScissor(GPU_SCISSOR_NORMAL, 0, screen_w - (x + width), SCREEN_H,
+	               screen_w - x);
+	ui_text(text, x - offset, cy, scale, color);
+	ui_text(text, x - offset + marquee_span(text_w), cy, scale, color);
+	C2D_Flush();
+	C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 0, 0);
 }
 
 void ui_text_centered(const C2D_Text *text, int cx, int cy, float scale,

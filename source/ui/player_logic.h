@@ -4,14 +4,20 @@
  *
  * Bottom screen, 320 x 240:
  *   tabs       0..32   the tab bar (tabs_logic.h)
- *   title     44..62   the track, "3/24" on the right
- *   artist    66..81
- *   controls 100..148  previous 40x40, play/pause 48x48, next 40x40,
+ *   track     36..68   link zone: the title, "3/24" on the right
+ *   artist    72..104  link zone, x 8..158  } 150 px each,
+ *   album     72..104  link zone, x 162..312} SP_1 apart
+ *   controls 108..156  previous 40x40, play/pause 48x48, next 40x40,
  *                      centred, SP_4 apart
- *   times    155..169  elapsed on the left, duration on the right
- *   progress 172..180  progress bar, its handle 169..183
- *   volume   193..199  "Vol." and the volume bar
- *   hints    216..240  button bar */
+ *   times    163..177  elapsed on the left, duration on the right
+ *   progress 180..188  progress bar, its handle 177..191
+ *   volume   201..207  "Vol." and the volume bar
+ *   hints    216..240  button bar
+ *
+ * The links (docs/plan_vistas_detalle.md 4.4) are touch only, TOUCH_MIN
+ * high (STYLES.md 4.4): they open the track's, the artist's or the album's
+ * detail. At rest only their text shows; there is no focus state, since the
+ * D-pad already skips tracks and sets the volume. */
 #ifndef PLAYER_LOGIC_H
 #define PLAYER_LOGIC_H
 
@@ -52,9 +58,50 @@ typedef enum {
 	PLAYER_CONTROL_COUNT
 } player_control;
 
-/* Where the track's text starts and the top of the controls. */
-#define PLAYER_TEXT_TOP (TAB_H + SP_3)
-#define PLAYER_CONTROLS_TOP 100
+/* The top of the controls, under the links. */
+#define PLAYER_CONTROLS_TOP 108
+
+typedef enum {
+	PLAYER_LINK_NONE = -1,
+	PLAYER_LINK_TRACK,
+	PLAYER_LINK_ARTIST,
+	PLAYER_LINK_ALBUM,
+	PLAYER_LINK_COUNT
+} player_link;
+
+/* The links show a track: while it loads, plays and once finished, the
+ * phases that draw its text. Idle and failed have none. */
+static inline bool player_links_enabled(player_phase phase)
+{
+	return phase == PLAYER_PHASE_LOADING || phase == PLAYER_PHASE_PLAYING ||
+	       phase == PLAYER_PHASE_FINISHED;
+}
+
+static inline ui_rect player_link_rect(int link)
+{
+	int top = TAB_H + SP_1;
+	int width = SCREEN_BOTTOM_W - 2 * SP_2;
+	int half = (width - SP_1) / 2;
+	int second = top + TOUCH_MIN + SP_1;
+	switch (link) {
+	case PLAYER_LINK_ARTIST:
+		return (ui_rect){ SP_2, second, half, TOUCH_MIN };
+	case PLAYER_LINK_ALBUM:
+		return (ui_rect){ SP_2 + half + SP_1, second, half, TOUCH_MIN };
+	default:
+		return (ui_rect){ SP_2, top, width, TOUCH_MIN };
+	}
+}
+
+/* The link under (x, y) among the `enabled` ones, or PLAYER_LINK_NONE. */
+static inline player_link player_link_hit(int x, int y,
+                                          const bool enabled[PLAYER_LINK_COUNT])
+{
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		if (enabled[i] && ui_rect_contains(player_link_rect(i), x, y))
+			return (player_link)i;
+	return PLAYER_LINK_NONE;
+}
 
 static inline ui_rect player_control_rect(int control)
 {

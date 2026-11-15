@@ -1,0 +1,212 @@
+#include "top_detail.h"
+
+#include "draw.h"
+#include "lang.h"
+#include "list_logic.h"
+#include "marquee_logic.h"
+#include "now_layout.h"
+#include "theme.h"
+#include "top_now.h"
+
+#include <3ds.h>
+#include <citro2d.h>
+
+#include <stdio.h>
+#include <string.h>
+
+#define TEXT_GLYPHS    ((1 + NOW_LINES) * UI_FIELD_SIZE)
+
+static C2D_TextBuf text_buf;
+/* The title, then up to NOW_LINES lines under it. */
+static C2D_Text texts[1 + NOW_LINES];
+static int text_w[1 + NOW_LINES];
+static int line_count;
+/* When the texts were parsed, the start of every marquee; and how far
+ * each one had rolled when drawn. */
+static u64 parsed_ms;
+static int drawn_rolls[1 + NOW_LINES];
+
+/* What was parsed: the document as it was, in this language. */
+static const detail_doc *parsed_doc;
+static unsigned parsed_serial;
+static detail_state parsed_state;
+static lang_id parsed_lang = LANG_COUNT;
+static bool drawn_valid;
+
+bool top_detail_init(void)
+{
+	text_buf = C2D_TextBufNew(TEXT_GLYPHS);
+	if (!text_buf) {
+		top_detail_exit();
+		return false;
+	}
+	return true;
+}
+
+void top_detail_exit(void)
+{
+	if (text_buf)
+		C2D_TextBufDelete(text_buf);
+	text_buf = NULL;
+	parsed_doc = NULL;
+	parsed_lang = LANG_COUNT;
+	drawn_valid = false;
+}
+
+void top_detail_invalidate(void)
+{
+	drawn_valid = false;
+}
+
+/* --- Text -------------------------------------------------------------- */
+
+/* The whole string: one too wide for the column rolls (marquee_logic.h)
+ * instead of being cut. */
+static void set_text(C2D_Text *text, const char *string, float scale)
+{
+	C2D_TextParse(text, text_buf, string);
+	C2D_TextOptimize(text);
+	text_w[text - texts] = ui_px_ceil(ui_text_width(text, scale));
+}
+
+/* Adds a line under the title; empty strings take no line. */
+static void add_line(const char *string)
+{
+	if (!string || !string[0] || line_count >= NOW_LINES)
+		return;
+	set_text(&texts[1 + line_count++], string, TXT_CUERPO);
+}
+
+/* "3:42 - track 2 - disc 2": the disc only when there is more than one. */
+static void track_meta(const sp_track *t, char *out, size_t len)
+{
+	list_format_duration(t->duration_ms, out, len);
+	char part[32];
+	if (t->track_number > 0) {
+		snprintf(part, sizeof(part), tr(STR_DETAIL_TRACK_NUMBER_FMT),
+		         t->track_number);
+		snprintf(out + strlen(out), len - strlen(out), " - %s", part);
+	}
+	if (t->disc_number > 1) {
+		snprintf(part, sizeof(part), tr(STR_DETAIL_DISC_FMT),
+		         t->disc_number);
+		snprintf(out + strlen(out), len - strlen(out), " - %s", part);
+	}
+}
+
+static const char *album_type(int type)
+{
+	switch (type) {
+	case SP_ALBUM_ALBUM:       return tr(STR_ALBUM_TYPE_ALBUM);
+	case SP_ALBUM_SINGLE:      return tr(STR_ALBUM_TYPE_SINGLE);
+	case SP_ALBUM_COMPILATION: return tr(STR_ALBUM_TYPE_COMPILATION);
+	case SP_ALBUM_EP:          return tr(STR_ALBUM_TYPE_EP);
+	default:                   return "";
+	}
+}
+
+static void parse_track(const sp_track *t)
+{
+	set_text(&texts[0], t->name[0] ? t->name : tr(STR_UNTITLED), TXT_TITULO);
+	add_line(t->artist[0] ? t->artist : tr(STR_UNKNOWN_ARTIST));
+	add_line(t->album[0] ? t->album : tr(STR_UNKNOWN_ALBUM));
+	char line[64];
+	track_meta(t, line, sizeof(line));
+	add_line(line);
+	if (t->year > 0) {
+		snprintf(line, sizeof(line), "%d", t->year);
+		add_line(line);
+	}
+}
+
+static void parse_album(const detail_doc *d)
+{
+	set_text(&texts[0], d->title, TXT_TITULO);
+	add_line(d->subtitle);
+	/* "Album - 2004", or whichever half is known. */
+	char line[64];
+	const char *type = album_type(d->album_type);
+	if (type[0] && d->year > 0)
+		snprintf(line, sizeof(line), "%s - %d", type, d->year);
+	else if (d->year > 0)
+		snprintf(line, sizeof(line), "%d", d->year);
+	else
+		snprintf(line, sizeof(line), "%s", type);
+	add_line(line);
+	/* Past DETAIL_MAX_TRACKS, how many of how many the list shows. */
+	if (d->total_tracks > d->count)
+		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_CUT_FMT), d->count,
+		         d->total_tracks);
+	else if (d->count == 1)
+		snprintf(line, sizeof(line), "%s", tr(STR_ALBUM_TRACK_ONE));
+	else
+		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_FMT), d->count);
+	add_line(line);
+	add_line(d->label);
+}
+
+static void parse(const detail_doc *d)
+{
+	C2D_TextBufClear(text_buf);
+	line_count = 0;
+	if (d->kind == DETAIL_TRACK) {
+		parse_track(&d->tracks[d->selected]);
+	} else if (d->state == DETAIL_LOADING) {
+		/* Nothing known yet but what it is about to be. */
+		set_text(&texts[0], tr(STR_DETAIL_LOADING), TXT_TITULO);
+	} else if (d->state == DETAIL_FAILED) {
+		set_text(&texts[0], tr(STR_DETAIL_FAILED_TITLE), TXT_TITULO);
+	} else if (d->kind == DETAIL_ALBUM) {
+		parse_album(d);
+	} else {
+		set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNKNOWN_ARTIST),
+		    TXT_TITULO);
+		add_line(tr(STR_ARTIST_TOP_TRACKS));
+	}
+}
+
+static bool changed(const detail_doc *d)
+{
+	return d != parsed_doc || d->serial != parsed_serial ||
+	       d->state != parsed_state || parsed_lang != lang_get();
+}
+
+/* --- State and drawing ------------------------------------------------- */
+
+/* How far every text has rolled by now: -1 for one that fits. */
+static void current_rolls(int *rolls)
+{
+	unsigned ms = (unsigned)(osGetTime() - parsed_ms);
+	for (int i = 0; i < 1 + line_count; i++)
+		rolls[i] = marquee_rolls(text_w[i], now_text_w())
+		               ? marquee_offset(ms, text_w[i], now_text_w())
+		               : -1;
+}
+
+bool top_detail_dirty(const detail_doc *doc, const artwork_state *art)
+{
+	if (!drawn_valid || changed(doc) || artwork_dirty(art))
+		return true;
+	int rolls[1 + NOW_LINES];
+	current_rolls(rolls);
+	return memcmp(rolls, drawn_rolls, (1 + line_count) * sizeof(int)) != 0;
+}
+
+void top_detail_draw(const detail_doc *doc, artwork_state *art)
+{
+	if (changed(doc)) {
+		parse(doc);
+		parsed_doc = doc;
+		parsed_serial = doc->serial;
+		parsed_state = doc->state;
+		parsed_lang = lang_get();
+		parsed_ms = osGetTime();
+	}
+	const C2D_Text *lines[NOW_LINES];
+	for (int i = 0; i < line_count; i++)
+		lines[i] = &texts[1 + i];
+	current_rolls(drawn_rolls);
+	top_now_draw_header(art, true, &texts[0], lines, line_count,
+	                    drawn_rolls);
+	drawn_valid = true;
+}

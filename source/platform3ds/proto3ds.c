@@ -160,6 +160,15 @@ bool pb_has(const uint8_t *buf, size_t len, uint32_t field)
 	       scan(buf, len, field, 0, NULL, &n);
 }
 
+bool pb_next_bytes(const pbv *msg, uint32_t field, size_t *at, pbv *out)
+{
+	if (*at >= msg->len ||
+	    !pb_get_bytes(msg->p + *at, msg->len - *at, field, out))
+		return false;
+	*at = (size_t)(out->p + out->len - msg->p);
+	return true;
+}
+
 bool pb_dig(const uint8_t *buf, size_t len, const uint32_t *fields, size_t depth,
             pbv *out)
 {

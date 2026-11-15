@@ -11,8 +11,8 @@
  * Input follows STYLES.md 6: pressed states for at least ANIM_PRESS_MIN
  * frames, touch acts on lifting the stylus (tapping a row focuses it,
  * tapping the focused row plays it), dragging scrolls the list (6.9) next
- * to a scroll indicator against the right edge (5.11), A/B/Y invert their
- * glyph, and the
+ * to a scroll indicator against the right edge (5.11), A/B/X/Y invert
+ * their glyph, and the
  * actions that leave the view are returned once the pressed state has been
  * seen. Text is parsed when the content, the scroll position or the
  * language changes, never per frame. Main thread only. */
@@ -30,6 +30,9 @@ typedef enum {
 	RESULTS_ACTION_NONE,
 	/* A or a tap on the focused row: play view_results_selected(). */
 	RESULTS_ACTION_OPEN,
+	/* X: the detail of view_results_selected(). Playing stays with A,
+	 * with no screen in between (STYLES.md 7.4). */
+	RESULTS_ACTION_DETAIL,
 	/* B: back to the Home tab. */
 	RESULTS_ACTION_BACK,
 	/* Y, or the idle and empty states' button: ask for another query. */

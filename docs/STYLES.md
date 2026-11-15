@@ -116,7 +116,9 @@ Fuente del sistema (`C2D_FontLoadSystem` o fuente por defecto de citro2d) para t
 ### 3.3 Reglas
 
 - No usar escalas por debajo de `t_meta`.
-- Una línea por dato. Recortar con `...` midiendo con `C2D_TextGetDimensions`.
+- Una línea por dato. Recortar con `...` midiendo con `C2D_TextGetDimensions`. Única
+  excepción: la ficha de detalle de la pantalla superior (§7.12), donde el texto que no cabe
+  rueda (§5.15) en vez de recortarse.
 - Mayúscula solo al inicio de frase.
 - Alinear a la izquierda en listas y metadatos; centrar solo en pantallas de un único mensaje.
 - Coordenadas de texto en píxeles enteros.
@@ -217,6 +219,11 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
   el icono de nota (16 px) centrado en `texto_2`. El layout de la fila no cambia cuando llega
   la imagen.
 - La miniatura aparece sin transición.
+- Variante con número (detalle de álbum, §7.11): todas las pistas comparten portada, así que
+  en lugar de la miniatura el cuadrado 33×33 `capa_alta` lleva la posición en la lista
+  (1, 2, 3…, continua entre discos) en `t_meta` · `texto_2`, centrada. También en la fila en
+  foco: el cuadrado sigue siendo `capa_alta` y `tinta` sobre él apenas se leería. Sin
+  descarga de miniaturas.
 
 ### 5.4 Barra de progreso
 
@@ -352,6 +359,35 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Solo lleva la URL de verificación con el código de usuario, nunca el código de dispositivo,
   que es secreto.
 
+### 5.14 Enlace
+
+Texto que abre otra pantalla al tocarlo (título, artista y álbum en «Reproducción», §7.5). Un
+enlace no es un botón:
+
+- Zona táctil de 32 px de alto (§4.4) alrededor del texto, que se dibuja en su sitio de
+  siempre y con su estilo de siempre.
+- Reposo: solo el texto, sin panel, contorno ni relieve.
+- Pulsado (§6.3): el texto pasa a `lima` con un subrayado `lima` de 2 px (`BEVEL_W`) bajo
+  él. Sin panel, sin desplazamiento. `lima` es el único acento con contraste ≥ 4.5:1 sobre
+  los dos tonos del fondo (4.78 y 5.96; `clorofila` da 3.74).
+- Sin estado de foco: solo táctil. Se activa al levantar el lápiz dentro (§6.4).
+- Deshabilitado (sin destino, por ejemplo una pista sin URI de álbum): no responde y no
+  cambia de aspecto.
+
+### 5.15 Texto que rueda
+
+Para un dato que no cabe en su línea y que no se ve entero en ningún otro sitio: solo la
+ficha de detalle de la pantalla superior (§7.12).
+
+- Empieza quieto en su sitio durante 1,5 s (`MARQUEE_PAUSE_MS`).
+- Después se desplaza a la izquierda a 30 px/s (`MARQUEE_SPEED`), seguido de una copia del
+  mismo texto 48 px (`MARQUEE_GAP`, 2·`e6`) por detrás. Cuando la copia llega a donde
+  empezaba el original, vuelve a esperar: el salto no se ve.
+- Recortado a su columna con el scissor de la GPU: no pisa la carátula ni el margen.
+- Cada línea rueda por su cuenta; las que caben no se mueven. Vuelve a empezar al cambiar
+  de documento.
+- Lógica pura en `marquee_logic.h`.
+
 ---
 
 ## 6. Estados e interacción
@@ -401,6 +437,8 @@ Duración:
   duración.
 - El glifo de ese botón en la barra de botones se invierte durante el mismo tiempo: relleno
   `tinta`, letra en el color del botón, desplazado 1 px abajo.
+- X abre el detalle de la canción en foco en las listas (resultados, álbum y artista, §7.4
+  y §7.11). No tiene control en pantalla: solo se invierte su glifo en la barra de botones.
 - Si la acción no tiene control en pantalla (SELECT idioma, START salir, cambio de volumen
   fuera del reproductor), mostrar una burbuja (§5.9) con el resultado: «English», «Volumen 60 %».
   En Ajustes, SELECT tiene control en pantalla: el botón de idioma muestra el estado pulsado.
@@ -418,9 +456,9 @@ Duración:
   enteras: con botones siempre se ven 4 filas completas.
 - En la lista de resultados, izquierda/derecha saltan 4 filas. L/R son de la barra de
   pestañas.
-- Si además la fila en foco quedó cortada o fuera de la vista, esa primera pulsación (cruceta
-  o A) solo devuelve la lista a ella: no mueve el foco ni reproduce. A muestra igualmente
-  su glifo pulsado (§6.5).
+- Si además la fila en foco quedó cortada o fuera de la vista, esa primera pulsación (cruceta,
+  A o X) solo devuelve la lista a ella: no mueve el foco, ni reproduce, ni abre el detalle.
+  A y X muestran igualmente su glifo pulsado (§6.5).
 
 ### 6.7 Volumen
 
@@ -566,7 +604,7 @@ Error:
  │ │ Álbum                      │ │        │└───────────────────────┘░│ × 41 px
  │ │ 3:42                       │ │        │ ...                     ░│
  │ └────────────────────────────┘ │        │──────────────────────────│
- └────────────────────────────────┘        │ [A] Reprod. [Y] Buscar [B]│ 24 px
+ └────────────────────────────────┘        │ [A] Reprod. [X] Detalle [Y]│ 24 px
                                            └──────────────────────────┘
 ```
 
@@ -586,11 +624,14 @@ Error:
 - A, o tocar la fila en foco, pasa a la pestaña «Reproducción» con esa canción y el resto de
   resultados como cola. No hay pantalla intermedia de canción seleccionada. Mientras suena esa
   cola, la fila en foco sigue a la pista que suena.
+- X abre el detalle de la canción en foco (§7.10): es un camino adicional, A sigue sin
+  pantalla intermedia. Barra de botones: `[A] Reproducir [X] Detalle [Y] Buscar [B] Volver`.
+- Lanzar una búsqueda nueva cierra los detalles abiertos en «Búsqueda».
 - La búsqueda corre en segundo plano: se puede cambiar de pestaña mientras tanto. B la
   cancela desde su pestaña y vuelve a «Inicio».
 - B vuelve a «Inicio».
-- Superior: detalle de la fila en foco en panel `capa`, una línea por dato (título, artista,
-  álbum, duración).
+- Superior: lo mismo que en cualquier pestaña (el logotipo, o la ficha de lo que suena); con un
+  detalle abierto, su ficha (§7.12).
 - El teclado (`swkbd`) se deja con el aspecto del sistema.
 
 ### 7.5 Reproductor
@@ -598,14 +639,14 @@ Error:
 ```
  SUPERIOR                                  INFERIOR
  ┌────────────────────────────────┐        ┌──────────────────────────┐
- │ ┌──────────┐                   │        │ [⌂] [⌕] [▓▮▮▮▓] [⚙]      │ 32 px
- │ │          │  Título canción   │        │ Título canción   3 de 24 │
- │ │ carátula │  Artista          │        │ Artista                  │
- │ │ 160×160  │  Álbum            │        │   [◀◀]   [ ▶ ]   [▶▶]    │
- │ │          │                   │        │ 1:24               3:42  │
- │ └──────────┘                   │        │ ███████▌░░░░░░░░░░░░░░░░ │
- │                                │        │ Volumen █████░░░         │
- └────────────────────────────────┘        │ [A] Pausa  [B] Volver    │
+ │ ┌──────────┐                   │        │ [⌂] [⌕] [▓▮▮▮▓] [⚙]      │ 0..32
+ │ │          │  Título canción   │        │ Título canción   3 de 24 │ 36..68   enlace
+ │ │ carátula │  Artista          │        │ Artista     │ Álbum      │ 72..104  2 enlaces
+ │ │ 160×160  │  Álbum            │        │   [◀◀]   [ ▶ ]   [▶▶]    │ 108..156
+ │ │          │                   │        │ 1:24               3:42  │ 163..177
+ │ └──────────┘                   │        │ ███████▌░░░░░░░░░░░░░░░░ │ 180..188
+ │                                │        │ Volumen █████░░░         │ 201..207
+ └────────────────────────────────┘        │ [A] Pausa  [B] Volver    │ 216..240
                                            └──────────────────────────┘
 ```
 
@@ -615,10 +656,19 @@ Error:
   El resto del layout no se mueve al llegar la imagen.
 - Metadatos a la derecha de la carátula: título `t_titulo` · `texto`, artista y álbum
   `t_cuerpo` · `texto_2`.
+- Superior: esta ficha (carátula 160×160, título, artista, álbum, tiempos y barra de
+  progreso) en las demás pestañas; en «Reproducción», solo la carátula grande de 216×216
+  centrada, a `e3` arriba y abajo.
 - Inferior, bajo la barra de pestañas: título `t_cabeza` · `texto` con la posición en la cola
-  («3 de 24») en `t_meta` · `texto_2` a la derecha, artista `t_cuerpo` · `texto_2`; botón
-  central primario 48×48 y anterior y siguiente secundarios 40×40, centrados a 16 px; tiempo
-  transcurrido y duración en `t_meta` · `texto_2`; barras de progreso y volumen debajo.
+  («3 de 24») en `t_meta` · `texto_2` a la derecha; debajo, artista y álbum en `t_cuerpo` ·
+  `texto_2`, cada uno en su mitad (150 px, separadas 4 px) y recortado a ella; botón central
+  primario 48×48 y anterior y siguiente secundarios 40×40, centrados a 16 px; tiempo
+  transcurrido y duración en `t_meta` · `texto_2`; barras de progreso y volumen debajo. La
+  tabla de píxeles está en `player_logic.h`.
+- Título, artista y álbum son enlaces (§5.14) de 32 px: abren el detalle de la canción
+  (§7.10, con la cola como lista), del artista o del álbum (§7.11) en la pila de
+  «Reproducción». Solo mientras la pista carga, suena o ha terminado; sin URI de artista o de
+  álbum, ese enlace no responde. «3 de 24» no forma parte del enlace.
 - Los iconos de los controles son de 16 px mientras no exista el juego de 24 px (§5.10).
 - Anterior y siguiente se deshabilitan (§6.1) en los extremos de la cola.
 - Mientras carga (carátula, clave de audio, conexión): indicador de carga (§5.7) y el paso
@@ -627,7 +677,8 @@ Error:
   progreso queda llena y «Pista terminada» sustituye a los tiempos.
 - Error: aviso de error (§5.8) con el detalle; A reintenta.
 - Sin nada en reproducción: mensaje centrado «Todavía no suena nada».
-- El audio sigue sonando en cualquier pestaña. B vuelve a «Búsqueda» sin cortarlo.
+- El audio sigue sonando en cualquier pestaña. B vuelve a «Búsqueda» sin cortarlo; con un
+  detalle abierto, B lo cierra primero.
 - El teclado (`swkbd`) bloquea el hilo principal: la pista se pausa mientras está abierto y
   sigue al cerrarlo.
 
@@ -664,13 +715,73 @@ Error:
 - Superior: título «Ajustes» arriba a la izquierda y el nombre de la app centrado.
 - B vuelve a «Inicio».
 
+### 7.9 Detalles: navegación común
+
+- «Búsqueda» y «Reproducción» tienen cada una su pila de detalles. Mientras la de la pestaña
+  activa no está vacía, la pantalla inferior la dibuja el detalle de arriba en lugar de la
+  vista de la pestaña, con la barra de pestañas encima y la misma pestaña activa; la
+  superior muestra su ficha (§7.12).
+- B cierra un nivel; con la pila vacía, B hace lo de siempre en esa pestaña.
+- L/R cambian de pestaña sin tocar las pilas: al volver, cada una está donde se dejó, con el
+  foco y el desplazamiento de su lista.
+- Seis niveles como máximo por pestaña; al abrir uno más se descarta el más antiguo.
+- Reproducir desde un detalle pasa a «Reproducción» y cierra los detalles de esa pestaña para
+  que muestre el reproductor. Si la canción ya está sonando, solo cambia de pestaña.
+
+### 7.10 Detalle de canción
+
+```
+ INFERIOR
+ ┌──────────────────────────┐
+ │ [⌂] [▓⌕▓] [▮▮▮] [⚙]      │ 32 px
+ │                          │
+ │ [▶  Reproducir         ] │ 48..80   primario
+ │ [   Artista: Nombre    ] │ 96..128  secundario
+ │ [   Album: Nombre      ] │ 144..176 secundario
+ │──────────────────────────│
+ │ [A] Elegir  [B] Volver   │
+ └──────────────────────────┘
+```
+
+- Misma geometría que Ajustes (§7.8). El foco empieza en «Reproducir».
+- «Reproducir» reproduce la canción con la lista de la que salió como cola.
+- «Artista» y «Álbum» abren su detalle en la misma pestaña; se deshabilitan (§6.1) si la
+  pista no trae ese URI. El nombre se recorta con `...`: completo en la ficha de arriba.
+- No necesita red: los datos ya están en memoria.
+
+### 7.11 Detalle de álbum y de artista
+
+- Lista de 4 filas como resultados (§7.4), con su arrastre (§6.9) e indicador (§5.11). Álbum:
+  filas con número (§5.3), en orden de disco; de más de 24 pistas se muestran las 24
+  primeras. Artista: sus canciones populares, con miniatura.
+- A, o tocar la fila en foco, reproduce desde ella con la lista como cola; X abre el detalle
+  de canción. Barra: `[A] Reproducir [X] Detalle [B] Volver`.
+- Cargando: filas esqueleto y burbuja de espera «Cargando...» (§5.9). B cancela y cierra.
+- Error: aviso (§5.8) con el detalle y botón primario «Reintentar»; A reintenta.
+- Sin pistas: mensaje centrado «No hay canciones».
+
+### 7.12 Ficha de detalle (pantalla superior)
+
+- Carátula, portada o retrato a 160×160 con contorno y sombra dura de 3 px, como la ficha de
+  §7.5, pero sin tiempos ni barra: la carátula va centrada en la altura (y 40) y el bloque de
+  textos, centrado junto a ella.
+- Título en `t_titulo` · `texto` y hasta 4 líneas en `t_cuerpo` · `texto_2`:
+  - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
+    año.
+  - Álbum: artista / «Album - 2004» / «11 canciones» o «24 de 31 canciones» / sello.
+  - Artista: «Canciones populares».
+  - Cargando o con error: su estado como título.
+- El texto que no cabe en la columna rueda (§5.15).
+- La imagen es la del detalle, nunca la de la pista que suena.
+
 ---
 
 ## 8. Movimiento
 
 - Duraciones en frames a 60 Hz. Máximo 8 frames.
 - Cambios de estado en un solo frame, sin interpolación ni fundidos.
-- Ninguna animación en bucle fuera de los indicadores de carga.
+- Ninguna animación en bucle fuera de los indicadores de carga y del texto que rueda de la
+  ficha de detalle (§5.15).
 
 ---
 
@@ -689,6 +800,12 @@ Error:
   - llegada de la carátula,
   - aparición y retirada de la burbuja.
 - No dibujar indicadores de carga, marquesinas ni animaciones en bucle en el reproductor.
+- Las vistas de detalle solo marcan `dirty` por pulsación, llegada de datos, imagen o
+  miniaturas, y cambio de idioma. La ficha de arriba, además, cada vez que un texto que rueda
+  avanza un píxel (§5.15); si todo cabe, queda quieta.
+- Los detalles de álbum y artista se cargan en un hilo por debajo del decodificador, con una
+  sola sesión keep-alive para la entidad y el lote de pistas. Abrir otro detalle cancela la
+  carga en curso sin esperarla.
 - Con el audio sonando en otra pestaña, el reproductor no marca `dirty`: solo cuentan la
   pestaña visible y la barra de pestañas. Cambiar de pestaña redibuja las dos pantallas una
   vez.

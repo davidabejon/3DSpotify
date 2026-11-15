@@ -1,11 +1,15 @@
 #include "art_url.h"
+#include "detail_logic.h"
+#include "detail_nav.h"
 #include "home_logic.h"
 #include "http_logic.h"
 #include "image_util.h"
 #include "lang.h"
 #include "layout.h"
 #include "list_logic.h"
+#include "marquee_logic.h"
 #include "login_logic.h"
+#include "meta_parse.h"
 #include "now_layout.h"
 #include "player_logic.h"
 #include "qrcodegen.h"
@@ -13,6 +17,7 @@
 #include "press_logic.h"
 #include "search_path.h"
 #include "spinner_logic.h"
+#include "spotify_id.h"
 #include "settings_logic.h"
 #include "tabs_logic.h"
 #include "text_fit.h"
@@ -23,6 +28,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static void test_search_path_encoding(void)
@@ -40,6 +46,531 @@ static void test_search_path_encoding(void)
 	              "/context-resolve/v1/spotify:search:canci%C3%B3n") == 0);
 	assert(!sp_search_path("", path, sizeof(path)));
 	assert(!sp_search_path("test", path, 4));
+}
+
+static void test_spotify_id(void)
+{
+	/* Real pairs, from probe_meta's log of Mr. Brightside. */
+	static const struct { const char *id, *hex; } VEC[] = {
+		{ "3n3Ppam7vgaVa1iaRUc9Lp", "6ecac90c03f74dcba9e21b408e14719f" },
+		{ "4OHNH3sDzIxnmUADXzv2kT", "9e4c9dd5f8d641e0aaff6b2a560b45af" },
+		{ "0C0XlULifJtAgn6ZNCW2eu", "142571008feb40c881095ffe591b793a" },
+		{ "0000000000000000000000", "00000000000000000000000000000000" },
+		{ "7N42dgm5tFLK9N8MT7fHC7", "ffffffffffffffffffffffffffffffff" },
+	};
+	for (size_t i = 0; i < sizeof(VEC) / sizeof(VEC[0]); i++) {
+		uint8_t gid[16];
+		char hex[33], id[SP_ID_LEN + 1];
+		assert(sp_gid_from_id(VEC[i].id, gid));
+		for (int j = 0; j < 16; j++)
+			snprintf(hex + j * 2, 3, "%02x", gid[j]);
+		assert(strcmp(hex, VEC[i].hex) == 0);
+		sp_id_from_gid(gid, id);
+		assert(strcmp(id, VEC[i].id) == 0);
+	}
+
+	/* Every byte pattern survives the round trip. */
+	uint8_t gid[16], back[16];
+	char id[SP_ID_LEN + 1];
+	for (int seed = 0; seed < 256; seed++) {
+		for (int j = 0; j < 16; j++)
+			gid[j] = (uint8_t)(seed * 31 + j * 97 + (seed ^ j));
+		sp_id_from_gid(gid, id);
+		assert(strlen(id) == SP_ID_LEN);
+		assert(sp_gid_from_id(id, back));
+		assert(memcmp(gid, back, 16) == 0);
+	}
+
+	/* Wrong length, a character outside base62, more than 128 bits. */
+	assert(!sp_gid_from_id(NULL, back));
+	assert(!sp_gid_from_id("", back));
+	assert(!sp_gid_from_id("3n3Ppam7vgaVa1iaRUc9L", back));
+	assert(!sp_gid_from_id("3n3Ppam7vgaVa1iaRUc9Lpp", back));
+	assert(!sp_gid_from_id("3n3Ppam7vgaVa1iaRUc9L-", back));
+	assert(!sp_gid_from_id("7N42dgm5tFLK9N8MT7fHC8", back));   /* 2^128 */
+	assert(!sp_gid_from_id("zzzzzzzzzzzzzzzzzzzzzz", back));
+	for (int j = 0; j < 16; j++)
+		assert(back[j] == 0);
+
+	char uri[SP_URI_MAX];
+	assert(sp_gid_from_id("4OHNH3sDzIxnmUADXzv2kT", gid));
+	assert(sp_uri_from_gid(SP_KIND_ALBUM, gid, uri, sizeof(uri)));
+	assert(strcmp(uri, "spotify:album:4OHNH3sDzIxnmUADXzv2kT") == 0);
+	assert(sp_uri_from_gid(SP_KIND_TRACK, gid, uri, sizeof(uri)));
+	assert(strcmp(uri, "spotify:track:4OHNH3sDzIxnmUADXzv2kT") == 0);
+	/* The longest kind fits SP_URI_MAX with room to spare... */
+	assert(sp_uri_from_gid(SP_KIND_ARTIST, gid, uri, sizeof(uri)));
+	assert(strlen(uri) == 37);
+	/* ...and a short buffer is refused, not truncated. */
+	assert(!sp_uri_from_gid(SP_KIND_ARTIST, gid, uri, 37));
+	assert(uri[0] == '\0');
+	assert(!sp_uri_from_gid((sp_kind)7, gid, uri, sizeof(uri)));
+}
+
+/* sint32 fields go on the wire zigzag-encoded. */
+static uint64_t zz(int64_t v)
+{
+	return ((uint64_t)v << 1) ^ (uint64_t)(v >> 63);
+}
+
+/* Distinct for every seed below 256. */
+static void fake_gid(uint8_t gid[16], int seed)
+{
+	for (int j = 0; j < 16; j++)
+		gid[j] = (uint8_t)(seed + j * 7);
+}
+
+static void add_gid(pb *b, uint32_t field, int seed)
+{
+	uint8_t gid[16];
+	fake_gid(gid, seed);
+	pb_bytes(b, field, gid, 16);
+}
+
+static void expect_uri(const char *uri, sp_kind kind, int seed)
+{
+	uint8_t gid[16];
+	char want[SP_URI_MAX];
+	fake_gid(gid, seed);
+	assert(sp_uri_from_gid(kind, gid, want, sizeof(want)));
+	assert(strcmp(uri, want) == 0);
+}
+
+/* An Image { file_id, size }, appended to `msg` under `field`. */
+static void add_image(pb *msg, uint32_t field, uint8_t fill, int size)
+{
+	uint8_t store[48], fid[20];
+	pb img;
+	memset(fid, fill, sizeof(fid));
+	pb_init(&img, store, sizeof(store));
+	pb_bytes(&img, 1, fid, sizeof(fid));
+	pb_varint(&img, 2, (uint64_t)size);
+	pb_sub(msg, field, &img);
+}
+
+/* A message holding only a gid: how Disc and TopTracks list their tracks. */
+static void add_gid_only(pb *msg, uint32_t field, int seed)
+{
+	uint8_t store[24];
+	pb tr;
+	pb_init(&tr, store, sizeof(store));
+	add_gid(&tr, 1, seed);
+	pb_sub(msg, field, &tr);
+}
+
+static void test_meta_parse_track(void)
+{
+	static uint8_t date_s[16], group_s[128], album_s[512], art1_s[64],
+	               art2_s[64], file_s[2][48], track_s[1024];
+	pb date, group, album, art1, art2, file[2], track;
+
+	pb_init(&date, date_s, sizeof(date_s));
+	pb_varint(&date, 1, zz(2004));
+	pb_varint(&date, 2, zz(6));
+	pb_init(&group, group_s, sizeof(group_s));
+	add_image(&group, 1, 0xab, 1);
+	add_image(&group, 1, 0xcd, 2);
+	pb_init(&album, album_s, sizeof(album_s));
+	add_gid(&album, 1, 2);
+	pb_str(&album, 2, "Hot Fuss");
+	pb_varint(&album, 4, 1);
+	pb_str(&album, 5, "EMI");
+	pb_sub(&album, 6, &date);
+	pb_sub(&album, 17, &group);
+	pb_init(&art1, art1_s, sizeof(art1_s));
+	add_gid(&art1, 1, 3);
+	pb_str(&art1, 2, "The Killers");
+	pb_init(&art2, art2_s, sizeof(art2_s));
+	add_gid(&art2, 1, 4);
+	pb_str(&art2, 2, "Someone Else");
+
+	pb_init(&track, track_s, sizeof(track_s));
+	add_gid(&track, 1, 1);
+	pb_str(&track, 2, "Mr. Brightside");
+	pb_sub(&track, 3, &album);
+	pb_sub(&track, 4, &art1);
+	pb_sub(&track, 4, &art2);
+	pb_varint(&track, 5, zz(2));
+	pb_varint(&track, 6, zz(1));
+	pb_varint(&track, 7, zz(222200));
+	for (int i = 0; i < 2; i++) {
+		uint8_t fid[20];
+		memset(fid, 0x10 + i, sizeof(fid));
+		pb_init(&file[i], file_s[i], sizeof(file_s[i]));
+		pb_bytes(&file[i], 1, fid, sizeof(fid));
+		pb_varint(&file[i], 2,
+		          (uint64_t)(i == 0 ? SP_FMT_OGG_320 : SP_FMT_OGG_160));
+		pb_sub(&track, 12, &file[i]);
+	}
+	assert(pb_ok(&track));
+
+	static sp_track t;
+	memset(&t, 0, sizeof(t));
+	pbv tv = { track.p, track.len };
+	sp_parse_track(&tv, &t);
+	assert(t.has_gid && t.gid[0] == 1 && t.gid[15] == 1 + 15 * 7);
+	assert(strcmp(t.name, "Mr. Brightside") == 0);
+	assert(strcmp(t.album, "Hot Fuss") == 0);
+	assert(strcmp(t.artist, "The Killers") == 0);
+	expect_uri(t.album_uri, SP_KIND_ALBUM, 2);
+	expect_uri(t.artist_uri, SP_KIND_ARTIST, 3);
+	/* Read as plain varints these would be 4, 2 and 444400. */
+	assert(t.track_number == 2 && t.disc_number == 1);
+	assert(t.duration_ms == 222200);
+	assert(t.year == 2004);
+	assert(!t.is_explicit);              /* absent on the wire when false */
+	assert(t.uri[0] == '\0');            /* left to the caller */
+	assert(strcmp(t.art_small, "https://i.scdn.co/image/"
+	              "abababababababababababababababababababab") == 0);
+	assert(strcmp(t.art_large, "https://i.scdn.co/image/"
+	              "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd") == 0);
+	assert(t.file_count == 2);
+	assert(t.files[0].format == SP_FMT_OGG_320 && t.files[0].id[0] == 0x10);
+	assert(t.files[1].format == SP_FMT_OGG_160 && t.files[1].id[0] == 0x11);
+
+	/* Through the extended-metadata envelope, as the service sends it. */
+	static uint8_t any_s[1152], ed_s[1216], arr_s[1280], body_s[1344];
+	pb any, ed, arr, body;
+	pb_init(&any, any_s, sizeof(any_s));
+	pb_str(&any, 1, "type.googleapis.com/spotify.metadata.Track");
+	pb_sub(&any, 2, &track);
+	pb_init(&ed, ed_s, sizeof(ed_s));
+	pb_str(&ed, 2, "spotify:track:x");
+	pb_sub(&ed, 3, &any);
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	pb_varint(&arr, 1, EXT_KIND_TRACK_V4);
+	pb_sub(&arr, 3, &ed);
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_sub(&body, 2, &arr);
+	assert(pb_ok(&body));
+	pbv entity;
+	assert(sp_parse_entity(body.p, body.len, &entity));
+	assert(entity.len == track.len &&
+	       memcmp(entity.p, track.p, track.len) == 0);
+	assert(!sp_parse_entity(track.p, 0, &entity));
+
+	/* Explicit, and a track with no album or artist at all. */
+	pb_init(&track, track_s, sizeof(track_s));
+	add_gid(&track, 1, 1);
+	pb_str(&track, 2, "Bare");
+	pb_varint(&track, 9, 1);
+	memset(&t, 0, sizeof(t));
+	tv.p = track.p;
+	tv.len = track.len;
+	sp_parse_track(&tv, &t);
+	assert(t.is_explicit);
+	assert(!t.album_uri[0] && !t.artist_uri[0] && !t.art_small[0]);
+	assert(t.year == 0 && t.track_number == 0 && t.file_count == 0);
+}
+
+static void test_meta_parse_album(void)
+{
+	static uint8_t date_s[16], art_s[64], disc_s[2][1024], group_s[64],
+	               album_s[4096];
+	pb date, art, disc[2], group, album;
+
+	pb_init(&date, date_s, sizeof(date_s));
+	pb_varint(&date, 1, zz(2004));
+	pb_init(&art, art_s, sizeof(art_s));
+	add_gid(&art, 1, 3);
+	pb_str(&art, 2, "The Killers");
+	pb_init(&group, group_s, sizeof(group_s));
+	add_image(&group, 1, 0x01, 0);   /* only DEFAULT: both sizes use it */
+
+	/* Two discs, 20 + 10 tracks: more than SP_ALBUM_MAX_TRACKS. */
+	int seed = 100;
+	for (int d = 0; d < 2; d++) {
+		pb_init(&disc[d], disc_s[d], sizeof(disc_s[d]));
+		pb_varint(&disc[d], 1, zz(d + 1));
+		for (int i = 0; i < (d == 0 ? 20 : 10); i++)
+			add_gid_only(&disc[d], 3, seed++);
+	}
+
+	pb_init(&album, album_s, sizeof(album_s));
+	add_gid(&album, 1, 2);
+	pb_str(&album, 2, "Hot Fuss");
+	pb_sub(&album, 3, &art);
+	pb_varint(&album, 4, SP_ALBUM_EP);
+	pb_str(&album, 5, "EMI");
+	pb_sub(&album, 6, &date);
+	pb_sub(&album, 11, &disc[0]);
+	pb_sub(&album, 11, &disc[1]);
+	pb_sub(&album, 17, &group);
+	assert(pb_ok(&album));
+
+	static sp_album a;
+	pbv av = { album.p, album.len };
+	assert(sp_parse_album(&av, &a));
+	expect_uri(a.uri, SP_KIND_ALBUM, 2);
+	assert(strcmp(a.name, "Hot Fuss") == 0);
+	assert(strcmp(a.artist, "The Killers") == 0);
+	expect_uri(a.artist_uri, SP_KIND_ARTIST, 3);
+	assert(strcmp(a.label, "EMI") == 0);
+	assert(a.year == 2004 && a.type == SP_ALBUM_EP);
+	assert(a.art_small[0] && strcmp(a.art_small, a.art_large) == 0);
+	assert(a.total_tracks == 30);
+	assert(a.track_count == SP_ALBUM_MAX_TRACKS);
+	/* Disc order, numbered straight through: the 21st is disc 2's first. */
+	expect_uri(a.track_uris[0], SP_KIND_TRACK, 100);
+	expect_uri(a.track_uris[20], SP_KIND_TRACK, 120);
+	expect_uri(a.track_uris[23], SP_KIND_TRACK, 123);
+
+	/* No gid: refused, and nothing left over from the last parse. */
+	pb_init(&album, album_s, sizeof(album_s));
+	pb_str(&album, 2, "Nameless");
+	av.p = album.p;
+	av.len = album.len;
+	assert(!sp_parse_album(&av, &a));
+	assert(a.name[0] == '\0' && a.track_count == 0);
+}
+
+static void test_meta_parse_artist(void)
+{
+	static uint8_t top_s[2][256], artist_s[1024];
+	pb top[2], artist;
+
+	/* Two groups (the service sends one, but the parser must choose). */
+	static const char *const COUNTRY[] = { "US", "ES" };
+	int seed = 200;
+	for (int g = 0; g < 2; g++) {
+		pb_init(&top[g], top_s[g], sizeof(top_s[g]));
+		pb_str(&top[g], 1, COUNTRY[g]);
+		for (int i = 0; i < 2 + g; i++)
+			add_gid_only(&top[g], 2, seed++);
+	}
+	pb_init(&artist, artist_s, sizeof(artist_s));
+	add_gid(&artist, 1, 3);
+	pb_str(&artist, 2, "The Killers");
+	pb_sub(&artist, 4, &top[0]);
+	pb_sub(&artist, 4, &top[1]);
+	/* Older metadata: portrait images straight on the artist. */
+	add_image(&artist, 11, 0xee, 1);
+	assert(pb_ok(&artist));
+
+	static sp_artist a;
+	pbv av = { artist.p, artist.len };
+	assert(sp_parse_artist(&av, "ES", &a));
+	expect_uri(a.uri, SP_KIND_ARTIST, 3);
+	assert(strcmp(a.name, "The Killers") == 0);
+	assert(strcmp(a.art_small, "https://i.scdn.co/image/"
+	              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") == 0);
+	assert(strcmp(a.art_small, a.art_large) == 0);
+	assert(a.track_count == 3);
+	expect_uri(a.track_uris[0], SP_KIND_TRACK, 202);
+
+	/* No country, or one that does not match: the first group. */
+	assert(sp_parse_artist(&av, NULL, &a) && a.track_count == 2);
+	expect_uri(a.track_uris[1], SP_KIND_TRACK, 201);
+	assert(sp_parse_artist(&av, "", &a) && a.track_count == 2);
+	assert(sp_parse_artist(&av, "E", &a) && a.track_count == 2);
+	assert(sp_parse_artist(&av, "FR", &a) && a.track_count == 2);
+}
+
+static void test_detail_stack(void)
+{
+	assert(detail_tab_stack(TAB_SEARCH) == 0);
+	assert(detail_tab_stack(TAB_PLAYER) == 1);
+	assert(detail_tab_stack(TAB_HOME) < 0);
+	assert(detail_tab_stack(TAB_SETTINGS) < 0);
+
+	detail_stack s;
+	detail_stack_clear(&s);
+	assert(detail_stack_top(&s) == -1);
+	assert(detail_stack_pop(&s) == -1);
+	assert(detail_stack_drop_oldest(&s) == -1);
+
+	/* Up to the depth nothing is dropped. */
+	for (int i = 0; i < DETAIL_DEPTH; i++) {
+		assert(detail_stack_push(&s, 10 + i) == -1);
+		assert(detail_stack_top(&s) == 10 + i);
+	}
+	assert(s.count == DETAIL_DEPTH);
+	/* Past it the oldest goes, and the order of the rest holds. */
+	assert(detail_stack_push(&s, 99) == 10);
+	assert(s.count == DETAIL_DEPTH);
+	assert(s.slot[0] == 11 && detail_stack_top(&s) == 99);
+	assert(detail_stack_holds(&s, 99) && !detail_stack_holds(&s, 10));
+
+	/* B pops back down to the tab's own view. */
+	assert(detail_stack_pop(&s) == 99);
+	for (int i = DETAIL_DEPTH - 1; i >= 1; i--)
+		assert(detail_stack_pop(&s) == 10 + i);
+	assert(s.count == 0 && detail_stack_top(&s) == -1);
+}
+
+static void test_detail_buttons(void)
+{
+	/* The Settings geometry: three full-width buttons of TOUCH_MIN under
+	 * the tab bar, SP_4 apart, clear of the button bar. */
+	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++) {
+		ui_rect r = detail_button_rect(i);
+		ui_rect s = settings_item_rect(i);
+		assert(r.x == s.x && r.y == s.y && r.w == s.w && r.h == s.h);
+		assert(r.h >= TOUCH_MIN);
+		assert(r.y + r.h <= detail_hints_rect().y);
+		if (i > 0)
+			assert(r.y - (detail_button_rect(i - 1).y +
+			              detail_button_rect(i - 1).h) == SP_4);
+	}
+	assert(detail_button_rect(0).y >= TAB_H);
+
+	bool all[DETAIL_BUTTON_COUNT] = { true, true, true };
+	bool no_artist[DETAIL_BUTTON_COUNT] = { true, false, true };
+	bool only_play[DETAIL_BUTTON_COUNT] = { true, false, false };
+	ui_rect artist = detail_button_rect(DETAIL_BUTTON_ARTIST);
+	int ax = artist.x + artist.w / 2, ay = artist.y + artist.h / 2;
+
+	/* A disabled button does not answer the stylus (6.1). */
+	assert(detail_hit_test(ax, ay, all) == DETAIL_BUTTON_ARTIST);
+	assert(detail_hit_test(ax, ay, no_artist) == DETAIL_BUTTON_NONE);
+	assert(detail_hit_test(0, 0, all) == DETAIL_BUTTON_NONE);
+
+	/* The D-pad stops at the ends and steps over disabled buttons. */
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, -1, all) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, all) ==
+	       DETAIL_BUTTON_ARTIST);
+	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, 1, all) ==
+	       DETAIL_BUTTON_ALBUM);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, no_artist) ==
+	       DETAIL_BUTTON_ALBUM);
+	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, -1, no_artist) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, only_play) ==
+	       DETAIL_BUTTON_PLAY);
+	/* A focus that is not usable falls back to Play. */
+	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 1, no_artist) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_NONE, 1, all) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 0, all) ==
+	       DETAIL_BUTTON_ARTIST);
+}
+
+static void test_detail_pool(void)
+{
+	detail_stack stacks[DETAIL_STACKS];
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		detail_stack_clear(&stacks[i]);
+	assert(detail_pool_free(stacks) == 0);
+
+	/* Opening, going back and switching tabs in a long, fixed pattern:
+	 * the pool never runs out and no document is on two levels at once. */
+	unsigned rng = 12345;
+	for (int step = 0; step < 5000; step++) {
+		rng = rng * 1103515245u + 12345u;
+		detail_stack *s = &stacks[(rng >> 8) % DETAIL_STACKS];
+		if ((rng >> 12) % 4 == 0) {
+			detail_stack_pop(s);
+			continue;
+		}
+		/* The order details.c uses: room first, then a free document. */
+		if (s->count >= DETAIL_DEPTH)
+			assert(detail_stack_drop_oldest(s) >= 0);
+		int slot = detail_pool_free(stacks);
+		assert(slot >= 0 && slot < DETAIL_POOL);
+		assert(detail_stack_push(s, slot) == -1);
+
+		bool seen[DETAIL_POOL] = { false };
+		for (int i = 0; i < DETAIL_STACKS; i++) {
+			assert(stacks[i].count <= DETAIL_DEPTH);
+			for (int j = 0; j < stacks[i].count; j++) {
+				assert(!seen[stacks[i].slot[j]]);
+				seen[stacks[i].slot[j]] = true;
+			}
+		}
+	}
+
+	/* Both stacks full: every document is taken, and the oldest of one
+	 * stack is what makes room. */
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		detail_stack_clear(&stacks[i]);
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		for (int j = 0; j < DETAIL_DEPTH; j++)
+			detail_stack_push(&stacks[i], detail_pool_free(stacks));
+	assert(detail_pool_free(stacks) == -1);
+	int oldest = detail_stack_drop_oldest(&stacks[1]);
+	assert(detail_pool_free(stacks) == oldest);
+}
+
+/* One EntityExtensionData { entity_uri 2, extension_data 3 (Any) } holding a
+ * Track that only has a name. */
+static void add_batch_entry(pb *arr, const char *uri, const char *name)
+{
+	uint8_t track_s[64], any_s[96], ed_s[160];
+	pb track, any, ed;
+	pb_init(&track, track_s, sizeof(track_s));
+	pb_str(&track, 2, name);
+	pb_init(&any, any_s, sizeof(any_s));
+	pb_sub(&any, 2, &track);
+	pb_init(&ed, ed_s, sizeof(ed_s));
+	pb_str(&ed, 2, uri);
+	pb_sub(&ed, 3, &any);
+	pb_sub(arr, 3, &ed);
+}
+
+static int parse_batch(pb *arr, const char *const *uris, int n, sp_track *out)
+{
+	static uint8_t body_s[1024];
+	pb body;
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_sub(&body, 2, arr);
+	assert(pb_ok(&body));
+	return sp_parse_track_batch(body.p, body.len, uris, n, out);
+}
+
+static void test_meta_parse_batch(void)
+{
+	static const char *const ASK[] = {
+		"spotify:track:a", "spotify:track:b", "spotify:track:c",
+	};
+	static sp_track out[3];
+	static uint8_t arr_s[768];
+	pb arr;
+
+	/* Shuffled, as the service answers: back in the order asked. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:c", "C");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	add_batch_entry(&arr, "spotify:track:b", "B");
+	assert(parse_batch(&arr, ASK, 3, out) == 3);
+	for (int i = 0; i < 3; i++) {
+		assert(strcmp(out[i].uri, ASK[i]) == 0);
+		assert(out[i].name[0] == 'A' + i && out[i].name[1] == '\0');
+	}
+
+	/* One left out: the others close ranks in order. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:c", "C");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	assert(parse_batch(&arr, ASK, 3, out) == 2);
+	assert(strcmp(out[0].name, "A") == 0 && strcmp(out[1].name, "C") == 0);
+	assert(strcmp(out[1].uri, "spotify:track:c") == 0);
+
+	/* A stray URI arriving first does not steal a slot that a later entry
+	 * names; it takes what is left. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:relinked", "X");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	add_batch_entry(&arr, "spotify:track:c", "C");
+	assert(parse_batch(&arr, ASK, 3, out) == 3);
+	assert(strcmp(out[0].name, "A") == 0);
+	assert(strcmp(out[1].name, "X") == 0 &&
+	       strcmp(out[1].uri, "spotify:track:b") == 0);
+	assert(strcmp(out[2].name, "C") == 0);
+
+	/* The same track asked twice and answered twice fills both. */
+	static const char *const TWICE[] = { "spotify:track:a", "spotify:track:a" };
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	add_batch_entry(&arr, "spotify:track:a", "A");
+	assert(parse_batch(&arr, TWICE, 2, out) == 2);
+
+	/* Nothing usable. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	assert(parse_batch(&arr, ASK, 3, out) == 0);
+	assert(sp_parse_track_batch(arr_s, 0, ASK, 3, out) == 0);
+	assert(sp_parse_track_batch(arr_s, 0, ASK, 0, out) == 0);
 }
 
 static void test_queue_boundaries(void)
@@ -87,6 +618,8 @@ static void test_language_tables(void)
 			       text != lang_text(LANG_EN, (str_id)id) ||
 			       strcmp(text, "Error") == 0 ||
 			       strcmp(text, "Album") == 0 ||
+			       strcmp(text, "Album: %s") == 0 ||
+			       strcmp(text, "EP") == 0 ||
 			       strcmp(text, "3DSpotify") == 0);
 			/* The tables stay ASCII until lifted on purpose (lang.h). */
 			for (const char *p = text; *p; p++)
@@ -282,6 +815,36 @@ static bool ends_with_ellipsis(const char *s)
 {
 	size_t n = strlen(s), e = strlen(TEXT_FIT_ELLIPSIS);
 	return n >= e && strcmp(s + n - e, TEXT_FIT_ELLIPSIS) == 0;
+}
+
+static void test_marquee(void)
+{
+	/* A text that fits never moves. */
+	assert(!marquee_rolls(200, 200));
+	for (unsigned ms = 0; ms < 20000; ms += 37)
+		assert(marquee_offset(ms, 150, 200) == 0);
+
+	int w = 320, box = 200;
+	assert(marquee_rolls(w, box));
+	unsigned period = marquee_period_ms(w);
+	assert(period == MARQUEE_PAUSE_MS +
+	                 (unsigned)(w + MARQUEE_GAP) * 1000u / MARQUEE_SPEED);
+	/* It waits at its start, then slides left, never backwards, and
+	 * stays inside one span. */
+	assert(marquee_offset(0, w, box) == 0);
+	assert(marquee_offset(MARQUEE_PAUSE_MS - 1, w, box) == 0);
+	assert(marquee_offset(MARQUEE_PAUSE_MS + 1000, w, box) == MARQUEE_SPEED);
+	int last = 0;
+	for (unsigned ms = MARQUEE_PAUSE_MS; ms < period; ms++) {
+		int offset = marquee_offset(ms, w, box);
+		assert(offset >= last && offset < marquee_span(w));
+		last = offset;
+	}
+	/* It reaches the copy's start, then begins again from rest. */
+	assert(last >= marquee_span(w) - 1);
+	assert(marquee_offset(period, w, box) == 0);
+	assert(marquee_offset(period + MARQUEE_PAUSE_MS + 1000, w, box) ==
+	       marquee_offset(MARQUEE_PAUSE_MS + 1000, w, box));
 }
 
 static void test_text_fit(void)
@@ -559,6 +1122,10 @@ static void test_theme_contrast(void)
 	for (size_t i = 0; i < COUNT(on_background); i++)
 		for (size_t j = 0; j < COUNT(backgrounds); j++)
 			assert(contrast(on_background[i], backgrounds[j]) >= 4.5);
+	/* A pressed link of the Playing tab is `lima` text on the background
+	 * (plan 4.4): the only accent that reads on both tones. */
+	for (size_t j = 0; j < COUNT(backgrounds); j++)
+		assert(contrast(COL_LIMA, backgrounds[j]) >= 4.5);
 
 	/* `capa` also holds disabled text and a pressed secondary button's
 	 * label (6.1, 6.3). */
@@ -991,6 +1558,49 @@ static void test_player_layout(void)
 	       PLAYER_CONTROL_NONE);
 	assert(player_hit_test(10, 10) == PLAYER_CONTROL_NONE);
 
+	/* The links (plan 4.4): touch zones of TOUCH_MIN, the track across the
+	 * content width, then the artist and the album side by side, SP_1
+	 * apart, all under the tab bar and above the controls. */
+	ui_rect link_track = player_link_rect(PLAYER_LINK_TRACK);
+	ui_rect link_artist = player_link_rect(PLAYER_LINK_ARTIST);
+	ui_rect link_album = player_link_rect(PLAYER_LINK_ALBUM);
+	assert(PLAYER_CONTROLS_TOP == 108);
+	assert(link_track.x == SP_2 && link_track.y == 36 &&
+	       link_track.w == SCREEN_BOTTOM_W - 2 * SP_2 &&
+	       link_track.h == TOUCH_MIN);
+	assert(link_artist.x == 8 && link_artist.y == 72 &&
+	       link_artist.w == 150 && link_artist.h == TOUCH_MIN);
+	assert(link_album.x == 162 && link_album.y == 72 &&
+	       link_album.w == 150 && link_album.h == TOUCH_MIN);
+	assert(link_album.x + link_album.w == SCREEN_BOTTOM_W - SP_2);
+	assert(link_track.y >= TAB_H);
+	assert(link_artist.y - (link_track.y + link_track.h) == SP_1);
+	/* The links end above the controls, with room to spare. */
+	assert(link_artist.y + link_artist.h < prev.y);
+	assert(link_artist.y + link_artist.h < play.y);
+
+	bool links_all[PLAYER_LINK_COUNT] = { true, true, true };
+	bool links_no_album[PLAYER_LINK_COUNT] = { true, true, false };
+	assert(player_link_hit(link_track.x + 1, link_track.y + 1, links_all) ==
+	       PLAYER_LINK_TRACK);
+	assert(player_link_hit(link_artist.x + 1, link_artist.y + 1, links_all) ==
+	       PLAYER_LINK_ARTIST);
+	assert(player_link_hit(link_album.x + 1, link_album.y + 1, links_all) ==
+	       PLAYER_LINK_ALBUM);
+	/* Between the two halves, and on a disabled link: nothing. */
+	assert(player_link_hit(link_album.x - 2, link_album.y + 1, links_all) ==
+	       PLAYER_LINK_NONE);
+	assert(player_link_hit(link_album.x + 1, link_album.y + 1,
+	                       links_no_album) == PLAYER_LINK_NONE);
+	assert(player_link_hit(play.x + 1, play.y + 1, links_all) ==
+	       PLAYER_LINK_NONE);
+	/* The phases that show a track have links; idle and failed do not. */
+	assert(!player_links_enabled(PLAYER_PHASE_IDLE));
+	assert(player_links_enabled(PLAYER_PHASE_LOADING));
+	assert(player_links_enabled(PLAYER_PHASE_PLAYING));
+	assert(player_links_enabled(PLAYER_PHASE_FINISHED));
+	assert(!player_links_enabled(PLAYER_PHASE_FAILED));
+
 	/* 5.4, 5.5: the bars, below the controls and their shadow, clear of
 	 * each other and of the button bar, the handle included. */
 	ui_rect progress = player_progress_rect();
@@ -1091,6 +1701,35 @@ static void test_now_layout(void)
 		assert(now_album_cy(title_h, body_h) -
 		       now_artist_cy(title_h, body_h) == body_h);
 		assert(text.y + text.h <= art.y + art.h);
+		/* The detail card's lines follow on, one t_cuerpo line each, and
+		 * all NOW_LINES of them still end beside the cover. */
+		assert(now_line_cy(title_h, body_h, 0) ==
+		       now_artist_cy(title_h, body_h));
+		assert(now_line_cy(title_h, body_h, 1) ==
+		       now_album_cy(title_h, body_h));
+		for (int n = 1; n < NOW_LINES; n++)
+			assert(now_line_cy(title_h, body_h, n) -
+			       now_line_cy(title_h, body_h, n - 1) == body_h);
+		assert(now_line_cy(title_h, body_h, NOW_LINES - 1) + body_h / 2 + 1 <=
+		       art.y + art.h);
+
+		/* The detail card: the cover centred on the screen's height,
+		 * shadow included on screen, and the text block centred on it. */
+		ui_rect dart = now_detail_art_rect();
+		assert(dart.x == art.x && dart.w == art.w && dart.h == art.h);
+		assert(dart.y == SCREEN_H - dart.y - dart.h);
+		assert(on_top_screen(ui_rect_offset(dart, ART_SHADOW_OFF,
+		                                    ART_SHADOW_OFF), SP_3));
+		for (int count = 0; count <= NOW_LINES; count++) {
+			int dy = now_detail_text_dy(title_h, body_h, count);
+			int top = now_title_cy(title_h) + dy - title_h / 2;
+			int bottom = count ? now_line_cy(title_h, body_h, count - 1) +
+			                     dy + body_h / 2
+			                   : top + title_h;
+			int above = top - dart.y, below = dart.y + dart.h - bottom;
+			assert(above >= 0 && below >= 0);
+			assert(above - below <= 2 && below - above <= 2);
+		}
 
 		/* Times e4 under the cover, the bar below with its handle
 		 * clear of their line, everything inside e3. */
@@ -1199,7 +1838,9 @@ static void test_top_mode(void)
 			             phase == PLAYER_PHASE_PLAYING ||
 			             phase == PLAYER_PHASE_FINISHED;
 			assert(top_music_on(phase) == music);
-			top_mode mode = top_mode_for((app_tab)tab, phase);
+			/* A detail on the tab takes the top screen, music or not. */
+			assert(top_mode_for((app_tab)tab, phase, true) == TOP_DETAIL);
+			top_mode mode = top_mode_for((app_tab)tab, phase, false);
 			if (!music)
 				assert(mode == TOP_LOGO);
 			else if (tab == TAB_PLAYER)
@@ -1544,6 +2185,7 @@ int main(void)
 	test_theme_colors();
 	test_theme_contrast();
 	test_text_fit();
+	test_marquee();
 	test_home_layout();
 	test_home_focus();
 	test_image_fit();
@@ -1552,6 +2194,14 @@ int main(void)
 	test_image_pow2();
 	test_image_copy_to_texture();
 	test_search_path_encoding();
+	test_spotify_id();
+	test_meta_parse_track();
+	test_meta_parse_album();
+	test_meta_parse_artist();
+	test_meta_parse_batch();
+	test_detail_stack();
+	test_detail_pool();
+	test_detail_buttons();
 	test_http_redirects();
 	test_download_retry_delay();
 	test_power_policy();

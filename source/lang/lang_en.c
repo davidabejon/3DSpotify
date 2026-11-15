@@ -28,6 +28,26 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_PAIR] = "Pair",
 	[STR_HINT_EXIT] = "Exit",
 
+	/* Detail views. */
+	[STR_HINT_DETAIL] = "Detail",
+	[STR_DETAIL_PLAY] = "Play",
+	[STR_DETAIL_ARTIST_FMT] = "Artist: %s",
+	[STR_DETAIL_ALBUM_FMT] = "Album: %s",
+	[STR_UNKNOWN_ALBUM] = "(unknown album)",
+	[STR_DETAIL_LOADING] = "Loading...",
+	[STR_DETAIL_EMPTY] = "No tracks here",
+	[STR_DETAIL_FAILED_TITLE] = "Could not load it",
+	[STR_DETAIL_TRACK_NUMBER_FMT] = "track %d",
+	[STR_DETAIL_DISC_FMT] = "disc %d",
+	[STR_ALBUM_TYPE_ALBUM] = "Album",
+	[STR_ALBUM_TYPE_SINGLE] = "Single",
+	[STR_ALBUM_TYPE_COMPILATION] = "Compilation",
+	[STR_ALBUM_TYPE_EP] = "EP",
+	[STR_ALBUM_TRACK_ONE] = "1 track",
+	[STR_ALBUM_TRACKS_FMT] = "%d tracks",
+	[STR_ALBUM_TRACKS_CUT_FMT] = "%d of %d tracks",
+	[STR_ARTIST_TOP_TRACKS] = "Popular tracks",
+
 	/* Settings tab. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",
 	[STR_SETTINGS_RECONNECT] = "Reconnect",
@@ -89,6 +109,8 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_SEARCH_CHECK_WIFI] = "Check the Wi-Fi and try again.",
 	[STR_ERR_SEARCH_LOAD] = "Could not load the results.",
 	[STR_ERR_SEARCH_THREAD] = "Could not start the search task.",
+	[STR_ERR_DETAIL_CONNECT_FMT] = "No connection to %s.",
+	[STR_ERR_DETAIL_THREAD] = "Could not start the loading task.",
 	[STR_RESULTS_EMPTY] = "No songs found.",
 	[STR_RESULTS_IDLE] = "Nothing searched yet.",
 

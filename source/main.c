@@ -9,6 +9,7 @@
 #include "ap3ds.h"
 #include "artwork.h"
 #include "cfg3ds.h"
+#include "details.h"
 #include "icons.h"
 #include "lang.h"
 #include "login_logic.h"
@@ -24,6 +25,7 @@
 #include "tls3ds.h"
 #include "top.h"
 #include "ui.h"
+#include "view_detail.h"
 #include "view_home.h"
 #include "view_login.h"
 #include "view_player.h"
@@ -86,6 +88,12 @@ static sp_track playback_queue[SEARCH_LIMIT];
 static int playback_queue_count;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
+/* The image of the detail card on the top screen, apart from cover_art:
+ * the player waits for that one before preparing a track, so a detail
+ * must never ask it for another image. `detail_art_url` is what it holds,
+ * so going back to the same detail costs no download. */
+static artwork_state detail_art;
+static char detail_art_url[80];
 /* The last confirmed query, for the home view's repeat button. */
 static char home_query[SEARCH_QUERY_SIZE];
 /* Who owns the screens: the login view for the session start-up, pairing
@@ -985,11 +993,28 @@ static void power_poll(void)
 		aptSetSleepAllowed(!awake);
 }
 
+/* The detail on top of the active tab, if any, for the top screen; its
+ * image is asked for when it changes. Opening a detail with no image (an
+ * album still loading) drops the last one, so no other detail's picture
+ * shows on its card. */
+static const detail_doc *top_detail_sync(void)
+{
+	const detail_doc *doc = active_view == VIEW_TABS &&
+	                        details_active(active_tab)
+	                        ? details_top(active_tab) : NULL;
+	if (doc && strcmp(doc->art, detail_art_url) != 0) {
+		snprintf(detail_art_url, sizeof(detail_art_url), "%s", doc->art);
+		artwork_request(&detail_art, detail_art_url);
+	}
+	return doc;
+}
+
 static void frame(void)
 {
 	/* 0: the login view; 1 + tab: that tab. */
 	static int drawn_screen = -1;
 	artwork_poll(&cover_art);
+	artwork_poll(&detail_art);
 	power_poll();
 	if (screens_dark) {
 		/* Nobody can see them: drawing would only cost battery. The
@@ -1008,8 +1033,11 @@ static void frame(void)
 		player_info info = player_snapshot();
 		view_player_set(&info);
 		top_set(&info);
+		top_set_detail(top_detail_sync(), &detail_art);
 		changed = tabbar_dirty() || top_dirty(active_tab, &cover_art);
-		switch (active_tab) {
+		if (details_active(active_tab))
+			changed |= view_detail_dirty(details_top(active_tab));
+		else switch (active_tab) {
 		case TAB_HOME:
 			changed |= view_home_dirty();
 			break;
@@ -1037,6 +1065,9 @@ static void frame(void)
 	ui_scene(GFX_BOTTOM);
 	if (!tabs) {
 		view_login_draw_bottom();
+	} else if (details_active(active_tab)) {
+		view_detail_draw_bottom(details_top(active_tab));
+		tabbar_draw();
 	} else {
 		switch (active_tab) {
 		case TAB_HOME:
@@ -1145,6 +1176,8 @@ static void search_start(const spotify_session *session, const char *query)
 	/* The tracks in the list are about to change under the queue's
 	 * copy. */
 	queue_from_results = false;
+	/* Its details came from the results being replaced. */
+	details_clear(TAB_SEARCH);
 	view_results_searching();
 	/* Below the decoder, like every worker that can overlap playback. */
 	search_thread = threadCreate(search_worker, &search, 16 * 1024,
@@ -1195,6 +1228,7 @@ static bool ask_search_query(char query[SEARCH_QUERY_SIZE])
 		memcpy(query, typed, sizeof(typed));
 	/* The keyboard applet takes over both screens. */
 	artwork_invalidate(&cover_art);
+	artwork_invalidate(&detail_art);
 	screens_lost = true;
 	return confirmed;
 }
@@ -1230,6 +1264,118 @@ static void play_from_results(spotify_session *session, int index)
 	switch_tab(TAB_PLAYER);
 }
 
+/* --- Details ----------------------------------------------------------- */
+
+/* Plays the detail on top of `tab` from its focused track, with the whole
+ * list it holds as the queue: the results it was opened from, or the album
+ * or artist (docs/plan_vistas_detalle.md 4.1). The document is a copy, so
+ * the queue is too, whatever the results do afterwards. */
+static void play_from_detail(spotify_session *session, app_tab tab)
+{
+	const detail_doc *doc = details_top(tab);
+	if (!doc || doc->count <= 0)
+		return;
+	const sp_track *pick = &doc->tracks[doc->selected];
+	/* The track already playing: show it rather than start it again. */
+	const sp_track *now = player_track();
+	bool same = now && strcmp(now->uri, pick->uri) == 0 &&
+	            (player.phase == PLAYER_PHASE_LOADING ||
+	             player.phase == PLAYER_PHASE_PLAYING);
+	if (!same) {
+		/* As from the results: the thumbnails wait for the preparation
+		 * (STYLES.md 9). */
+		view_results_allow_thumbs(false);
+		playback_queue_count = doc->count;
+		memcpy(playback_queue, doc->tracks,
+		       (size_t)playback_queue_count * sizeof(playback_queue[0]));
+		queue_from_results = false;
+		player_play(session, doc->selected);
+	}
+	/* The Playing tab shows the player, not a detail left open there; the
+	 * queue is copied, so this may be the document just played. */
+	details_clear(TAB_PLAYER);
+	switch_tab(TAB_PLAYER);
+}
+
+/* The detail of the focused result, on the Search tab's stack. */
+static void open_result_detail(void)
+{
+	details_open_track(TAB_SEARCH, search.tracks, search.count,
+	                   view_results_selected());
+	switch_tab(TAB_SEARCH);
+}
+
+/* A link of the Playing tab: the detail of the track playing, of its
+ * artist or of its album, on that tab's stack. The track detail gets a
+ * copy of the queue, which may change afterwards, so "Play" there plays
+ * this queue again from this track. */
+static void open_playing_detail(detail_kind kind)
+{
+	const sp_track *track = player_track();
+	if (!track)
+		return;
+	switch (kind) {
+	case DETAIL_ARTIST:
+		details_open_artist(TAB_PLAYER, track->artist_uri);
+		break;
+	case DETAIL_ALBUM:
+		details_open_album(TAB_PLAYER, track->album_uri);
+		break;
+	default:
+		details_open_track(TAB_PLAYER, playback_queue, playback_queue_count,
+		                   player.index);
+		break;
+	}
+	switch_tab(TAB_PLAYER);
+}
+
+/* A detail is on top of the active tab: its view has the input. */
+static void detail_input(spotify_session *session, u32 down)
+{
+	detail_doc *doc = details_top(active_tab);
+	detail_action action = view_detail_update(doc, down);
+	/* The track the action is about: the one shown, or the focused row,
+	 * as the view has just written it back. Opening a level copies what
+	 * it needs from this one, which stays on the stack under it. */
+	const sp_track *track = doc->count > 0 ? &doc->tracks[doc->selected]
+	                                       : NULL;
+	switch (action) {
+	case DETAIL_ACTION_PLAY:
+		play_from_detail(session, active_tab);
+		break;
+	case DETAIL_ACTION_ARTIST:
+		if (track)
+			details_open_artist(active_tab, track->artist_uri);
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_ALBUM:
+		if (track)
+			details_open_album(active_tab, track->album_uri);
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_OPEN_TRACK:
+		/* The list comes along, as from the results: "Play" there queues
+		 * this album or artist. */
+		details_open_track(active_tab, doc->tracks, doc->count,
+		                   doc->selected);
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_RETRY:
+		details_retry(active_tab);
+		break;
+	case DETAIL_ACTION_BACK:
+		details_back(active_tab);
+		/* The level below, or the tab's own view, starts afresh. */
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_LANGUAGE:
+		switch_language();
+		break;
+	default:
+		break;
+	}
+}
+
 /* --- Tabs -------------------------------------------------------------- */
 
 /* Shows `tab`: its view starts with no press in progress. */
@@ -1237,6 +1383,11 @@ static void switch_tab(app_tab tab)
 {
 	active_tab = tab;
 	tabbar_set_active(tab);
+	/* A detail left open on the tab is still there (plan 3.1). */
+	if (details_active(tab)) {
+		view_detail_enter();
+		return;
+	}
 	switch (tab) {
 	case TAB_HOME:
 		view_home_enter(home_query);
@@ -1278,6 +1429,7 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		search_poll();
+		details_poll(active_tab, session->host, session->library_token);
 		/* Not stopped on leaving the tab: it only fetches the rows on
 		 * screen and the next ones anyway. */
 		view_results_allow_thumbs(!player_preparing());
@@ -1290,7 +1442,9 @@ static tabs_exit run_tabs(spotify_session *session)
 				switch_tab((app_tab)next);
 		}
 
-		switch (active_tab) {
+		if (details_active(active_tab)) {
+			detail_input(session, down);
+		} else switch (active_tab) {
 		case TAB_HOME:
 			switch (view_home_update(down)) {
 			case HOME_ACTION_SEARCH:
@@ -1320,6 +1474,9 @@ static tabs_exit run_tabs(spotify_session *session)
 			switch (action) {
 			case RESULTS_ACTION_OPEN:
 				play_from_results(session, view_results_selected());
+				break;
+			case RESULTS_ACTION_DETAIL:
+				open_result_detail();
 				break;
 			case RESULTS_ACTION_BACK:
 				switch_tab(TAB_HOME);
@@ -1361,6 +1518,15 @@ static tabs_exit run_tabs(spotify_session *session)
 			case PLAYER_ACTION_LANGUAGE:
 				switch_language();
 				break;
+			case PLAYER_ACTION_OPEN_TRACK:
+				open_playing_detail(DETAIL_TRACK);
+				break;
+			case PLAYER_ACTION_OPEN_ARTIST:
+				open_playing_detail(DETAIL_ARTIST);
+				break;
+			case PLAYER_ACTION_OPEN_ALBUM:
+				open_playing_detail(DETAIL_ALBUM);
+				break;
 			default:
 				break;
 			}
@@ -1390,7 +1556,8 @@ static tabs_exit run_tabs(spotify_session *session)
 	}
 }
 
-/* Leaving the tabs: no audio, search or thumbnails survive the session. */
+/* Leaving the tabs: no audio, search, details or thumbnails survive the
+ * session. */
 static void stop_tabs(void)
 {
 	/* Every worker's network wait fails within TLS_ABORT_SLICE_MS, so the
@@ -1398,6 +1565,7 @@ static void stop_tabs(void)
 	tls_set_abort(true);
 	player_stop();
 	search_stop();
+	details_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();
@@ -1876,8 +2044,9 @@ int main(int argc, char **argv)
 		logo_load();
 	if (!view_home_init() || !view_results_init() ||
 	    !view_player_init() || !view_settings_init() || !view_login_init() ||
-	    !top_init()) {
+	    !view_detail_init() || !top_init()) {
 		top_exit();
+		view_detail_exit();
 		view_login_exit();
 		view_settings_exit();
 		view_player_exit();
@@ -1958,6 +2127,7 @@ failed:
 done:
 	stop_tabs();
 	artwork_close(&cover_art);
+	artwork_close(&detail_art);
 	secure_clear(&session, sizeof(session));
 	secure_clear(&search, sizeof(search));
 	secure_clear(playback_queue, sizeof(playback_queue));
@@ -1969,6 +2139,7 @@ done:
 		socExit();
 	free(soc_buffer);
 	top_exit();
+	view_detail_exit();
 	view_login_exit();
 	view_settings_exit();
 	view_player_exit();

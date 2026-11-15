@@ -29,6 +29,26 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_PAIR] = "Emparejar",
 	[STR_HINT_EXIT] = "Salir",
 
+	/* Vistas de detalle. */
+	[STR_HINT_DETAIL] = "Detalle",
+	[STR_DETAIL_PLAY] = "Reproducir",
+	[STR_DETAIL_ARTIST_FMT] = "Artista: %s",
+	[STR_DETAIL_ALBUM_FMT] = "Album: %s",
+	[STR_UNKNOWN_ALBUM] = "(album desconocido)",
+	[STR_DETAIL_LOADING] = "Cargando...",
+	[STR_DETAIL_EMPTY] = "No hay canciones",
+	[STR_DETAIL_FAILED_TITLE] = "No se pudo cargar",
+	[STR_DETAIL_TRACK_NUMBER_FMT] = "pista %d",
+	[STR_DETAIL_DISC_FMT] = "disco %d",
+	[STR_ALBUM_TYPE_ALBUM] = "Album",
+	[STR_ALBUM_TYPE_SINGLE] = "Sencillo",
+	[STR_ALBUM_TYPE_COMPILATION] = "Recopilatorio",
+	[STR_ALBUM_TYPE_EP] = "EP",
+	[STR_ALBUM_TRACK_ONE] = "1 cancion",
+	[STR_ALBUM_TRACKS_FMT] = "%d canciones",
+	[STR_ALBUM_TRACKS_CUT_FMT] = "%d de %d canciones",
+	[STR_ARTIST_TOP_TRACKS] = "Canciones populares",
+
 	/* Pestana de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",
 	[STR_SETTINGS_RECONNECT] = "Volver a conectar",
@@ -90,6 +110,8 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_SEARCH_CHECK_WIFI] = "Comprueba el Wi-Fi y vuelve a intentarlo.",
 	[STR_ERR_SEARCH_LOAD] = "No se pudieron cargar los resultados.",
 	[STR_ERR_SEARCH_THREAD] = "No se pudo iniciar la tarea de busqueda.",
+	[STR_ERR_DETAIL_CONNECT_FMT] = "Sin conexion con %s.",
+	[STR_ERR_DETAIL_THREAD] = "No se pudo iniciar la tarea de carga.",
 	[STR_RESULTS_EMPTY] = "No se encontraron canciones.",
 	[STR_RESULTS_IDLE] = "Todavia no has buscado nada.",
 

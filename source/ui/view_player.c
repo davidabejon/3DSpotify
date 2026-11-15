@@ -12,9 +12,13 @@
 #include <string.h>
 
 #define STATIC_GLYPHS 768
-#define TRACK_GLYPHS 320
+#define TRACK_GLYPHS 512
 #define TIME_GLYPHS 24
 #define SCRATCH_GLYPHS UI_FIELD_SIZE
+
+/* Touch control ids: the controls are their player_control, the links
+ * LINK_CONTROL + their player_link. */
+#define LINK_CONTROL 10
 
 /* The button bar (STYLES.md 5.6). */
 enum { GLYPH_A, GLYPH_B, GLYPH_COUNT };
@@ -27,7 +31,7 @@ static C2D_Text idle_text, stage_text, finished_text, volume_label;
 static C2D_Text failed_title, failed_body;
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_pause, hint_play, hint_retry, hint_back;
-static C2D_Text title_text, artist_text, queue_text;
+static C2D_Text title_text, artist_text, album_text, queue_text;
 static C2D_Text elapsed_text, duration_text;
 static int volume_label_w;
 
@@ -46,6 +50,7 @@ static player_info info = { .stage = STR_PLAYER_ART_LOADING,
 static player_download_sample download;
 
 static press_state press_control[PLAYER_CONTROL_COUNT];
+static press_state press_link[PLAYER_LINK_COUNT];
 static press_state press_glyph[GLYPH_COUNT];
 static touch_track touch = { -1 };
 static player_action pending = PLAYER_ACTION_NONE;
@@ -60,6 +65,7 @@ typedef struct {
 	bool paused;
 	unsigned elapsed, duration, download, volume;
 	bool control[PLAYER_CONTROL_COUNT];
+	bool link[PLAYER_LINK_COUNT];
 	bool glyph[GLYPH_COUNT];
 	int loader_step;
 } player_look;
@@ -96,6 +102,8 @@ void view_player_enter(void)
 {
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		press_reset(&press_control[i]);
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		press_reset(&press_link[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_reset(&press_glyph[i]);
 	touch.target = -1;
@@ -129,9 +137,16 @@ static void parse_fitted(C2D_Text *text, C2D_TextBuf buf, const char *string,
 	ui_parse_fitted(text, buf, scratch_buf, string, scale, width);
 }
 
-static int content_width(void)
+/* A link's text starts at its zone's left edge, where the track's text
+ * always was: the zone only makes the touch target TOUCH_MIN high. */
+static int link_text_x(int link)
 {
-	return SCREEN_BOTTOM_W - 2 * SP_2;
+	return player_link_rect(link).x;
+}
+
+static int link_text_width(int link)
+{
+	return player_link_rect(link).w;
 }
 
 static void parse_static(void)
@@ -169,10 +184,15 @@ static void parse_track(void)
 	                                       : tr(STR_UNTITLED);
 	const char *artist = info.track->artist[0] ? info.track->artist
 	                                           : tr(STR_UNKNOWN_ARTIST);
+	const char *album = info.track->album[0] ? info.track->album
+	                                         : tr(STR_UNKNOWN_ALBUM);
 	parse_fitted(&title_text, track_buf, name, TXT_CABEZA,
-	             content_width() - queue_w - SP_2);
+	             link_text_width(PLAYER_LINK_TRACK) - queue_w - SP_2);
+	/* Cut at half the width; the whole names are on the top screen. */
 	parse_fitted(&artist_text, track_buf, artist, TXT_CUERPO,
-	             content_width());
+	             link_text_width(PLAYER_LINK_ARTIST));
+	parse_fitted(&album_text, track_buf, album, TXT_CUERPO,
+	             link_text_width(PLAYER_LINK_ALBUM));
 }
 
 static void parse_times(void)
@@ -230,6 +250,22 @@ static bool control_enabled(int control)
 	}
 }
 
+/* A link answers while the track's text shows, the artist and the album
+ * only when the track names them. */
+static bool link_enabled(int link)
+{
+	if (!player_links_enabled(info.phase) || !info.track)
+		return false;
+	switch (link) {
+	case PLAYER_LINK_ARTIST:
+		return info.track->artist_uri[0] != '\0';
+	case PLAYER_LINK_ALBUM:
+		return info.track->album_uri[0] != '\0';
+	default:
+		return true;
+	}
+}
+
 static player_look current_look(void)
 {
 	player_look look = {
@@ -248,6 +284,8 @@ static player_look current_look(void)
 	};
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		look.control[i] = press_down(&press_control[i]);
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		look.link[i] = press_down(&press_link[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		look.glyph[i] = press_down(&press_glyph[i]);
 	return look;
@@ -265,6 +303,10 @@ static bool same_look(const player_look *a, const player_look *b)
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		if (a->control[i] != b->control[i])
 			return false;
+	/* 9: the links only repaint on being pressed and released. */
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		if (a->link[i] != b->link[i])
+			return false;
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		if (a->glyph[i] != b->glyph[i])
 			return false;
@@ -275,6 +317,8 @@ static void tick(void)
 {
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		press_tick(&press_control[i]);
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		press_tick(&press_link[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_tick(&press_glyph[i]);
 	if (info.phase == PLAYER_PHASE_LOADING)
@@ -282,6 +326,18 @@ static void tick(void)
 }
 
 /* --- Input ------------------------------------------------------------ */
+
+static player_action link_action(int link)
+{
+	switch (link) {
+	case PLAYER_LINK_ARTIST:
+		return PLAYER_ACTION_OPEN_ARTIST;
+	case PLAYER_LINK_ALBUM:
+		return PLAYER_ACTION_OPEN_ALBUM;
+	default:
+		return PLAYER_ACTION_OPEN_TRACK;
+	}
+}
 
 static player_action control_action(int control)
 {
@@ -336,22 +392,42 @@ static player_action handle_touch(u32 down, u32 held, u32 up, bool *owned)
 		hit = player_hit_test(pos.px, pos.py);
 		if (hit >= 0 && !control_enabled(hit))
 			hit = -1;
+		if (hit < 0) {
+			bool enabled[PLAYER_LINK_COUNT];
+			for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+				enabled[i] = link_enabled(i);
+			int link = player_link_hit(pos.px, pos.py, enabled);
+			if (link >= 0)
+				hit = LINK_CONTROL + link;
+		}
 	}
-	int control;
+	int control = -1;
 	touch_event event = touch_track_update(&touch, (down & KEY_TOUCH) != 0,
 	                                       (held & KEY_TOUCH) != 0,
 	                                       (up & KEY_TOUCH) != 0, hit,
 	                                       &control);
 	player_action now = PLAYER_ACTION_NONE;
+	if (event == TOUCH_NONE || control < 0) {
+		*owned = touch.target >= 0;
+		return now;
+	}
+	bool link = control >= LINK_CONTROL;
+	press_state *press = link ? &press_link[control - LINK_CONTROL]
+	                          : &press_control[control];
 	switch (event) {
 	case TOUCH_PRESS:
-		press_begin(&press_control[control]);
+		press_begin(press);
 		break;
 	case TOUCH_CANCEL:
-		press_cancel(&press_control[control]);
+		press_cancel(press);
 		break;
 	case TOUCH_ACTIVATE: {
-		press_end(&press_control[control]);
+		press_end(press);
+		if (link) {
+			/* A detail takes the screen over: once the press is seen. */
+			queue(link_action(control - LINK_CONTROL), press);
+			break;
+		}
 		player_action action = control_action(control);
 		if (loads_track(action))
 			queue(action, &press_control[control]);
@@ -440,16 +516,38 @@ bool view_player_dirty(void)
 
 /* --- Drawing ---------------------------------------------------------- */
 
-static void draw_track(void)
+/* A link (plan 4.4, STYLES.md 5.14): text, not a button. At rest it is
+ * plain text in `rest`; pressed (6.3) the text turns `lima` and gets a
+ * BEVEL_W underline in the same colour, with no panel and no shift, so it
+ * still reads as the text it was. `lima` is the accent that keeps 4.5:1
+ * on both background tones (2.6). */
+static void draw_link(int link, const C2D_Text *text, float scale,
+                      bool pressed, u32 rest)
 {
-	int title_cy = PLAYER_TEXT_TOP + ui_line_height(TXT_CABEZA) / 2;
-	int artist_cy = PLAYER_TEXT_TOP + ui_line_height(TXT_CABEZA) + SP_1 +
-	                ui_line_height(TXT_CUERPO) / 2;
-	ui_text(&title_text, SP_2, title_cy, TXT_CABEZA, COL_TEXTO);
+	ui_rect zone = player_link_rect(link);
+	int x = link_text_x(link);
+	int cy = zone.y + zone.h / 2;
+	ui_text(text, x, cy, scale, pressed ? COL_LIMA : rest);
+	if (pressed) {
+		ui_rect line = { x, cy + ui_line_height(scale) / 2,
+		                 ui_px_ceil(ui_text_width(text, scale)), BEVEL_W };
+		ui_fill(line, COL_LIMA);
+	}
+}
+
+static void draw_track(const player_look *look)
+{
+	draw_link(PLAYER_LINK_TRACK, &title_text, TXT_CABEZA,
+	          look->link[PLAYER_LINK_TRACK], COL_TEXTO);
+	/* The position is not part of the link: it stays as it is. */
+	ui_rect zone = player_link_rect(PLAYER_LINK_TRACK);
 	int queue_w = ui_px_ceil(ui_text_width(&queue_text, TXT_META));
-	ui_text(&queue_text, SCREEN_BOTTOM_W - SP_2 - queue_w, title_cy,
+	ui_text(&queue_text, zone.x + zone.w - queue_w, zone.y + zone.h / 2,
 	        TXT_META, COL_TEXTO_2);
-	ui_text(&artist_text, SP_2, artist_cy, TXT_CUERPO, COL_TEXTO_2);
+	draw_link(PLAYER_LINK_ARTIST, &artist_text, TXT_CUERPO,
+	          look->link[PLAYER_LINK_ARTIST], COL_TEXTO_2);
+	draw_link(PLAYER_LINK_ALBUM, &album_text, TXT_CUERPO,
+	          look->link[PLAYER_LINK_ALBUM], COL_TEXTO_2);
 }
 
 static void draw_controls(const player_look *look)
@@ -543,7 +641,7 @@ void view_player_draw_bottom(void)
 	}
 	case PLAYER_PHASE_LOADING: {
 		/* Waiting, with no audio yet: the indicator is allowed (5.7). */
-		draw_track();
+		draw_track(&look);
 		int cy = PLAYER_CONTROLS_TOP + BTN_PLAY / 2;
 		ui_loader(SCREEN_BOTTOM_W / 2, cy, look.loader_step);
 		ui_text_centered(&stage_text, SCREEN_BOTTOM_W / 2,
@@ -551,7 +649,7 @@ void view_player_draw_bottom(void)
 		break;
 	}
 	default:
-		draw_track();
+		draw_track(&look);
 		draw_controls(&look);
 		draw_bars(&look);
 		break;

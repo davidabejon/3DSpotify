@@ -241,7 +241,8 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("C2D_Color32", source, path.name)
             self.assertNotIn("UI_COLOR_", source, path.name)
         # The redesigned views: no loose colours, sizes or text scales.
-        for name in ("view_home.c", "view_results.c", "draw.c"):
+        for name in ("view_home.c", "view_results.c", "track_list.c",
+                     "draw.c"):
             source = (ui_dir / name).read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
             # 0.0f is the depth argument of the C2D calls.
@@ -254,14 +255,17 @@ class BuildTests(unittest.TestCase):
         self.assertIn("void ui_button(", draw)
         home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
         for source, name in ((draw, "draw.c"), (home, "view_home.c"),
-                             (results, "view_results.c")):
+                             (results, "view_results.c"),
+                             (rows, "track_list.c")):
             for call in ("C2D_DrawCircle", "C2D_DrawTriangle",
                          "C2D_DrawRectangle(", "C2D_DrawEllipse",
                          "color_fade", "color_mix"):
                 self.assertNotIn(call, source, name)
         self.assertNotIn("C2D_DrawRect", home)
         self.assertNotIn("C2D_DrawRect", results)
+        self.assertNotIn("C2D_DrawRect", rows)
         # Icons: crisp at whole pixels (5.10).
         icons = (ui_dir / "icons.c").read_text(encoding="utf-8")
         self.assertIn("GPU_NEAREST, GPU_NEAREST", icons)
@@ -297,15 +301,22 @@ class BuildTests(unittest.TestCase):
         # the tab bar's.
         self.assertIn("#define RESULTS_PER_PAGE 4", logic)
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        self.assertIn("move_focus(RESULTS_PER_PAGE)", results)
-        self.assertIn("else if (down & KEY_RIGHT)\n\t\t\tmove_focus("
-                      "RESULTS_PER_PAGE);", results)
-        self.assertNotIn("KEY_L)", results)
-        self.assertNotIn("KEY_R)", results)
+        # The rows, their focus, scrolling and touch are the list widget's,
+        # shared with the album and artist details.
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
+        self.assertIn('#include "track_list.h"', results)
+        self.assertIn("track_list_update_touch(&list", results)
+        self.assertIn("track_list_navigate(&list, down)", results)
+        self.assertIn("move_focus(l, RESULTS_PER_PAGE)", rows)
+        self.assertIn("else if (down & KEY_RIGHT)\n\t\tmove_focus(l, "
+                      "RESULTS_PER_PAGE);", rows)
+        for source in (results, rows):
+            self.assertNotIn("KEY_L)", source)
+            self.assertNotIn("KEY_R)", source)
         # Rows are cut in pixels, never the duration (5.3, 3.3).
-        self.assertIn("parse_fitted(&row_title[i]", results)
+        self.assertIn("ui_parse_fitted(&l->title[i]", rows)
         # The thumbnail and its note placeholder are the shared ui_art.
-        self.assertIn("ui_art(list_thumb_rect(row)", results)
+        self.assertIn("ui_art(list_thumb_rect(row)", rows)
         draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
         self.assertIn("ICON_NOTE", draw)
         # On-demand render and view switching.
@@ -383,20 +394,41 @@ class BuildTests(unittest.TestCase):
                         stop_search.index("search_join();"))
         stop = app[app.index("static void stop_tabs("):]
         self.assertIn("thumbs_wait();", stop[:stop.index("\n}\n")])
-        results_src = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        allow = results_src[results_src.index(
-            "void view_results_allow_thumbs("):]
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
+        detail = (ui_dir / "view_detail.c").read_text(encoding="utf-8")
+        # Allowing and stopping is one switch for every list.
+        allow = results[results.index("void view_results_allow_thumbs("):]
+        self.assertIn("track_list_allow_thumbs(allow);",
+                      allow[:allow.index("\n}\n")])
+        allow = rows[rows.index("void track_list_allow_thumbs("):]
         self.assertIn("thumbs_stop();", allow[:allow.index("\n}\n")])
         self.assertIn("thumbs_init();", app)
         self.assertLess(app.index("thumbs_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
-        # The view: uploads on update, a fixed-size slot either way.
-        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        self.assertIn("thumbs_poll()", results)
-        self.assertIn("thumbs_image(index, &image)", results)
-        self.assertIn("thumbs_set_window(first)", results)
+        # thumbs.c serves one list: the one on screen claims it from its
+        # view's update, where the uploads happen too; a list ready before
+        # it is shown only takes it when no other list has it.
+        frame = rows[rows.index("void track_list_thumbs_frame("):]
+        frame = frame[:frame.index("\n}\n")]
+        self.assertIn("if (thumbs_list != l)", frame)
+        self.assertIn("thumbs_poll()", frame)
+        offer = rows[rows.index("void track_list_offer_thumbs("):]
+        self.assertIn("thumbs_list)", offer[:offer.index("\n}\n")])
+        self.assertIn("track_list_thumbs_frame(&list);", results)
+        self.assertIn("track_list_thumbs_frame(&list);", detail)
+        self.assertIn("track_list_offer_thumbs(&list);", results)
+        # A fixed-size slot either way.
+        self.assertIn("thumbs_image(index, &image)", rows)
+        self.assertIn("thumbs_set_window(l->first)", rows)
+        # Only the list thumbs.c serves follows the scroll with downloads.
+        self.assertIn("if (l->style == TRACK_LIST_THUMBS && l == thumbs_list "
+                      "&& l->thumbs_synced)\n"
+                      "\t\tthumbs_set_window(l->first);", rows)
         # Nothing thumbs.c holds for another list is drawn.
-        self.assertIn("thumbs_synced && thumbs_image(index, &image)", results)
+        self.assertIn("l == thumbs_list &&\n"
+                      "\t             l->thumbs_synced && "
+                      "thumbs_image(index, &image)", rows)
 
     def test_results_play_directly_and_scroll_by_touch(self):
         ui_dir = build.ROOT / "ui"
@@ -416,28 +448,184 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("hidKeysDown", play)
         # Dragging (6.9) and the scroll indicator (5.11).
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
-        self.assertIn("list_drag_begin(&drag", results)
+        rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
+        self.assertIn("list_drag_begin(&l->drag", rows)
         # A drag starts on the list, never on the tab bar.
-        self.assertIn("list_area_contains(pos.px, pos.py)", results)
-        self.assertIn("!tabbar_touching()", results)
-        self.assertIn("list_drag_update(&drag", results)
-        self.assertIn("press_cancel(&press_row)", results)
+        self.assertIn("list_area_contains(pos.px, pos.py)", rows)
+        self.assertIn("!tabbar_touching()", rows)
+        self.assertIn("list_drag_update(&l->drag", rows)
+        self.assertIn("press_cancel(&l->press)", rows)
         # A drag may leave rows cut; the buttons align to whole rows.
-        self.assertIn("list_align(scroll, selected, count)", results)
+        self.assertIn("list_align(l->scroll, l->selected, l->count)", rows)
         # The focus survives a drag (6.9), and the first button press with
         # it out of view only brings the list back to it (6.6).
-        drag_end = results[results.index("static void drag_end(void)"):]
+        drag_end = rows[rows.index("static void drag_end(track_list *l)"):]
         drag_end = drag_end[:drag_end.index("\n}\n")]
         for change in ("list_snap", "scroll =", "selected ="):
             self.assertNotIn(change, drag_end)
-        self.assertIn("!list_row_whole(selected, scroll, count)", results)
-        self.assertNotIn("list_keep_visible", results)
-        self.assertIn("list_scroll_thumb(scroll, count)", results)
-        self.assertIn("list_hit_row(pos.px, pos.py, scroll, count)", results)
+        self.assertIn("list_row_whole(l->selected, l->scroll, l->count)", rows)
+        self.assertIn("track_list_realign(&list, down, KEY_A | KEY_X)",
+                      results)
+        for source in (results, rows):
+            self.assertNotIn("list_keep_visible", source)
+        self.assertIn("list_scroll_thumb(look->scroll, l->count)", rows)
+        self.assertIn("list_hit_row(pos.px, pos.py, l->scroll, l->count)",
+                      rows)
         style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
             encoding="utf-8")
         self.assertIn("### 5.11 Indicador de desplazamiento", style)
         self.assertIn("### 6.9 Arrastre en listas", style)
+
+    def test_detail_views_are_wired(self):
+        ui_dir = build.ROOT / "ui"
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        for name in ("detail_nav.h", "detail_logic.h"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("#include <3ds", source, name)
+            self.assertNotIn("#include <citro", source, name)
+        # X opens the track detail; A still plays with nothing in between
+        # (STYLES.md 7.4).
+        results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("press_key(GLYPH_X, RESULTS_ACTION_DETAIL, NULL)",
+                      results)
+        self.assertIn("COL_BTN_X", results)
+        loop = app[app.index("static tabs_exit run_tabs("):
+                   app.index("static void stop_tabs(")]
+        self.assertIn("case RESULTS_ACTION_DETAIL:", loop)
+        self.assertIn("play_from_results(session, view_results_selected());",
+                      loop)
+        self.assertIn("details_open_track(TAB_SEARCH, search.tracks, "
+                      "search.count,", app)
+        # With a detail open, its view has the tab's input and screen.
+        self.assertIn("if (details_active(active_tab)) {\n"
+                      "\t\t\tdetail_input(session, down);", loop)
+        frame = app[app.index("static void frame(void)"):
+                    app.index("/* --- Search ---")]
+        self.assertIn("view_detail_dirty(details_top(active_tab))", frame)
+        self.assertIn("view_detail_draw_bottom(details_top(active_tab))",
+                      frame)
+        # The loader runs once per frame next to the search, a new search
+        # replaces what the Search tab's details came from, and the loader
+        # is gone before the thumbnails' wait and the session.
+        self.assertLess(loop.index("search_poll();"),
+                        loop.index("details_poll(active_tab,"))
+        start = app[app.index("static void search_start("):
+                    app.index("static void search_poll(")]
+        self.assertIn("details_clear(TAB_SEARCH);", start)
+        stop = app[app.index("static void stop_tabs("):]
+        stop = stop[:stop.index("\n}\n")]
+        self.assertLess(stop.index("tls_set_abort(true);"),
+                        stop.index("details_stop();"))
+        self.assertLess(stop.index("details_stop();"),
+                        stop.index("thumbs_wait();"))
+        # Playing from a detail queues its copy, like the results do.
+        play = app[app.index("static void play_from_detail("):
+                   app.index("static void open_result_detail(")]
+        self.assertLess(play.index("view_results_allow_thumbs(false);"),
+                        play.index("player_play(session, doc->selected);"))
+        self.assertIn("queue_from_results = false;", play)
+        # Albums and artists: the track's buttons open them on the same
+        # tab, X on their rows opens a track detail with the list, and a
+        # failed load can be retried.
+        detail_in = app[app.index("static void detail_input("):
+                        app.index("/* --- Tabs ---")]
+        for wired in ("details_open_artist(active_tab, track->artist_uri);",
+                      "details_open_album(active_tab, track->album_uri);",
+                      "details_open_track(active_tab, doc->tracks, "
+                      "doc->count,",
+                      "details_retry(active_tab);",
+                      "details_back(active_tab);"):
+            self.assertIn(wired, detail_in)
+        view = (ui_dir / "view_detail.c").read_text(encoding="utf-8")
+        # An album's rows share its cover: they show their position.
+        self.assertIn("doc->kind == DETAIL_ALBUM ? TRACK_LIST_NUMBERS", view)
+        self.assertIn("track_list_scroll_to(&list, doc->first);", view)
+        self.assertIn("doc->selected = list.selected;", view)
+        # The Playing tab's title, artist and album open their details on
+        # that tab, once the press has been seen; the track's with a copy
+        # of the queue.
+        player = (ui_dir / "view_player.c").read_text(encoding="utf-8")
+        self.assertIn("player_link_hit(pos.px, pos.py, enabled)", player)
+        self.assertIn("queue(link_action(control - LINK_CONTROL), press);",
+                      player)
+        self.assertIn("player_links_enabled(info.phase)", player)
+        for case, kind in (("PLAYER_ACTION_OPEN_TRACK", "DETAIL_TRACK"),
+                           ("PLAYER_ACTION_OPEN_ARTIST", "DETAIL_ARTIST"),
+                           ("PLAYER_ACTION_OPEN_ALBUM", "DETAIL_ALBUM")):
+            self.assertIn(f"case {case}:\n\t\t\t\topen_playing_detail({kind});",
+                          loop)
+        opening = app[app.index("static void open_playing_detail("):
+                      app.index("static void detail_input(")]
+        self.assertIn("details_open_track(TAB_PLAYER, playback_queue, "
+                      "playback_queue_count,", opening)
+        # The detail card has its own image: cover_art stays the playing
+        # track's, which the player waits for before preparing it.
+        self.assertEqual(app.count("artwork_request(&cover_art"), 1)
+        self.assertIn("artwork_request(&cover_art, playback_queue[index]",
+                      app)
+        self.assertIn("artwork_request(&detail_art, detail_art_url);", app)
+        self.assertIn("artwork_poll(&detail_art);", frame)
+        self.assertIn("top_set_detail(top_detail_sync(), &detail_art);",
+                      frame)
+        keyboard = app[app.index("static bool ask_search_query("):
+                       app.index("static void keyboard_search(")]
+        self.assertIn("artwork_invalidate(&detail_art);", keyboard)
+        self.assertLess(app.index("artwork_close(&detail_art);",
+                                  app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+        top_logic = (ui_dir / "top_logic.h").read_text(encoding="utf-8")
+        self.assertIn("if (detail_on)\n\t\treturn TOP_DETAIL;", top_logic)
+        self.assertIn("view_detail_init()", app)
+        self.assertLess(app.index("view_detail_exit();", app.index("done:")),
+                        app.index("ui_exit();", app.index("done:")))
+
+    def test_detail_views_follow_style_guide_and_docs(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        # Pure logic, testable on the host.
+        marquee = (ui_dir / "marquee_logic.h").read_text(encoding="utf-8")
+        self.assertNotIn("#include <3ds", marquee)
+        self.assertNotIn("#include <citro", marquee)
+        # The detail views: no loose colours, text scales or primitives.
+        for name in ("view_detail.c", "top_detail.c", "top_now.c"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
+            self.assertIsNone(re.search(r"\b0\.(?!0f)\d+f\b", source), name)
+            for call in ("C2D_DrawCircle", "C2D_DrawTriangle",
+                         "C2D_DrawRect", "C2D_DrawEllipse"):
+                self.assertNotIn(call, source, name)
+        # The detail card is centred and rolls what does not fit instead
+        # of cutting it (STYLES.md 5.15, 7.12); the clipping lives in draw.c.
+        card = (ui_dir / "top_detail.c").read_text(encoding="utf-8")
+        self.assertIn("top_now_draw_header(art, true,", card)
+        self.assertNotIn("ui_parse_fitted", card)
+        self.assertIn("marquee_offset(", card)
+        top_now = (ui_dir / "top_now.c").read_text(encoding="utf-8")
+        self.assertIn("ui_text_marquee(", top_now)
+        draw = (ui_dir / "draw.c").read_text(encoding="utf-8")
+        self.assertIn("C3D_SetScissor(GPU_SCISSOR_DISABLE", draw)
+        # The loader's own errors come from the language tables.
+        details = (ui_dir / "details.c").read_text(encoding="utf-8")
+        self.assertIn("tr(STR_ERR_DETAIL_CONNECT_FMT)", details)
+        self.assertIn("tr(STR_ERR_DETAIL_THREAD)", details)
+        self.assertIsNone(re.search(r'snprintf\([^;]*"[a-z][^"%]*[a-z]"',
+                                    details))
+        # Documented: the components, the screens and the controls.
+        style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
+            encoding="utf-8")
+        for section in ("### 5.14 Enlace", "### 5.15 Texto que rueda",
+                        "### 7.9 Detalles: navegación común",
+                        "### 7.10 Detalle de canción",
+                        "### 7.11 Detalle de álbum y de artista",
+                        "### 7.12 Ficha de detalle (pantalla superior)"):
+            self.assertIn(section, style)
+        self.assertIn("[A] Reproducir [X] Detalle [Y] Buscar [B] Volver",
+                      style)
+        for readme, heading in (("README.md", "### Details"),
+                                ("README_es.md", "### Detalles")):
+            text = (build.ROOT.parent / readme).read_text(encoding="utf-8")
+            self.assertIn(heading, text, readme)
+            self.assertIn("#3FA2FF", text, readme)
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT

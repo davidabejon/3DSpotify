@@ -1,0 +1,347 @@
+#include "details.h"
+
+#include "http3ds.h"
+#include "lang.h"
+#include "worker_priority.h"
+
+#include <3ds.h>
+
+#include <stdio.h>
+#include <string.h>
+
+/* An http_session, a TLS handshake and a metadata batch: what the
+ * thumbnails' worker needs too. */
+#define DETAIL_WORKER_STACK (32 * 1024)
+
+/* One load at a time. Everything the worker touches is here, so a load
+ * that nobody wants any more can finish on its own without harm. Global,
+ * never on a thread's stack: the tracks alone are ~23 KB. */
+typedef struct {
+	detail_kind kind;
+	char uri[SP_URI_MAX];
+	char host[128];
+	char token[1024];
+	int  doc;                     /* the document it is for... */
+	unsigned serial;              /* ...as long as it still has this serial */
+	sp_album  album;
+	sp_artist artist;
+	const char *uris[DETAIL_MAX_TRACKS];
+	sp_track tracks[DETAIL_MAX_TRACKS];
+	int  count;
+	int  result;                  /* 0 or -1 */
+	char error[192];
+	volatile bool cancel_requested;
+	volatile bool done;
+} detail_job;
+
+static detail_doc docs[DETAIL_POOL];
+static detail_stack stacks[DETAIL_STACKS];
+static detail_job job;
+static Thread worker;
+
+static void secure_clear(void *data, size_t len)
+{
+	volatile unsigned char *p = data;
+	while (len--)
+		*p++ = 0;
+}
+
+static detail_stack *stack_of(app_tab tab)
+{
+	int i = detail_tab_stack(tab);
+	return i < 0 ? NULL : &stacks[i];
+}
+
+static bool on_top(int slot)
+{
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		if (detail_stack_top(&stacks[i]) == slot)
+			return true;
+	return false;
+}
+
+/* A level going away: its load, if running, is not wanted. */
+static void forget_load(int slot)
+{
+	if (worker && job.doc == slot)
+		job.cancel_requested = true;
+}
+
+/* --------------------------------------------------------------- worker */
+
+static void worker_main(void *arg)
+{
+	(void)arg;
+	int n = 0;
+	int rc = -1;
+	http_session *sess = http_session_open(job.host);
+	if (!sess) {
+		snprintf(job.error, sizeof(job.error),
+		         tr(STR_ERR_DETAIL_CONNECT_FMT), job.host);
+		goto done;
+	}
+	if (job.kind == DETAIL_ALBUM) {
+		rc = sp_album_metadata(sess, job.token, job.uri, &job.album,
+		                       job.error, sizeof(job.error));
+		n = job.album.track_count;
+		for (int i = 0; i < n; i++)
+			job.uris[i] = job.album.track_uris[i];
+	} else {
+		/* The service already sends the account country's top tracks, so
+		 * no country is needed to choose them (plan, phase 0). */
+		rc = sp_artist_metadata(sess, job.token, job.uri, NULL, &job.artist,
+		                        job.error, sizeof(job.error));
+		n = job.artist.track_count;
+		for (int i = 0; i < n; i++)
+			job.uris[i] = job.artist.track_uris[i];
+	}
+	/* Its tracks come as bare ids: one more request, on the same link,
+	 * gives them names. */
+	if (rc == 0 && n > 0 && !job.cancel_requested) {
+		int got = sp_track_metadata_batch_s(sess, job.token, job.uris, n,
+		                                    job.tracks, job.error,
+		                                    sizeof(job.error));
+		if (got < 0)
+			rc = -1;
+		else
+			job.count = got;
+	}
+	http_session_close(sess);
+done:
+	job.result = rc;
+	__sync_synchronize();
+	job.done = true;
+}
+
+/* The finished load into its document, unless the document moved on. */
+static void apply(detail_doc *d)
+{
+	if (job.result != 0) {
+		d->state = DETAIL_FAILED;
+		snprintf(d->error, sizeof(d->error), "%s", job.error);
+		return;
+	}
+	if (job.kind == DETAIL_ALBUM) {
+		const sp_album *a = &job.album;
+		snprintf(d->title, sizeof(d->title), "%s", a->name);
+		snprintf(d->subtitle, sizeof(d->subtitle), "%s", a->artist);
+		snprintf(d->art, sizeof(d->art), "%s", a->art_large);
+		snprintf(d->label, sizeof(d->label), "%s", a->label);
+		d->year = a->year;
+		d->album_type = a->type;
+		d->total_tracks = a->total_tracks;
+	} else {
+		const sp_artist *a = &job.artist;
+		snprintf(d->title, sizeof(d->title), "%s", a->name);
+		snprintf(d->art, sizeof(d->art), "%s", a->art_large);
+		d->total_tracks = a->track_count;
+	}
+	d->count = job.count;
+	memcpy(d->tracks, job.tracks, (size_t)job.count * sizeof(d->tracks[0]));
+	d->selected = 0;
+	d->first = 0;
+	d->state = DETAIL_READY;
+}
+
+/* Joins a load that has returned (it costs nothing then). True when it
+ * changed a document on screen. */
+static bool reap(void)
+{
+	if (!worker || !job.done)
+		return false;
+	__sync_synchronize();
+	threadJoin(worker, U64_MAX);
+	threadFree(worker);
+	worker = NULL;
+	secure_clear(job.token, sizeof(job.token));
+
+	detail_doc *d = &docs[job.doc];
+	if (job.cancel_requested || d->serial != job.serial ||
+	    d->state != DETAIL_LOADING)
+		return false;   /* still LOADING if wanted: started again */
+	apply(d);
+	return on_top(job.doc);
+}
+
+static void start(int slot, const char *host, const char *token)
+{
+	detail_doc *d = &docs[slot];
+	memset(&job, 0, sizeof(job));
+	job.kind = d->kind;
+	job.doc = slot;
+	job.serial = d->serial;
+	snprintf(job.uri, sizeof(job.uri), "%s", d->uri);
+	snprintf(job.host, sizeof(job.host), "%s", host);
+	snprintf(job.token, sizeof(job.token), "%s", token);
+	/* Below the decoder, like every worker that can overlap playback. */
+	worker = threadCreate(worker_main, NULL, DETAIL_WORKER_STACK,
+	                      background_priority(), -2, false);
+	if (!worker) {
+		secure_clear(job.token, sizeof(job.token));
+		d->state = DETAIL_FAILED;
+		snprintf(d->error, sizeof(d->error), "%s",
+		         tr(STR_ERR_DETAIL_THREAD));
+	}
+}
+
+/* The next document waiting for its load: only levels on top, since a
+ * buried one is not on screen and loads when it surfaces. */
+static int waiting(app_tab active)
+{
+	int first = detail_tab_stack(active);
+	for (int k = 0; k < DETAIL_STACKS; k++) {
+		int i = first < 0 ? k : (first + k) % DETAIL_STACKS;
+		int top = detail_stack_top(&stacks[i]);
+		if (top >= 0 && docs[top].kind != DETAIL_TRACK &&
+		    docs[top].state == DETAIL_LOADING)
+			return top;
+	}
+	return -1;
+}
+
+/* ----------------------------------------------------------- the stacks */
+
+/* A fresh document on top of `tab`'s stack, or NULL for a tab without
+ * details. */
+static detail_doc *push(app_tab tab)
+{
+	detail_stack *s = stack_of(tab);
+	if (!s)
+		return NULL;
+	if (s->count >= DETAIL_DEPTH)
+		forget_load(detail_stack_drop_oldest(s));
+	int slot = detail_pool_free(stacks);
+	if (slot < 0)
+		return NULL;   /* cannot happen: see detail_pool_free */
+	detail_doc *d = &docs[slot];
+	unsigned serial = d->serial + 1;
+	memset(d, 0, sizeof(*d));
+	d->serial = serial;
+	detail_stack_push(s, slot);
+	return d;
+}
+
+bool details_active(app_tab tab)
+{
+	detail_stack *s = stack_of(tab);
+	return s && s->count > 0;
+}
+
+detail_doc *details_top(app_tab tab)
+{
+	detail_stack *s = stack_of(tab);
+	int top = s ? detail_stack_top(s) : -1;
+	return top >= 0 ? &docs[top] : NULL;
+}
+
+void details_open_track(app_tab tab, const sp_track *list, int count,
+                        int index)
+{
+	if (!list || index < 0 || index >= count)
+		return;
+	/* A longer list keeps a window around the track. */
+	int from = 0;
+	if (count > DETAIL_MAX_TRACKS) {
+		from = index - DETAIL_MAX_TRACKS / 2;
+		if (from < 0)
+			from = 0;
+		if (from > count - DETAIL_MAX_TRACKS)
+			from = count - DETAIL_MAX_TRACKS;
+		count = DETAIL_MAX_TRACKS;
+	}
+	detail_doc *d = push(tab);
+	if (!d)
+		return;
+	d->kind = DETAIL_TRACK;
+	d->state = DETAIL_READY;
+	memcpy(d->tracks, list + from, (size_t)count * sizeof(d->tracks[0]));
+	d->count = count;
+	d->selected = index - from;
+	const sp_track *t = &d->tracks[d->selected];
+	snprintf(d->uri, sizeof(d->uri), "%s", t->uri);
+	snprintf(d->title, sizeof(d->title), "%s", t->name);
+	snprintf(d->subtitle, sizeof(d->subtitle), "%s", t->artist);
+	snprintf(d->art, sizeof(d->art), "%s", t->art_large);
+	d->year = t->year;
+}
+
+static void open_entity(app_tab tab, detail_kind kind, const char *uri)
+{
+	if (!uri || !uri[0] || !stack_of(tab))
+		return;
+	/* Whatever loads now is not what the user is after any more; if it is
+	 * still on a stack it loads again later. */
+	if (worker)
+		job.cancel_requested = true;
+	detail_doc *d = push(tab);
+	if (!d)
+		return;
+	d->kind = kind;
+	d->state = DETAIL_LOADING;
+	snprintf(d->uri, sizeof(d->uri), "%s", uri);
+}
+
+void details_open_album(app_tab tab, const char *uri)
+{
+	open_entity(tab, DETAIL_ALBUM, uri);
+}
+
+void details_open_artist(app_tab tab, const char *uri)
+{
+	open_entity(tab, DETAIL_ARTIST, uri);
+}
+
+bool details_back(app_tab tab)
+{
+	detail_stack *s = stack_of(tab);
+	int slot = s ? detail_stack_pop(s) : -1;
+	if (slot < 0)
+		return false;
+	forget_load(slot);
+	return true;
+}
+
+void details_retry(app_tab tab)
+{
+	detail_doc *d = details_top(tab);
+	if (!d || d->kind == DETAIL_TRACK || d->state != DETAIL_FAILED)
+		return;
+	d->state = DETAIL_LOADING;
+	d->error[0] = '\0';
+}
+
+void details_clear(app_tab tab)
+{
+	detail_stack *s = stack_of(tab);
+	if (!s)
+		return;
+	for (int i = 0; i < s->count; i++)
+		forget_load(s->slot[i]);
+	detail_stack_clear(s);
+}
+
+bool details_poll(app_tab active, const char *host, const char *token)
+{
+	bool changed = reap();
+	if (!worker && host && host[0] && token && token[0]) {
+		int slot = waiting(active);
+		if (slot >= 0) {
+			start(slot, host, token);
+			changed |= docs[slot].state == DETAIL_FAILED;
+		}
+	}
+	return changed;
+}
+
+void details_stop(void)
+{
+	if (worker) {
+		job.cancel_requested = true;
+		threadJoin(worker, U64_MAX);
+		threadFree(worker);
+		worker = NULL;
+	}
+	secure_clear(job.token, sizeof(job.token));
+	for (int i = 0; i < DETAIL_STACKS; i++)
+		detail_stack_clear(&stacks[i]);
+}

@@ -6,7 +6,9 @@
  * view only shows a snapshot of it (player_info) and turns input into
  * actions. Input follows STYLES.md 6: A presses the play button, left and
  * right the skip buttons, touch acts on lifting the stylus, and up/down
- * change the volume bar in the same frame (6.7). Per 9, a GPU frame is
+ * change the volume bar in the same frame (6.7). The title, the artist and
+ * the album are links, touch only, to their details
+ * (docs/plan_vistas_detalle.md 4.4). Per 9, a GPU frame is
  * only needed when the clock's second, the volume, the pause, a press or
  * the phase changes; the download share is sampled with the clock. Main
  * thread only. */
@@ -47,7 +49,12 @@ typedef enum {
 	/* B: back to the Search tab, the audio keeps playing. */
 	PLAYER_ACTION_BACK,
 	/* SELECT: switch the language. */
-	PLAYER_ACTION_LANGUAGE
+	PLAYER_ACTION_LANGUAGE,
+	/* The links: the detail of the track playing, of its artist or of its
+	 * album, on this tab. */
+	PLAYER_ACTION_OPEN_TRACK,
+	PLAYER_ACTION_OPEN_ARTIST,
+	PLAYER_ACTION_OPEN_ALBUM
 } player_action;
 
 bool view_player_init(void);
