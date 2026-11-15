@@ -10,6 +10,7 @@
 #include "artwork.h"
 #include "cfg3ds.h"
 #include "details.h"
+#include "home_feed.h"
 #include "icons.h"
 #include "lang.h"
 #include "login_logic.h"
@@ -1420,6 +1421,8 @@ static tabs_exit run_tabs(spotify_session *session)
 {
 	active_view = VIEW_TABS;
 	tabbar_reset(TAB_HOME);
+	/* In the background: the home tab shows its skeleton meanwhile. */
+	home_feed_start(session->host, session->library_token, session->username);
 	switch_tab(TAB_HOME);
 	for (;;) {
 		hidScanInput();
@@ -1433,6 +1436,7 @@ static tabs_exit run_tabs(spotify_session *session)
 		player_pump();
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token);
+		home_feed_poll();
 		/* Not stopped on leaving the tab: it only fetches the rows on
 		 * screen and the next ones anyway. */
 		view_results_allow_thumbs(!player_preparing());
@@ -1569,6 +1573,7 @@ static void stop_tabs(void)
 	player_stop();
 	search_stop();
 	details_stop();
+	home_feed_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();

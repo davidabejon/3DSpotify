@@ -2,6 +2,7 @@
 #include "detail_logic.h"
 #include "detail_nav.h"
 #include "grid_logic.h"
+#include "home_feed_logic.h"
 #include "home_logic.h"
 #include "http_logic.h"
 #include "image_util.h"
@@ -497,6 +498,57 @@ static void test_meta_parse_recent(void)
 	assert(sp_parse_recent_playlists(JSON, 60, uris, 4) == 0);
 	assert(sp_parse_recent_playlists(JSON, 70, uris, 4) == 1);
 	assert(sp_parse_recent_playlists("{}", 2, uris, 4) == 0);
+}
+
+static void set_ref(sp_playlist_ref *r, const char *uri, const char *name)
+{
+	memset(r, 0, sizeof(*r));
+	snprintf(r->uri, sizeof(r->uri), "%s", uri);
+	snprintf(r->name, sizeof(r->name), "%s", name);
+}
+
+static void test_home_merge(void)
+{
+	static sp_playlist_ref root[4], out[8];
+	bool missing[8];
+	set_ref(&root[0], "spotify:playlist:A", "a");
+	set_ref(&root[1], "spotify:playlist:B", "b");
+	set_ref(&root[2], "spotify:playlist:C", "c");
+	set_ref(&root[3], "spotify:playlist:D", "d");
+	/* History: C, X (not in the folder), C again, A. */
+	static const char recent[4][SP_URI_MAX] = {
+		"spotify:playlist:C", "spotify:playlist:X", "spotify:playlist:C",
+		"spotify:playlist:A",
+	};
+	int total = 0;
+	int n = home_merge(recent, 4, root, 4, 4, out, missing, 8, &total);
+	assert(n == 5 && total == 5);
+	/* Recent first, named from the folder; then the rest in its order. */
+	assert(strcmp(out[0].uri, "spotify:playlist:C") == 0 && !missing[0]);
+	assert(strcmp(out[0].name, "c") == 0);
+	assert(strcmp(out[1].uri, "spotify:playlist:X") == 0 && missing[1]);
+	assert(!out[1].name[0]);
+	assert(strcmp(out[2].uri, "spotify:playlist:A") == 0);
+	assert(strcmp(out[3].uri, "spotify:playlist:B") == 0);
+	assert(strcmp(out[4].uri, "spotify:playlist:D") == 0 && !missing[4]);
+
+	/* Capped: the total still counts everything, folder entries that were
+	 * never fetched included. */
+	n = home_merge(recent, 4, root, 4, 30, out, missing, 2, &total);
+	assert(n == 2 && total == 5 + 26);
+	/* No history: the folder as it is. */
+	n = home_merge(NULL, 0, root, 4, 4, out, missing, 8, &total);
+	assert(n == 4 && strcmp(out[0].uri, "spotify:playlist:A") == 0);
+	/* No folder: the history alone. */
+	n = home_merge(recent, 4, root, 0, 0, out, missing, 8, &total);
+	assert(n == 3 && missing[0] && missing[1] && missing[2]);
+
+	/* A missing playlist whose header failed goes; the rest close ranks. */
+	n = home_merge(recent, 4, root, 4, 4, out, missing, 8, &total);
+	n = home_drop(out, missing, n, 1);
+	assert(n == 4 && strcmp(out[1].uri, "spotify:playlist:A") == 0);
+	assert(!missing[1]);
+	assert(home_drop(out, missing, n, 9) == n);
 }
 
 static void test_meta_parse_artist(void)
@@ -2478,6 +2530,7 @@ int main(void)
 	test_meta_parse_rootlist();
 	test_meta_parse_playlist();
 	test_meta_parse_recent();
+	test_home_merge();
 	test_detail_stack();
 	test_detail_pool();
 	test_detail_buttons();
