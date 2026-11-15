@@ -324,6 +324,180 @@ static void test_meta_parse_album(void)
 	assert(a.name[0] == '\0' && a.track_count == 0);
 }
 
+/* One rootlist entry: an Item with `uri` and its MetaItem, built into the
+ * caller's ListItems. `pic` adds a 20-byte picture id (all bytes `pic`). */
+static void add_root_entry(pb *items, const char *uri, const char *name,
+                           int pic, const char *sized_url, int length)
+{
+	uint8_t item_s[96], attrs_s[256], size_s[160], meta_s[320];
+	pb item, attrs, size, meta;
+	pb_init(&item, item_s, sizeof(item_s));
+	pb_str(&item, 1, uri);
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	if (name)
+		pb_str(&attrs, 1, name);
+	if (pic) {
+		uint8_t id[20];
+		memset(id, pic, sizeof(id));
+		pb_bytes(&attrs, 3, id, sizeof(id));
+	}
+	if (sized_url) {
+		pb_init(&size, size_s, sizeof(size_s));
+		pb_str(&size, 1, "default");
+		pb_str(&size, 2, sized_url);
+		pb_sub(&attrs, 13, &size);
+	}
+	pb_init(&meta, meta_s, sizeof(meta_s));
+	pb_sub(&meta, 2, &attrs);
+	if (length)
+		pb_varint(&meta, 3, (uint64_t)length);
+	pb_sub(items, 3, &item);
+	pb_sub(items, 4, &meta);
+}
+
+static void test_meta_parse_rootlist(void)
+{
+	static uint8_t items_s[4096], body_s[4200];
+	pb items, body;
+	pb_init(&items, items_s, sizeof(items_s));
+	add_root_entry(&items, "spotify:playlist:7ccWAm7GdeAUpA2Eu9YI5q", "relax",
+	               0xAB, NULL, 32);
+	/* A folder: its markers go, the playlist inside stays. */
+	add_root_entry(&items, "spotify:start-group:abc:Folder", "Folder", 0,
+	               NULL, 0);
+	add_root_entry(&items, "spotify:playlist:4FScOx76dqrpgQbhk258xR",
+	               "Alterna2026", 0, NULL, 132);
+	add_root_entry(&items, "spotify:end-group:abc", NULL, 0, NULL, 0);
+	/* A generated cover off the reachable CDN reads as none... */
+	add_root_entry(&items, "spotify:playlist:37i9dQZF1EJDBB41SW1yDD",
+	               "Blend", 0,
+	               "https://blend-playlist-covers.spotifycdn.com/v2/x.jpg", 50);
+	/* ...one on i.scdn.co is kept; no name stays empty. */
+	add_root_entry(&items, "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1", NULL,
+	               0, "https://i.scdn.co/image/ab67706c0000da84", 0);
+	add_root_entry(&items, "spotify:album:2noRn2Aes5aoNVsU6iWThc", "Album", 0,
+	               NULL, 0);
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 7);
+	pb_sub(&body, 5, &items);
+	assert(pb_ok(&body));
+
+	static sp_playlist_ref refs[8];
+	int total = -1;
+	int n = sp_parse_rootlist(body.p, body.len, refs, 8, &total);
+	assert(total == 7);
+	assert(n == 4);
+	assert(strcmp(refs[0].uri, "spotify:playlist:7ccWAm7GdeAUpA2Eu9YI5q") == 0);
+	assert(strcmp(refs[0].name, "relax") == 0 && refs[0].length == 32);
+	assert(strcmp(refs[0].art, "https://i.scdn.co/image/"
+	              "abababababababababababababababababababab") == 0);
+	assert(strcmp(refs[1].name, "Alterna2026") == 0 && !refs[1].art[0]);
+	assert(refs[1].length == 132);
+	assert(strcmp(refs[2].name, "Blend") == 0 && !refs[2].art[0]);
+	assert(!refs[3].name[0]);
+	assert(strcmp(refs[3].art, "https://i.scdn.co/image/ab67706c0000da84") == 0);
+
+	/* `max` bounds what is kept. */
+	assert(sp_parse_rootlist(body.p, body.len, refs, 2, NULL) == 2);
+	assert(strcmp(refs[1].name, "Alterna2026") == 0);
+	/* An empty folder is a valid answer. */
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 0);
+	assert(sp_parse_rootlist(body.p, body.len, refs, 8, &total) == 0);
+	assert(total == 0);
+
+	/* A cut name stays whole UTF-8: "aé" cut to 2 bytes keeps only "a". */
+	static uint8_t attrs_s[64];
+	pb attrs;
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	pb_str(&attrs, 1, "a\xC3\xA9");
+	pbv av = { attrs.p, attrs.len };
+	char small[3];
+	sp_parse_list_attributes(&av, small, sizeof(small), NULL, 0);
+	assert(strcmp(small, "a") == 0);
+}
+
+static void test_meta_parse_playlist(void)
+{
+	static uint8_t items_s[4096], attrs_s[128], body_s[4400];
+	pb items, attrs, body;
+	pb_init(&items, items_s, sizeof(items_s));
+	char uri[SP_URI_MAX];
+	for (int i = 0; i < 30; i++) {
+		uint8_t item_s[96];
+		pb item;
+		pb_init(&item, item_s, sizeof(item_s));
+		if (i == 1)
+			pb_str(&item, 1, "spotify:episode:4rOoJ6Egrf8K2IrywzwOMk");
+		else if (i == 2)
+			pb_str(&item, 1, "spotify:local:Artist:Album:A+very+long+title:200");
+		else {
+			snprintf(uri, sizeof(uri), "spotify:track:%022d", i);
+			pb_str(&item, 1, uri);
+		}
+		pb_sub(&items, 3, &item);
+	}
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	pb_str(&attrs, 1, "TWICE Relaxing Songs");
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 1275);
+	pb_sub(&body, 3, &attrs);
+	pb_sub(&body, 5, &items);
+	assert(pb_ok(&body));
+
+	static sp_playlist_info pl;
+	const char *pl_uri = "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1";
+	sp_parse_playlist(body.p, body.len, pl_uri, 99, &pl);
+	assert(strcmp(pl.uri, pl_uri) == 0);
+	assert(strcmp(pl.name, "TWICE Relaxing Songs") == 0 && !pl.art[0]);
+	assert(pl.total_tracks == 1275);
+	assert(pl.skipped == 2);
+	assert(pl.track_count == SP_PLAYLIST_MAX_TRACKS);
+	assert(strcmp(pl.track_uris[0], "spotify:track:0000000000000000000000") == 0);
+	assert(strcmp(pl.track_uris[1], "spotify:track:0000000000000000000003") == 0);
+	for (int i = 0; i < pl.track_count; i++)
+		assert(sp_is_track_uri(pl.track_uris[i]));
+
+	/* A header alone: nothing read, the total still known. */
+	sp_parse_playlist(body.p, body.len, pl_uri, 0, &pl);
+	assert(pl.track_count == 0 && pl.total_tracks == 1275);
+
+	assert(sp_is_track_uri("spotify:track:3n3Ppam7vgaVa1iaRUc9Lp"));
+	assert(!sp_is_track_uri("spotify:track:"));
+	assert(!sp_is_track_uri("spotify:episode:4rOoJ6Egrf8K2IrywzwOMk"));
+	assert(!sp_is_track_uri(NULL));
+}
+
+static void test_meta_parse_recent(void)
+{
+	/* Trimmed from the real answer (probe_meta step 15.2). */
+	static const char JSON[] =
+	    "{\"playContexts\":["
+	    "{\"uri\":\"spotify:playlist:37i9dQZF1EYkqdzj48dyYq\","
+	    "\"lastPlayedTime\":1794727708085,"
+	    "\"lastPlayedTrackUri\":\"spotify:track:6EGkbPJrb88STcdfMu1j1y\"},"
+	    "{\"uri\":\"spotify:album:2noRn2Aes5aoNVsU6iWThc\","
+	    "\"lastPlayedTime\":1794529389812},"
+	    "{\"uri\": \"spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1\","
+	    "\"lastPlayedTime\":1794529389811},"
+	    "{\"uri\":\"spotify:playlist:37i9dQZF1EYkqdzj48dyYq\","
+	    "\"lastPlayedTime\":1794500000000},"
+	    "{\"uri\":\"spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD\"}"
+	    "]}";
+	char uris[4][SP_URI_MAX];
+	int n = sp_parse_recent_playlists(JSON, strlen(JSON), uris, 4);
+	assert(n == 3);
+	assert(strcmp(uris[0], "spotify:playlist:37i9dQZF1EYkqdzj48dyYq") == 0);
+	assert(strcmp(uris[1], "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1") == 0);
+	assert(strcmp(uris[2], "spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD") == 0);
+	assert(sp_parse_recent_playlists(JSON, strlen(JSON), uris, 1) == 1);
+	/* Cut short: a value that ends before its quote is dropped, one that
+	 * closed before the cut is kept. */
+	assert(sp_parse_recent_playlists(JSON, 60, uris, 4) == 0);
+	assert(sp_parse_recent_playlists(JSON, 70, uris, 4) == 1);
+	assert(sp_parse_recent_playlists("{}", 2, uris, 4) == 0);
+}
+
 static void test_meta_parse_artist(void)
 {
 	static uint8_t top_s[2][256], artist_s[1024];
@@ -2199,6 +2373,9 @@ int main(void)
 	test_meta_parse_album();
 	test_meta_parse_artist();
 	test_meta_parse_batch();
+	test_meta_parse_rootlist();
+	test_meta_parse_playlist();
+	test_meta_parse_recent();
 	test_detail_stack();
 	test_detail_pool();
 	test_detail_buttons();

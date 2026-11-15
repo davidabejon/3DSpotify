@@ -1105,53 +1105,54 @@ int main(int argc, char **argv)
 	}
 
 	say("\n8. Rootlist\n");
-	static char uris[16][64];
+	static sp_playlist_ref refs[16];
 	int count = 0;
-	int got = sp_rootlist(sp_host, l5.access_token, info.username, uris, NULL,
-	                      NULL, 16, &count, err, sizeof(err));
+	http_session *plsess = http_session_open(sp_host);
+	int got = plsess ? sp_rootlist_s(plsess, l5.access_token, info.username,
+	                                 refs, 16, &count, err, sizeof(err)) : -1;
 	if (got < 0) {
-		say("   failed: %s\n", err);
+		say("   failed: %s\n", plsess ? err : "no session");
 	} else {
-		say("   length field %d, %d uris read\n", count, got);
+		say("   length field %d, %d playlists kept\n", count, got);
 		for (int i = 0; i < got; i++)
-			say("     %s\n", uris[i]);
+			say("     %s \"%s\" %d%s\n", refs[i].uri, refs[i].name,
+			    refs[i].length, refs[i].art[0] ? " +art" : "");
 		if (count == 0 && got == 0)
 			say("   (the account's playlist folder is empty)\n");
 	}
 
 	say("\n9. Contents of the first playlist\n");
-	const char *first = NULL;
-	for (int i = 0; i < got; i++)
-		if (strncmp(uris[i], "spotify:playlist:", 17) == 0) {
-			first = uris[i] + 17;
-			break;
-		}
-	if (!first) {
+	if (got < 1) {
 		say("   no playlist in the rootlist\n");
 	} else {
-		static char tracks[24][64];
-		char plname[128];
-		int total = 0;
-		int n = sp_playlist(sp_host, l5.access_token, first, plname,
-		                    sizeof(plname), tracks, 24, &total,
-		                    err, sizeof(err));
-		if (n < 0) {
+		static sp_playlist_info pl;
+		if (sp_playlist_s(plsess, l5.access_token, refs[0].uri,
+		                  SP_PLAYLIST_MAX_TRACKS, &pl, err, sizeof(err)) != 0) {
 			say("   failed: %s\n", err);
 		} else {
-			say("   \"%s\": %d tracks, %d read\n", plname, total, n);
-			static const char *ptrs2[24];
-			int show = n < 8 ? n : 8;
+			say("   \"%s\": %d tracks, %d read, %d skipped\n", pl.name,
+			    pl.total_tracks, pl.track_count, pl.skipped);
+			static const char *ptrs2[8];
+			int show = pl.track_count < 8 ? pl.track_count : 8;
 			for (int i = 0; i < show; i++)
-				ptrs2[i] = tracks[i];
+				ptrs2[i] = pl.track_uris[i];
 			static sp_track batch2[8];
-			int named = sp_track_metadata_batch(sp_host, l5.access_token,
-			                                    ptrs2, show, batch2,
-			                                    err, sizeof(err));
+			int named = sp_track_metadata_batch_s(plsess, l5.access_token,
+			                                      ptrs2, show, batch2,
+			                                      err, sizeof(err));
 			for (int i = 0; i < named; i++)
 				say("     %s - %s\n", batch2[i].artist, batch2[i].name);
-			if (named > 0 && n > named)
-				say("     ... y %d mas\n", n - named);
 		}
+	}
+	if (plsess) {
+		static char recent[8][SP_URI_MAX];
+		int nr = sp_recent_playlists_s(plsess, l5.access_token, info.username,
+		                               recent, 8, err, sizeof(err));
+		say("   recent playlists: %d%s%s\n", nr, nr < 0 ? " -- " : "",
+		    nr < 0 ? err : "");
+		for (int i = 0; i < nr; i++)
+			say("     %s\n", recent[i]);
+		http_session_close(plsess);
 	}
 
 	say("\n10. Liked Songs\n");

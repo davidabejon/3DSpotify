@@ -49,6 +49,9 @@
 typedef struct {
 	char host[128];
 	char library_token[1024];
+	/* The canonical username, which the playlist paths name. Not a secret,
+	 * but personal: never logged nor drawn. */
+	char username[128];
 	char oauth_token[1280];
 	char refresh_token[512];
 	time_t oauth_expires_at;
@@ -1809,6 +1812,8 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	int rc = login5_from_credentials(info->username, info->reusable,
 	                                 info->reusable_len, device_id,
 	                                 library, detail, sizeof(detail));
+	snprintf(session->username, sizeof(session->username), "%.*s",
+	         (int)sizeof(session->username) - 1, info->username);
 	ap_close(ap);
 	secure_clear(info, sizeof(*info));
 	secure_clear(device_id, sizeof(device_id));

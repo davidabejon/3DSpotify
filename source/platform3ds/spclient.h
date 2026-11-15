@@ -102,6 +102,37 @@ typedef struct {
 	char track_uris[SP_ARTIST_MAX_TRACKS][SP_URI_MAX];
 } sp_artist;
 
+/* One playlist as the home tab shows it. `art` is an i.scdn.co URL (the
+ * 300px cover) or empty: covers Spotify generates live on other hosts
+ * (blend-playlist-covers.spotifycdn.com, lexicon-assets...) that neither the
+ * CA bundle nor the thumbnail session reach, so they read as "no cover".
+ * `name` may be empty: some playlists carry none. `length` is the track
+ * count the rootlist reports, 0 when unknown. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char art[80];
+	int  length;
+} sp_playlist_ref;
+
+/* A list's worth, as for albums and artists. */
+#define SP_PLAYLIST_MAX_TRACKS 24
+
+/* A playlist's header and the track URIs among its first items. Episodes
+ * and local files are left out of track_uris and counted in `skipped`;
+ * total_tracks is what the service reports for the whole list, all kinds
+ * included. Probed (probe_meta step 15) on playlist4_external.proto:
+ * SelectedListContent { length 2, attributes 3, contents 5 }. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char art[80];
+	int  total_tracks;
+	int  skipped;
+	int  track_count;
+	char track_uris[SP_PLAYLIST_MAX_TRACKS][SP_URI_MAX];
+} sp_playlist_info;
+
 /* Which spclient host to use. Falls back to the well-known name when apresolve
  * has nothing to say, which is what librespot does too. */
 int  sp_resolve(char *host, size_t hostlen, char *err, size_t errlen);
@@ -151,29 +182,32 @@ int  sp_search_tracks(const char *host, const char *token, const char *query,
 int  sp_radio(const char *host, const char *token, const char *seed_uri,
               int count, sp_track *out, int max, char *err, size_t errlen);
 
-/* The user's playlist folder. `count` is how many entries the rootlist holds;
- * up to `max` of their URIs are copied into `uris`. An empty rootlist is a
- * valid answer, not an error. */
-/* The playlist folder, with each list's name.
- *
- * Asking for the decorated rootlist costs the same one request and brings the
- * names along in meta_items; without it the rows have nothing to show but an
- * index, and resolving each playlist for its title would be one request per
- * row. `names` may be NULL. `arts`, when given, gets each row's cover URL
- * (64px-thumb shape) or an empty string; pass NULL to skip. */
-int  sp_rootlist(const char *host, const char *token, const char *username,
-                 char uris[][64], char names[][64], char arts[][80], int max,
-                 int *count, char *err, size_t errlen);
+/* The user's playlist folder, decorated: one request brings every entry's
+ * name, cover and length along in meta_items, where naming each playlist on
+ * its own would be one request per row. Only playlists are kept, folders
+ * flattened. `total` (may be NULL) gets the entries the rootlist holds.
+ * Returns how many were kept (up to `max`), or -1. An empty rootlist is a
+ * valid answer, not an error. `username` is the canonical one from the
+ * access point; it is percent-encoded into the path here. */
+int  sp_rootlist_s(http_session *sess, const char *token, const char *username,
+                   sp_playlist_ref *out, int max, int *total,
+                   char *err, size_t errlen);
 
-/* The tracks in one playlist. `name` gets the playlist's title, `uris` up to
- * `max` track URIs, and `count` the length the server reports, which can
- * exceed what fits. Returns how many URIs were read, or -1.
- *
- * Same SelectedListContent as the rootlist: a rootlist holds playlist URIs and
- * a playlist holds track URIs, so one parser serves both. */
-int  sp_playlist(const char *host, const char *token, const char *playlist_id,
-                 char *name, size_t namelen, char uris[][64], int max,
-                 int *count, char *err, size_t errlen);
+/* The playlists the account played last, most recent first and without
+ * repeats, from the playback history the desktop client reads
+ * (/recently-played/v3, JSON). Other contexts (albums, artists, tracks) are
+ * left out. Returns how many URIs were kept, or -1. */
+int  sp_recent_playlists_s(http_session *sess, const char *token,
+                           const char *username, char uris[][SP_URI_MAX],
+                           int max, char *err, size_t errlen);
+
+/* One playlist's header and its first `max_tracks` items (0 asks for the
+ * header alone, a few hundred bytes). The range is asked of the service,
+ * so a list of thousands costs no more than a short one. `uri` is the full
+ * spotify:playlist: URI. Returns 0 or -1. */
+int  sp_playlist_s(http_session *sess, const char *token, const char *uri,
+                   int max_tracks, sp_playlist_info *out,
+                   char *err, size_t errlen);
 
 /* Liked Songs. This one answers JSON, not protobuf, and carries the whole
  * first page inline. An empty page means an empty library, not a failure --
