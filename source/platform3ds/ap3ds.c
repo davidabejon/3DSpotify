@@ -600,6 +600,9 @@ int ap_wait(ap_session *s, int timeout_ms)
 	 * confusing read failure one call later. */
 	if (p.revents & (POLLERR | POLLHUP | POLLNVAL))
 		return -1;
+	/* Data that arrived with the hangup is still worth reading. */
+	if ((p.revents & SOC_POLLHUP) && !(p.revents & POLLIN))
+		return -1;
 	return 1;
 }
 
