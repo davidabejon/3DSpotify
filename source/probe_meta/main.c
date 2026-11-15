@@ -956,6 +956,104 @@ static void probe_home(const char *host, const char *token,
 	(void)err;
 }
 
+/* ---------------------------------------------- liked songs paging (16)
+ *
+ * The home tab's "Liked Songs" tile needs more than the first page. Two
+ * candidates: context-resolve (JSON, what sp_liked reads), whose pages may
+ * name the next one, and the collection service (protobuf, what the
+ * desktop client pages with): PageRequest { username 1, set 2,
+ * pagination_token 3, limit 4 } -> PageResponse { items 1 (repeated
+ * { uri 1, added_at 2, is_removed 3 }), next_page_token 2 }. */
+static void probe_liked(const char *host, const char *token,
+                        const char *username)
+{
+	say("\n16. Liked songs paging\n");
+	char path[320];
+	http_reply r;
+	snprintf(path, sizeof(path),
+	         "/context-resolve/v1/spotify:user:%s:collection", username);
+	say(" 16.1 context-resolve\n");
+	if (http_get(host, path, token, &r) != 0) {
+		say("   failed: %s\n", r.err);
+	} else {
+		say("   HTTP %d, %u bytes\n", r.status, (unsigned)r.len);
+		int tracks = 0;
+		for (const char *s = r.body; (s = strstr(s, "spotify:track:")); s++)
+			tracks++;
+		say("   track uris: %d\n", tracks);
+		static const char *const KEYS[] = {
+			"\"next_page_url\"", "\"page_url\"", "\"next_page\"",
+			"\"pages\"", "\"metadata\"", "\"restrictions\"",
+		};
+		for (size_t k = 0; k < sizeof(KEYS) / sizeof(KEYS[0]); k++) {
+			const char *at = r.body ? strstr(r.body, KEYS[k]) : NULL;
+			if (at)
+				say("   %s at %u: %.110s\n", KEYS[k],
+				    (unsigned)(at - r.body), at);
+		}
+		for (size_t at = 0; at < r.len && at < 450; at += 150)
+			say("   | %.150s\n", r.body + at);
+		if (r.len > 300)
+			say("   ...| %.300s\n", r.body + r.len - 300);
+		http_reply_free(&r);
+	}
+
+	say(" 16.2 collection/v2/paging\n");
+	for (int page = 0; page < 3; page++) {
+		static char next[256];
+		if (page == 0)
+			next[0] = '\0';
+		uint8_t store[512];
+		pb req;
+		pb_init(&req, store, sizeof(store));
+		pb_str(&req, 1, username);
+		pb_str(&req, 2, "collection");
+		if (next[0])
+			pb_str(&req, 3, next);
+		pb_varint(&req, 4, 10);
+		if (!pb_ok(&req)) {
+			say("   request did not fit\n");
+			return;
+		}
+		if (http_request(host, "/collection/v2/paging", "POST", token,
+		                 "application/vnd.collection-v2.spotify.proto",
+		                 "application/vnd.collection-v2.spotify.proto",
+		                 req.p, req.len, 0, &r) != 0) {
+			say("   failed: %s\n", r.err);
+			return;
+		}
+		say("   page %d: HTTP %d, %u bytes\n", page, r.status, (unsigned)r.len);
+		if (r.status != 200) {
+			say("   body: %.200s\n", r.body ? r.body : "");
+			http_reply_free(&r);
+			return;
+		}
+		pbv whole = { (const uint8_t *)r.body, r.len };
+		dump_fields("PageResponse", &whole);
+		size_t at = 0;
+		pbv item;
+		int n = 0;
+		while (next_bytes(&whole, 1, &at, &item)) {
+			pbv u;
+			char us[64] = "";
+			if (pb_get_bytes(item.p, item.len, 1, &u))
+				pbv_str(&u, us, sizeof(us));
+			if (n < 3)
+				say("     %s\n", us);
+			n++;
+		}
+		say("   %d items\n", n);
+		pbv tok;
+		next[0] = '\0';
+		if (pb_get_bytes(whole.p, whole.len, 2, &tok))
+			pbv_str(&tok, next, sizeof(next));
+		say("   next token: %u chars\n", (unsigned)strlen(next));
+		http_reply_free(&r);
+		if (!next[0])
+			break;
+	}
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -1147,7 +1245,7 @@ int main(int argc, char **argv)
 	if (plsess) {
 		static char recent[8][SP_URI_MAX];
 		int nr = sp_recent_playlists_s(plsess, l5.access_token, info.username,
-		                               recent, 8, err, sizeof(err));
+		                               recent, NULL, 8, err, sizeof(err));
 		say("   recent playlists: %d%s%s\n", nr, nr < 0 ? " -- " : "",
 		    nr < 0 ? err : "");
 		for (int i = 0; i < nr; i++)
@@ -1182,6 +1280,59 @@ int main(int argc, char **argv)
 	probe_details(sp_host, l5.access_token, info.country);
 	probe_client_calls(sp_host, l5.access_token, info.country);
 	probe_home(sp_host, l5.access_token, info.username);
+	probe_liked(sp_host, l5.access_token, info.username);
+
+	/* 17. Does a playlist hold its history's last track under the same
+	 * URI? (The home tab opens recent playlists there.) */
+	say("\n17. Resume track vs playlist items\n");
+	{
+		http_session *s17 = http_session_open(sp_host);
+		static char rec[8][SP_URI_MAX], last[8][SP_URI_MAX];
+		int nr = s17 ? sp_recent_playlists_s(s17, l5.access_token,
+		                                     info.username, rec, last, 8,
+		                                     err, sizeof(err)) : -1;
+		for (int i = 0; i < nr && i < 4; i++) {
+			if (!last[i][0])
+				continue;
+			static sp_playlist_info pl;
+			int found = -1, read = 0;
+			for (int from = 0; from < 200 && found < 0; from += SP_PLAYLIST_PAGE) {
+				if (sp_playlist_s(s17, l5.access_token, rec[i], from,
+				                  SP_PLAYLIST_PAGE, &pl, err, sizeof(err)) != 0 ||
+				    pl.items == 0)
+					break;
+				for (int k = 0; k < pl.track_count && found < 0; k++)
+					if (strcmp(pl.track_uris[k], last[i]) == 0)
+						found = read + k;
+				read += pl.track_count;
+			}
+			static sp_track t;
+			const char *one[1] = { last[i] };
+			int named = sp_track_metadata_batch_s(s17, l5.access_token, one, 1,
+			                                      &t, err, sizeof(err));
+			say("   %s last %s (%s) -> %s %d of %d read\n", rec[i], last[i],
+			    named > 0 ? t.name : "?", found >= 0 ? "found at" : "NOT found",
+			    found, read);
+			/* Not by URI: by name, in the first page (relinked?). */
+			if (found < 0 && named > 0 &&
+			    sp_playlist_s(s17, l5.access_token, rec[i], 0,
+			                  SP_PLAYLIST_PAGE, &pl, err, sizeof(err)) == 0) {
+				static const char *uris[SP_PLAYLIST_PAGE];
+				static sp_track names[SP_PLAYLIST_PAGE];
+				for (int k = 0; k < pl.track_count; k++)
+					uris[k] = pl.track_uris[k];
+				int got = sp_track_metadata_batch_s(s17, l5.access_token, uris,
+				                                    pl.track_count, names, err,
+				                                    sizeof(err));
+				for (int k = 0; k < got; k++)
+					if (strcmp(names[k].name, t.name) == 0)
+						say("     same name at %d: %s (artist %s / %s)\n", k,
+						    names[k].uri, names[k].artist, t.artist);
+			}
+		}
+		if (s17)
+			http_session_close(s17);
+	}
 
 hold:
 	say("\nSTART exits.\n");
