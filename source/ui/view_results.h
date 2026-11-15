@@ -66,9 +66,6 @@ void view_results_error(str_id advice);
 
 /* The focused track. */
 int view_results_selected(void);
-/* Focuses track `index` on whole rows, as the buttons do (6.6): the
- * player's queue moved to it. */
-void view_results_focus(int index);
 
 /* Switching to the tab: no press or drag carries over. */
 void view_results_enter(void);

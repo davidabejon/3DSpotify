@@ -175,12 +175,6 @@ int view_results_selected(void)
 	return list.selected;
 }
 
-void view_results_focus(int index)
-{
-	if (mode == MODE_LIST && index >= 0 && index < list.count)
-		track_list_focus(&list, index);
-}
-
 /* --- Text -------------------------------------------------------------- */
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)

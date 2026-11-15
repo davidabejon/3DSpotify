@@ -61,6 +61,10 @@ typedef struct {
 	 * the document is in use. */
 	sp_track *tracks;
 	int  count, capacity;
+	/* DETAIL_TRACK: opened from a single track rather than from a list (a
+	 * search result, or the radio playing): "Play" starts a radio from it
+	 * instead of queueing the list. */
+	bool single;
 	sp_track inline_tracks[DETAIL_MAX_TRACKS];
 	sp_track *owned;
 	/* DETAIL_PLAYLIST paging: the first item not read yet; whether items
@@ -86,9 +90,10 @@ bool details_active(app_tab tab);
 detail_doc *details_top(app_tab tab);
 
 /* Opens a track detail on `tab`'s stack from list[index]. The list is
- * copied (at most DETAIL_MAX_TRACKS, keeping `index` inside). */
+ * copied (at most DETAIL_MAX_TRACKS, keeping `index` inside). `single`:
+ * the track stands alone, and the list is only where it was found. */
 void details_open_track(app_tab tab, const sp_track *list, int count,
-                        int index);
+                        int index, bool single);
 /* Opens an album, artist or playlist by URI, in DETAIL_LOADING;
  * details_poll starts the load. Ignored for an empty URI. A playlist loads
  * page by page (details_follow), episodes and local files left out;

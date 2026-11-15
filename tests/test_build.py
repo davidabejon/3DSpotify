@@ -422,9 +422,9 @@ class BuildTests(unittest.TestCase):
         self.assertIn("view_results_cancelling()", loop)
         self.assertIn("(down & KEY_B)", loop)
         self.assertIn("if (down & KEY_START)", loop)
-        # The list follows the queue the player moves through, and errors
+        # A result stands alone: a radio from it is the queue, and errors
         # can be retried.
-        self.assertIn("view_results_focus(index)", app)
+        self.assertIn("queue_play_radio(session, &search.tracks[index]);", app)
         self.assertIn("case RESULTS_ACTION_RETRY:", app)
         self.assertIn("search_error_advice(search.error)", app)
 
@@ -465,7 +465,7 @@ class BuildTests(unittest.TestCase):
         play = app[app.index("static void play_from_results("):
                    app.index("static void switch_tab(app_tab tab)\n{")]
         self.assertLess(play.index("view_results_allow_thumbs(false);"),
-                        play.index("queue_play(session, "))
+                        play.index("queue_play_radio(session, "))
         loop = app[app.index("static tabs_exit run_tabs("):
                    app.index("static void stop_tabs(")]
         # Paused while the track prepares, not for the whole download.
@@ -537,7 +537,7 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("STR_KEYS_SELECTION_", source)
         play = app[app.index("static void play_from_results("):
                    app.index("static void switch_tab(app_tab tab)\n{")]
-        self.assertIn("queue_play(session, ", play)
+        self.assertIn("queue_play_radio(session, ", play)
         self.assertIn("switch_tab(TAB_PLAYER);", play)
         self.assertNotIn("hidKeysDown", play)
         # Dragging (6.9) and the scroll indicator (5.11).
@@ -616,8 +616,20 @@ class BuildTests(unittest.TestCase):
         play = app[app.index("static void play_from_detail("):
                    app.index("static void open_result_detail(")]
         self.assertLess(play.index("view_results_allow_thumbs(false);"),
-                        play.index("queue_play(session, "))
-        self.assertIn("queue_from_results = false;", play)
+                        play.index("queue_play_list(session, doc);"))
+        # A track detail opened from a single track starts a radio.
+        self.assertIn("if (doc->kind == DETAIL_TRACK && doc->single)\n"
+                      "\t\t\tqueue_play_radio(session, pick);", play)
+        # The queue's loads run beside the player and stop with the
+        # session, before the TLS abort is lifted.
+        loop = app[app.index("static tabs_exit run_tabs("):
+                   app.index("static void stop_tabs(")]
+        self.assertLess(loop.index("player_pump();"),
+                        loop.index("queue_feed_tick(session);"))
+        stop = app[app.index("static void stop_tabs(void)"):
+                   app.index("/* --- Session start-up")]
+        self.assertLess(stop.index("queue_feed_stop();"),
+                        stop.index("tls_set_abort(false);"))
         # Albums and artists: the track's buttons open them on the same
         # tab, X on their rows opens a track detail with the list, and a
         # failed load can be retried.

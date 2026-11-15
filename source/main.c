@@ -19,6 +19,7 @@
 #include "pair3ds.h"
 #include "player_logic.h"
 #include "power_logic.h"
+#include "queue_feed.h"
 #include "queue_logic.h"
 #include "spclient.h"
 #include "tabbar.h"
@@ -103,7 +104,22 @@ static uint32_t queue_rng;
 /* Lists play shuffled: the setting, kept in the config. It applies to a
  * queue that came from a list (an album, an artist, a playlist). */
 static bool shuffle_on;
-static bool queue_from_list;
+/* Where the queue came from, which says what it grows with (queue_feed.h):
+ * a list is all there is; a playlist still has pages its detail had not
+ * loaded; a radio, started from a single track, asks for more as it runs
+ * out. */
+typedef enum { QUEUE_LIST, QUEUE_PLAYLIST, QUEUE_RADIO } queue_kind;
+static queue_kind queue_source;
+static char queue_playlist[SP_URI_MAX];   /* QUEUE_PLAYLIST: its URI... */
+static int queue_next_from;               /* ...and the first item not read */
+/* QUEUE_RADIO: the seed is this many tracks before the last; it moves back
+ * while batches bring nothing new. */
+static int queue_seed_back;
+/* Bumped by every new queue, so a load asked for an old one is dropped. */
+static unsigned queue_serial;
+/* After a load failed, or brought nothing, not again before this. */
+static uint64_t queue_retry_at;
+#define QUEUE_RETRY_MS 5000
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
 /* The image of the detail card on the top screen, apart from cover_art:
@@ -390,9 +406,6 @@ static prepare_job prep;
 static download_job dl;
 static bool dl_abandoned;
 
-/* The queue came from the results on screen, so the list follows it. */
-static bool queue_from_results;
-
 static void set_playback_volume(float volume)
 {
 	if (volume < 0.0f)
@@ -556,9 +569,6 @@ static void player_play(spotify_session *session, int pos)
 	player.phase = PLAYER_PHASE_LOADING;
 	player.stage = STR_PLAYER_ART_LOADING;
 	artwork_request(&cover_art, playback_queue[index].art_large);
-	/* The list comes back focused on the track playing. */
-	if (queue_from_results)
-		view_results_focus(index);
 }
 
 /* Starts the track's preparation thread. Not while a skipped track's is
@@ -1214,9 +1224,6 @@ static void search_start(const spotify_session *session, const char *query)
 	snprintf(search.host, sizeof(search.host), "%s", session->host);
 	snprintf(search.library_token, sizeof(search.library_token), "%s",
 	         session->library_token);
-	/* The tracks in the list are about to change under the queue's
-	 * copy. */
-	queue_from_results = false;
 	/* Its details came from the results being replaced. */
 	details_clear(TAB_SEARCH);
 	view_results_searching();
@@ -1285,9 +1292,10 @@ static void keyboard_search(const spotify_session *session,
 }
 
 /* Makes `count` tracks the queue, a copy, and plays track `index` of it.
- * A list's queue follows the shuffle setting. */
+ * A list's queue follows the shuffle setting; a radio's does not. A load
+ * for the queue before is not wanted any more. */
 static void queue_play(spotify_session *session, const sp_track *tracks,
-                       int count, int index, bool list)
+                       int count, int index, queue_kind source)
 {
 	if (count > PLAYBACK_QUEUE_MAX)
 		count = PLAYBACK_QUEUE_MAX;
@@ -1295,10 +1303,100 @@ static void queue_play(spotify_session *session, const sp_track *tracks,
 		return;
 	memcpy(playback_queue, tracks, (size_t)count * sizeof(playback_queue[0]));
 	playback_queue_count = count;
-	queue_from_list = list;
+	queue_source = source;
+	queue_seed_back = 0;
+	queue_serial++;
+	queue_retry_at = 0;
+	queue_feed_cancel();
 	queue_rng ^= (uint32_t)svcGetSystemTick();
+	bool shuffled = source != QUEUE_RADIO && shuffle_on;
 	player_play(session, queue_order_start(playback_order, count, index,
-	                                       list && shuffle_on, &queue_rng));
+	                                       shuffled, &queue_rng));
+}
+
+/* A single track, and a radio from it to follow. */
+static void queue_play_radio(spotify_session *session, const sp_track *track)
+{
+	queue_play(session, track, 1, 0, QUEUE_RADIO);
+}
+
+/* A list's tracks from its focused one; a playlist with pages left goes
+ * on loading them into the queue (queue_feed.h). */
+static void queue_play_list(spotify_session *session, const detail_doc *doc)
+{
+	bool pages = doc->kind == DETAIL_PLAYLIST && doc->more;
+	queue_play(session, doc->tracks, doc->count, doc->selected,
+	           pages ? QUEUE_PLAYLIST : QUEUE_LIST);
+	if (pages) {
+		snprintf(queue_playlist, sizeof(queue_playlist), "%s", doc->uri);
+		queue_next_from = doc->next_from;
+	}
+}
+
+/* What a load brought, onto the end of the queue: in a shuffled list,
+ * among the tracks still to play. */
+static void queue_take(const queue_feed_result *r)
+{
+	int n = r->count;
+	if (queue_source == QUEUE_RADIO)
+		n = queue_drop_known(playback_queue, playback_queue_count, r->tracks,
+		                     n);
+	int room = PLAYBACK_QUEUE_MAX - playback_queue_count;
+	if (n > room)
+		n = room;
+	if (n > 0)
+		memcpy(playback_queue + playback_queue_count, r->tracks,
+		       (size_t)n * sizeof(playback_queue[0]));
+	bool shuffled = queue_source != QUEUE_RADIO && shuffle_on;
+	playback_queue_count = queue_order_append(playback_order,
+	                                          playback_queue_count, n,
+	                                          queue_pos, shuffled, &queue_rng);
+	if (queue_source == QUEUE_PLAYLIST) {
+		/* An empty page means the end, whatever the total said. */
+		queue_next_from += r->items;
+		if (r->items <= 0 || queue_next_from >= r->total)
+			queue_source = QUEUE_LIST;
+	} else if (n == 0) {
+		/* All known already: the next batch from an earlier seed, and not
+		 * at once. */
+		queue_seed_back++;
+		queue_retry_at = osGetTime() + QUEUE_RETRY_MS;
+	} else {
+		queue_seed_back = 0;
+	}
+}
+
+/* Once per frame: takes what a load brought, and starts the next one the
+ * queue needs. Never while a track prepares (STYLES.md 9): a radio's first
+ * batch comes once its seed is playing. */
+static void queue_feed_tick(const spotify_session *session)
+{
+	queue_feed_result r;
+	if (queue_feed_poll(&r) && r.tag == queue_serial) {
+		if (r.count < 0)
+			queue_retry_at = osGetTime() + QUEUE_RETRY_MS;
+		else
+			queue_take(&r);
+	}
+	if (!queue_feed_idle() || player.phase == PLAYER_PHASE_IDLE ||
+	    player_preparing() || osGetTime() < queue_retry_at ||
+	    playback_queue_count >= PLAYBACK_QUEUE_MAX)
+		return;
+	bool started = true;
+	if (queue_source == QUEUE_PLAYLIST) {
+		started = queue_feed_playlist(session->host, session->library_token,
+		                              session->username, queue_playlist,
+		                              queue_next_from, queue_serial);
+	} else if (queue_source == QUEUE_RADIO &&
+	           queue_wants_more(queue_pos, playback_queue_count)) {
+		int seed = playback_queue_count - 1 - queue_seed_back;
+		if (seed < 0)
+			seed = 0;
+		started = queue_feed_radio(session->host, session->library_token,
+		                           playback_queue[seed].uri, queue_serial);
+	}
+	if (!started)
+		queue_retry_at = osGetTime() + QUEUE_RETRY_MS;
 }
 
 /* Y in a list: the setting switches and is kept. A list's queue playing
@@ -1308,32 +1406,34 @@ static void toggle_shuffle(void)
 	shuffle_on = !shuffle_on;
 	cfg_set("shuffle", shuffle_on ? "1" : "0");
 	view_detail_set_shuffle(shuffle_on);
-	if (!queue_from_list || player.phase == PLAYER_PHASE_IDLE)
+	if (queue_source == QUEUE_RADIO || player.phase == PLAYER_PHASE_IDLE)
 		return;
 	queue_rng ^= (uint32_t)svcGetSystemTick();
 	queue_pos = queue_order_reshuffle(playback_order, playback_queue_count,
 	                                  queue_pos, shuffle_on, &queue_rng);
 }
 
-/* Plays the results from `index`, straight from the list: there is no
- * selection screen in between. The rest of the results are the queue, and
- * the list follows it. */
+/* Plays result `index`, straight from the list: there is no selection
+ * screen in between. A result stands alone, so a radio from it follows;
+ * the other results are only what else the search found. */
 static void play_from_results(spotify_session *session, int index)
 {
+	if (index < 0 || index >= search.count)
+		return;
 	/* The thumbnails must not compete with the track's preparation
 	 * (STYLES.md 9); they resume, kept, once its download starts. */
 	view_results_allow_thumbs(false);
-	queue_from_results = true;
-	queue_play(session, search.tracks, search.count, index, false);
+	queue_play_radio(session, &search.tracks[index]);
 	switch_tab(TAB_PLAYER);
 }
 
 /* --- Details ----------------------------------------------------------- */
 
-/* Plays the detail on top of `tab` from its focused track, with the whole
- * list it holds as the queue: the results it was opened from, or the album
- * or artist (docs/plan_vistas_detalle.md 4.1). The document is a copy, so
- * the queue is too, whatever the results do afterwards. */
+/* Plays the detail on top of `tab` from its focused track: with the whole
+ * list it holds as the queue (an album, an artist, a playlist, or the list
+ * a track's detail was opened from), or, for a track that stands alone, a
+ * radio from it. The queue is a copy, whatever the document does
+ * afterwards. */
 static void play_from_detail(spotify_session *session, app_tab tab)
 {
 	const detail_doc *doc = details_top(tab);
@@ -1349,8 +1449,10 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		/* As from the results: the thumbnails wait for the preparation
 		 * (STYLES.md 9). */
 		view_results_allow_thumbs(false);
-		queue_from_results = false;
-		queue_play(session, doc->tracks, doc->count, doc->selected, true);
+		if (doc->kind == DETAIL_TRACK && doc->single)
+			queue_play_radio(session, pick);
+		else
+			queue_play_list(session, doc);
 	}
 	/* The Playing tab shows the player, not a detail left open there; the
 	 * queue is copied, so this may be the document just played. */
@@ -1362,14 +1464,14 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 static void open_result_detail(void)
 {
 	details_open_track(TAB_SEARCH, search.tracks, search.count,
-	                   view_results_selected());
+	                   view_results_selected(), true);
 	switch_tab(TAB_SEARCH);
 }
 
 /* A link of the Playing tab: the detail of the track playing, of its
  * artist or of its album, on that tab's stack. The track detail gets a
  * copy of the queue, which may change afterwards, so "Play" there plays
- * this queue again from this track. */
+ * this queue again from this track; from a radio, a new radio from it. */
 static void open_playing_detail(detail_kind kind)
 {
 	const sp_track *track = player_track();
@@ -1384,7 +1486,7 @@ static void open_playing_detail(detail_kind kind)
 		break;
 	default:
 		details_open_track(TAB_PLAYER, playback_queue, playback_queue_count,
-		                   player.index);
+		                   player.index, queue_source == QUEUE_RADIO);
 		break;
 	}
 	switch_tab(TAB_PLAYER);
@@ -1420,7 +1522,7 @@ static void detail_input(spotify_session *session, u32 down)
 		/* The list comes along, as from the results: "Play" there queues
 		 * this album or artist. */
 		details_open_track(active_tab, doc->tracks, doc->count,
-		                   doc->selected);
+		                   doc->selected, false);
 		switch_tab(active_tab);
 		break;
 	case DETAIL_ACTION_RETRY:
@@ -1496,6 +1598,7 @@ static tabs_exit run_tabs(spotify_session *session)
 
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
+		queue_feed_tick(session);
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token,
 		             session->username);
@@ -1641,6 +1744,7 @@ static void stop_tabs(void)
 	player_stop();
 	search_stop();
 	details_stop();
+	queue_feed_stop();
 	home_feed_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */

@@ -662,9 +662,9 @@ Error:
 - Táctil: tocar una fila la pone en foco; tocar la fila en foco la reproduce; arrastrar
   desplaza la lista (§6.9).
 - Indicador de desplazamiento (§5.11) a la derecha, cuando hay más de 4 resultados.
-- A, o tocar la fila en foco, pasa a la pestaña «Reproducción» con esa canción y el resto de
-  resultados como cola. No hay pantalla intermedia de canción seleccionada. Mientras suena esa
-  cola, la fila en foco sigue a la pista que suena.
+- A, o tocar la fila en foco, pasa a la pestaña «Reproducción» con esa canción. No hay
+  pantalla intermedia de canción seleccionada. Una canción suelta no trae lista: la cola es
+  ella y una radio a partir de ella (§7.5).
 - X abre el detalle de la canción en foco (§7.10): es un camino adicional, A sigue sin
   pantalla intermedia. Barra de botones: `[A] Reproducir [X] Detalle [Y] Buscar [B] Volver`.
 - Lanzar una búsqueda nueva cierra los detalles abiertos en «Búsqueda».
@@ -712,6 +712,16 @@ Error:
   álbum, ese enlace no responde. «3 de 24» no forma parte del enlace.
 - Los iconos de los controles son de 16 px mientras no exista el juego de 24 px (§5.10).
 - Anterior y siguiente se deshabilitan (§6.1) en los extremos de la cola.
+- La cola depende de dónde se eligió la canción:
+  - Canción suelta (un resultado de búsqueda, o su detalle): ella y 25 recomendaciones de
+    canciones parecidas, que llegan en segundo plano cuando la canción ya suena. Cuando
+    quedan 2 por sonar se piden 25 más a partir de la última, sin repetir ninguna: la radio
+    no se acaba. «1 de 1» crece al llegar cada tanda.
+  - Álbum, artista o playlist: la lista, desde la elegida, en su orden o en aleatorio
+    (§7.11). De una playlist se cargan en segundo plano las páginas que su detalle aún no
+    había cargado, hasta 500 pistas, aunque se cierre el detalle. Al acabar la lista, se
+    para.
+  - Nada se pide a la red mientras una pista se prepara (§9).
 - Mientras carga (carátula, clave de audio, conexión): indicador de carga (§5.7) y el paso
   actual en `t_cuerpo` · `texto` en lugar de los controles; aún no suena nada.
 - Al terminar una pista empieza sola la siguiente de la cola. Solo al final de la cola queda
@@ -834,7 +844,9 @@ Error:
 ```
 
 - Misma geometría que Ajustes (§7.8). El foco empieza en «Reproducir».
-- «Reproducir» reproduce la canción con la lista de la que salió como cola.
+- «Reproducir» reproduce la canción con la lista de la que salió como cola. Si salió de
+  una canción suelta (un resultado de búsqueda, o la radio que suena), empieza una radio a
+  partir de ella (§7.5).
 - «Artista» y «Álbum» abren su detalle en la misma pestaña; se deshabilitan (§6.1) si la
   pista no trae ese URI. El nombre se recorta con `...`: completo en la ficha de arriba.
 - No necesita red: los datos ya están en memoria.

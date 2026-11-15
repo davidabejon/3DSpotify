@@ -343,7 +343,7 @@ detail_doc *details_top(app_tab tab)
 }
 
 void details_open_track(app_tab tab, const sp_track *list, int count,
-                        int index)
+                        int index, bool single)
 {
 	if (!list || index < 0 || index >= count)
 		return;
@@ -362,6 +362,7 @@ void details_open_track(app_tab tab, const sp_track *list, int count,
 		return;
 	d->kind = DETAIL_TRACK;
 	d->state = DETAIL_READY;
+	d->single = single;
 	memcpy(d->tracks, list + from, (size_t)count * sizeof(d->tracks[0]));
 	d->count = count;
 	d->selected = index - from;
