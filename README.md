@@ -172,8 +172,8 @@ is a live session of another service, with no track list this client can play.
   loaded 50 at a time like a playlist.
 - With a tile highlighted, the top screen previews it: cover, name, number of tracks and
   the last song played in it. The cover loads once the highlight rests for a moment.
-- A recent playlist opens with that last song highlighted when the playlist holds it
-  (often it does not: autoplay goes on past the end), otherwise at the top.
+- Playlists always open at their first song; the last song played is only shown on the
+  preview (often it is not even in the playlist: autoplay goes on past the end).
 - Move between tiles with the D-pad; down from the last row reaches **"Show more"**, which
   lists up to 24 playlists in a scrolling grid. **B** goes back to the six.
 - Tap a tile to highlight it; tap it again (or press **A**) to open the playlist

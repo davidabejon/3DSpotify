@@ -46,7 +46,6 @@ static Thread worker;
 static home_feed_state state;
 static unsigned generation;
 static sp_playlist_ref items[HOME_MAX_PLAYLISTS];
-static char resume_uri[HOME_MAX_PLAYLISTS][SP_URI_MAX];
 static char resume_text[HOME_MAX_PLAYLISTS][128];
 static int item_count, item_total;
 static bool items_recent;
@@ -223,7 +222,6 @@ bool home_feed_poll(void)
 		return true;
 	}
 	memcpy(items, job.out, (size_t)job.count * sizeof(items[0]));
-	memcpy(resume_uri, job.resume_uri, sizeof(resume_uri));
 	memcpy(resume_text, job.resume_text, sizeof(resume_text));
 	item_count = job.count;
 	item_total = job.total > job.count ? job.total : job.count;
@@ -257,12 +255,6 @@ home_feed_state home_feed_get_state(void)
 unsigned home_feed_generation(void)
 {
 	return generation;
-}
-
-const char *home_feed_resume_uri(int index)
-{
-	return state == HOME_FEED_READY && index >= 0 && index < item_count
-	       ? resume_uri[index] : "";
 }
 
 const char *home_feed_resume_text(int index)

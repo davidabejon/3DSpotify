@@ -71,7 +71,6 @@ static const press_state *pending_press;
  * press to be seen like the actions. */
 static void (*pending_step)(void);
 static char selected_uri[SP_URI_MAX];
-static char selected_resume[SP_URI_MAX];
 
 /* The top screen's card for the focused tile: which item it is about, and
  * how long the focus has rested there. A document of its own, only its
@@ -185,11 +184,6 @@ void view_home_enter(void)
 const char *view_home_selected_uri(void)
 {
 	return selected_uri;
-}
-
-const char *view_home_selected_resume(void)
-{
-	return selected_resume;
 }
 
 /* The tile with the focus, or -1: on the six or "Show more", not on the
@@ -385,9 +379,6 @@ static void open_tile(const tile_grid *grid, int index)
 	if (index < 0 || index >= item_count)
 		return;
 	snprintf(selected_uri, sizeof(selected_uri), "%s", grid->items[index].uri);
-	/* Recent ones open where they were left. */
-	snprintf(selected_resume, sizeof(selected_resume), "%s",
-	         home_feed_resume_uri(index));
 }
 
 /* What the button does, once its press has been seen. */

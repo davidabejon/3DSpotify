@@ -50,10 +50,8 @@ void view_home_enter(void);
  * with the caller. */
 home_action view_home_update(u32 down);
 
-/* The playlist to open after HOME_ACTION_OPEN, and the track to open it
- * at (where it was left; "" for the top). */
+/* The playlist to open after HOME_ACTION_OPEN. */
 const char *view_home_selected_uri(void);
-const char *view_home_selected_resume(void);
 
 /* The card the top screen shows for the focused tile (STYLES.md 7.7), or
  * NULL when no tile has the focus. Its cover is only named once the focus

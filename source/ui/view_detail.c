@@ -471,12 +471,6 @@ static detail_action update(u32 down)
 detail_action view_detail_update(detail_doc *doc, u32 down)
 {
 	sync(doc);
-	/* A later page brought the track the playlist was left at. */
-	if (doc && doc->refocus) {
-		if (mode == MODE_LIST)
-			track_list_focus(&list, doc->selected);
-		doc->refocus = false;
-	}
 	detail_action action = update(down);
 	/* The level keeps where its list was, for "Play", for the track detail
 	 * opened from it, and for coming back to it. */

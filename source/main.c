@@ -1469,8 +1469,7 @@ static tabs_exit run_tabs(spotify_session *session)
 				break;
 			case HOME_ACTION_OPEN:
 				/* On Home's own stack: L/R and back find it as left. */
-				details_open_playlist(TAB_HOME, view_home_selected_uri(),
-				                      view_home_selected_resume());
+				details_open_playlist(TAB_HOME, view_home_selected_uri());
 				switch_tab(TAB_HOME);
 				break;
 			case HOME_ACTION_RETRY:

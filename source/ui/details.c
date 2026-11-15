@@ -181,27 +181,6 @@ static void append_page(detail_doc *d)
 	          d->count < d->capacity;
 }
 
-/* Opening where the playlist was left: the track found in the rows from
- * `from` takes the focus; not there, the next page is asked for, within
- * DETAIL_RESUME_PAGES. */
-static void seek_focus(detail_doc *d, int from)
-{
-	if (!d->focus_uri[0])
-		return;
-	for (int i = from; i < d->count; i++)
-		if (strcmp(d->tracks[i].uri, d->focus_uri) == 0) {
-			d->selected = i;
-			d->first = i;
-			d->refocus = true;
-			d->focus_uri[0] = '\0';
-			return;
-		}
-	if (d->more && ++d->resume_pages < DETAIL_RESUME_PAGES)
-		d->loading_more = true;
-	else
-		d->focus_uri[0] = '\0';
-}
-
 /* The finished load into its document, unless the document moved on. */
 static void apply(detail_doc *d)
 {
@@ -229,7 +208,6 @@ static void apply(detail_doc *d)
 		d->selected = 0;
 		d->first = 0;
 		d->state = DETAIL_READY;
-		seek_focus(d, 0);
 		return;
 	} else {
 		const sp_artist *a = &job.artist;
@@ -263,13 +241,10 @@ static bool reap(void)
 		    d->state != DETAIL_READY || !d->loading_more)
 			return false;   /* still asked for if wanted: started again */
 		d->loading_more = false;
-		if (job.result == 0) {
-			int before = d->count;
+		if (job.result == 0)
 			append_page(d);
-			seek_focus(d, before);
-		} else {
+		else
 			d->retry_at = osGetTime() + DETAIL_MORE_RETRY_MS;
-		}
 		return on_top(job.doc);
 	}
 	if (job.cancel_requested || d->serial != job.serial ||
@@ -434,13 +409,9 @@ void details_open_artist(app_tab tab, const char *uri)
 	open_entity(tab, DETAIL_ARTIST, uri);
 }
 
-void details_open_playlist(app_tab tab, const char *uri, const char *resume)
+void details_open_playlist(app_tab tab, const char *uri)
 {
 	open_entity(tab, DETAIL_PLAYLIST, uri);
-	detail_doc *d = details_top(tab);
-	if (d && d->kind == DETAIL_PLAYLIST && resume && resume[0] &&
-	    strcmp(d->uri, uri) == 0)
-		snprintf(d->focus_uri, sizeof(d->focus_uri), "%s", resume);
 }
 
 bool details_back(app_tab tab)

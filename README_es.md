@@ -180,9 +180,9 @@ de canciones que este cliente pueda reproducir.
 - Con una tesela resaltada, la pantalla superior muestra una vista previa: portada,
   nombre, número de canciones y lo último que sonó en ella. La portada se carga cuando el
   resaltado se queda quieto un momento.
-- Una playlist reciente se abre con esa última canción resaltada si la playlist la
-  contiene (a menudo no: la reproducción automática sigue después del final); si no,
-  arriba.
+- Las playlists se abren siempre por su primera canción; lo último que sonó solo se
+  muestra en la vista previa (a menudo ni siquiera está en la playlist: la reproducción
+  automática sigue después del final).
 - Muévete entre teselas con la cruceta; bajando desde la última fila llegas a **«Mostrar
   más»**, que lista hasta 24 playlists en una rejilla con desplazamiento. **B** vuelve a las
   seis.

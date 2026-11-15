@@ -761,9 +761,9 @@ Error:
   lista entera llega en una petición (`context-resolve`, de la más reciente a la más
   antigua) y los nombres se piden de 50 en 50.
 - La cruceta pasa de la última fila de teselas al botón «Mostrar más» y vuelve.
-- Una reciente se abre con el foco en la última canción que sonó en ella, si la
-  playlist la contiene en sus 4 primeras páginas; si no, arriba. A menudo no la contiene:
-  la reproducción automática sigue después del final.
+- Toda playlist se abre con el foco en su primera canción. «Lo ultimo» de la vista previa
+  es solo informativo: esa canción a menudo ni siquiera está en la playlist (la
+  reproducción automática sigue después del final).
 - A, o tocar la tesela en foco, abre el detalle de la playlist en la pila de «Inicio»
   (§7.9). Tocar una tesela fuera de foco la pone en foco.
 - Y abre el teclado de búsqueda desde cualquier modo.

@@ -48,10 +48,9 @@ unsigned home_feed_generation(void);
  * (SP_LIKED_URI, no name or cover of its own: the view names it). */
 const sp_playlist_ref *home_feed_items(int *count);
 /* The last track played in playlist `index`'s context, from the history,
- * and its "title - artist" (either "" when unknown). It may not be one of
- * the playlist's own (autoplay continues past the end), so it is shown as
- * "last played" and only focused when the playlist holds it. */
-const char *home_feed_resume_uri(int index);
+ * as "title - artist" ("" when unknown), for the preview card. It may not
+ * be one of the playlist's own (autoplay continues past the end:
+ * probe_meta step 17), so it is only shown, never focused. */
 const char *home_feed_resume_text(int index);
 /* How many playlists there are in all, which may exceed what is kept. */
 int  home_feed_total(void);

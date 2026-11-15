@@ -37,12 +37,6 @@
 /* The next page is asked for when the list shows a row this close to the
  * last one loaded. */
 #define DETAIL_MORE_AHEAD 8
-/* Opening a playlist where it was left loads pages until that track shows
- * up, at most this many (SP_PLAYLIST_PAGE each); past them it opens at the
- * top. The history's last track of a playlist is often not one of its own
- * (autoplay or smart shuffle went on past it: probe_meta step 17), so the
- * search is kept short. */
-#define DETAIL_RESUME_PAGES 4
 
 typedef enum {
 	DETAIL_TRACK, DETAIL_ALBUM, DETAIL_ARTIST, DETAIL_PLAYLIST
@@ -75,12 +69,6 @@ typedef struct {
 	int  next_from;
 	bool more, loading_more;
 	uint64_t retry_at;
-	/* The track to focus once its page is in (where the playlist was left),
-	 * pages loaded looking for it, and whether the view must move its
-	 * focus to `selected` (a later page found it). */
-	char focus_uri[SP_URI_MAX];
-	int  resume_pages;
-	bool refocus;
 	/* A line for the card: where it was left ("title - artist"), or "". */
 	char resume[128];
 	/* The view's state, so going back finds the list as it was left. */
@@ -105,11 +93,10 @@ void details_open_track(app_tab tab, const sp_track *list, int count,
  * details_poll starts the load. Ignored for an empty URI. A playlist loads
  * page by page (details_follow), episodes and local files left out;
  * total_tracks counts every item it holds. SP_LIKED_URI opens Liked Songs
- * the same way. `resume` (may be NULL or "") is a track to open the
- * playlist at: pages load until it shows up (DETAIL_RESUME_PAGES). */
+ * the same way. A playlist opens at its first track. */
 void details_open_album(app_tab tab, const char *uri);
 void details_open_artist(app_tab tab, const char *uri);
-void details_open_playlist(app_tab tab, const char *uri, const char *resume);
+void details_open_playlist(app_tab tab, const char *uri);
 
 /* Pops one level of `tab`; a load for it is asked to stop. False when the
  * stack was already empty, so B does what the tab's own view does. */
