@@ -380,6 +380,9 @@ void thumbs_client_frame(thumbs_client *c)
 	if (owner != c) {
 		owner = c;
 		hold(c);
+		/* Covers it kept from before show again at once: nothing new
+		 * may arrive to ask for the repaint. */
+		c->serial++;
 	}
 	if (thumbs_poll())
 		c->serial++;

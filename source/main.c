@@ -1394,7 +1394,7 @@ static void switch_tab(app_tab tab)
 	}
 	switch (tab) {
 	case TAB_HOME:
-		view_home_enter(home_query);
+		view_home_enter();
 		break;
 	case TAB_SEARCH:
 		view_results_enter();
@@ -1457,9 +1457,9 @@ static tabs_exit run_tabs(spotify_session *session)
 			case HOME_ACTION_SEARCH:
 				keyboard_search(session, home_query);
 				break;
-			case HOME_ACTION_REPEAT:
-				search_start(session, home_query);
-				switch_tab(TAB_SEARCH);
+			case HOME_ACTION_RETRY:
+				home_feed_retry(session->host, session->library_token,
+				                session->username);
 				break;
 			case HOME_ACTION_LANGUAGE:
 				/* The view shows the new language by itself. */

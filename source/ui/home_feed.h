@@ -41,6 +41,9 @@ bool home_feed_poll(void);
 void home_feed_stop(void);
 
 home_feed_state home_feed_get_state(void);
+/* Bumped on every change of state or content, so a view that was not on
+ * screen when it happened still notices. */
+unsigned home_feed_generation(void);
 /* The playlists, valid while READY. */
 const sp_playlist_ref *home_feed_items(int *count);
 /* How many playlists there are in all, which may exceed what is kept. */

@@ -200,8 +200,8 @@ class BuildTests(unittest.TestCase):
         self.assertLess(app.index("view_home_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
         # Pure logic stays free of 3DS headers for the host tests.
-        for name in ("home_logic.h", "text_fit.h", "theme.h", "layout.h",
-                     "press_logic.h"):
+        for name in ("home_logic.h", "grid_logic.h", "home_feed_logic.h",
+                     "text_fit.h", "theme.h", "layout.h", "press_logic.h"):
             source = (ui_dir / name).read_text(encoding="utf-8")
             self.assertNotIn("#include <3ds", source)
             self.assertNotIn("#include <citro", source)
@@ -210,9 +210,20 @@ class BuildTests(unittest.TestCase):
                     app.index("/* --- Search ---")]
         self.assertIn("view_home_dirty()", frame)
         self.assertIn("view_home_draw_bottom()", frame)
-        # The repeat button runs the last query without the keyboard, and a
-        # cancelled keyboard does not wipe it.
-        self.assertIn("case HOME_ACTION_REPEAT:", app)
+        # The playlists load in the background from the start of the tabs,
+        # are reaped every frame and stopped before the thumbnails' wait;
+        # Retry loads them again. The old last-search button is gone.
+        loop = app[app.index("static tabs_exit run_tabs("):
+                   app.index("static void stop_tabs(")]
+        self.assertLess(loop.index("home_feed_start("), loop.index("for (;;)"))
+        self.assertIn("home_feed_poll();", loop)
+        self.assertIn("case HOME_ACTION_RETRY:", loop)
+        self.assertNotIn("HOME_ACTION_REPEAT", app)
+        stop = app[app.index("static void stop_tabs("):]
+        stop = stop[:stop.index("\n}\n")]
+        self.assertLess(stop.index("home_feed_stop();"),
+                        stop.index("thumbs_wait();"))
+        # A cancelled keyboard does not wipe the last query.
         ask = app[app.index("static bool ask_search_query("):
                   app.index("static void keyboard_search(")]
         self.assertIn("if (confirmed)", ask)

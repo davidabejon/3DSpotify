@@ -1135,77 +1135,51 @@ static void test_text_fit(void)
 
 static void test_home_layout(void)
 {
-	const float content = 119.5f;
-	ui_rect search = home_search_rect(content);
-	ui_rect label = home_label_rect();
-	ui_rect repeat = home_repeat_rect(50);
 	ui_rect tabs = tabs_bar_rect();
 	ui_rect hints = home_hints_rect();
+	ui_rect label = home_label_rect();
+	grid_geom six = home_six_geom();
+	grid_geom more = home_more_geom();
+	ui_rect button = home_more_rect();
 
-	/* The tab bar on top, the button bar at the bottom; 8 px side margins
-	 * (STYLES.md 4.2). */
+	/* Plan 3.4: label 36..52, six tiles 56..160, "Show more" 176..208. */
 	assert(tabs.y == 0 && tabs.h == TAB_H);
-	assert(hints.h == BAR_H && hints.y + hints.h == SCREEN_H);
-	assert(search.x == SP_2 && repeat.x == SP_2);
-	/* Blocks SP_4 apart, starting SP_4 under the tab bar. */
-	assert(search.y == tabs.h + SP_4);
-	assert(label.y == search.y + search.h + SP_4);
-	assert(repeat.y >= label.y + label.h);
-
-	/* Buttons: 32 px high, hugging content plus SP_3 each side (5.2),
-	 * rounded up to whole pixels (4.3). */
-	assert(search.h == TOUCH_MIN && repeat.h == TOUCH_MIN);
-	assert(search.w == 120 + 2 * SP_3);
-	assert(home_search_rect(0).w == TOUCH_MIN);
-	assert(home_repeat_rect(1000).w == SCREEN_BOTTOM_W - 2 * SP_2);
-	assert(home_repeat_max_text_width() + 2 * SP_3 ==
-	       home_repeat_rect(1000).w);
-
-	/* Focus borders and hard shadows stay clear of each other and of the
-	 * button bar: 4 px between targets at least (4.4). */
+	assert(label.x == SP_2 && label.y == 36 && label.y + label.h == 52);
+	assert(six.cols == 2 && six.rows == 3 && six.top == 56);
+	ui_rect last = grid_cell_rect(&six, HOME_RECENT_SHOWN - 1, 0);
+	assert(last.y + last.h == 160);
+	assert(button.x == SP_2 && button.y == 176 && button.h == TOUCH_MIN);
+	assert(button.w == GRID_WIDTH);
+	/* Clear of the button bar, its shadow and its press included (4.4). */
 	int ring = FOCUS_GAP + FOCUS_W;
 	int below = ring > SHADOW_OFF ? ring : SHADOW_OFF;
-	assert((repeat.y - ring) - (search.y + search.h + below) >= SP_1);
-	assert(repeat.y + repeat.h + below + PRESS_SHIFT <= hints.y);
-
-	/* Hit testing matches what is drawn. */
-	assert(home_hit_test(search.x, search.y, content, false, 0) ==
-	       HOME_ITEM_SEARCH);
-	assert(home_hit_test(search.x + search.w - 1, search.y + search.h - 1,
-	                     content, true, 50) == HOME_ITEM_SEARCH);
-	assert(home_hit_test(search.x + search.w, search.y, content, false, 0)
-	       == HOME_ITEM_NONE);
-	assert(home_hit_test(repeat.x + 1, repeat.y + 1, content, true, 50) ==
-	       HOME_ITEM_REPEAT);
-	assert(home_hit_test(repeat.x + 1, repeat.y + 1, content, false, 50) ==
-	       HOME_ITEM_NONE);
-	assert(home_hit_test(repeat.x + repeat.w + 1, repeat.y + 1, content,
-	                     true, 50) == HOME_ITEM_NONE);
-	/* Bars and empty space do nothing (6.4). */
-	assert(home_hit_test(10, 10, content, true, 50) == HOME_ITEM_NONE);
-	assert(home_hit_test(10, 230, content, true, 50) == HOME_ITEM_NONE);
-
-	/* The bubble: centred, SP_2 above the button bar, clear of the
-	 * repeat button and its shadow. */
-	ui_rect bubble = home_bubble_rect(100);
-	assert(bubble.w == 100 + 2 * SP_3);
-	assert(bubble.x * 2 + bubble.w == SCREEN_BOTTOM_W);
-	assert(bubble.y + bubble.h + SP_2 == hints.y);
-	assert(bubble.y > repeat.y + repeat.h + SHADOW_OFF);
-	assert(home_bubble_rect(1000).w == SCREEN_BOTTOM_W - 2 * SP_2);
+	assert(button.y + button.h + below + PRESS_SHIFT <= hints.y);
+	assert(button.y - (last.y + last.h) >= SP_4);
+	/* "Show more": five rows exactly between the bars. */
+	ui_rect area = grid_area(&more);
+	assert(area.y == TAB_H && area.y + area.h == hints.y);
+	/* The label sits over the six, not over a tile. */
+	assert(label.y + label.h <= grid_area(&six).y + SP_1);
+	assert(!home_has_more(6) && home_has_more(7));
 }
 
 static void test_home_focus(void)
 {
-	assert(home_focus_move(HOME_ITEM_SEARCH, 1, true) == HOME_ITEM_REPEAT);
-	assert(home_focus_move(HOME_ITEM_REPEAT, 1, true) == HOME_ITEM_REPEAT);
-	assert(home_focus_move(HOME_ITEM_REPEAT, -1, true) == HOME_ITEM_SEARCH);
-	assert(home_focus_move(HOME_ITEM_SEARCH, -1, true) == HOME_ITEM_SEARCH);
-	/* Without a last search there is only the search button. */
-	assert(home_focus_move(HOME_ITEM_SEARCH, 1, false) == HOME_ITEM_SEARCH);
-	/* A focus that went away falls back. */
-	assert(home_focus_move(HOME_ITEM_REPEAT, 0, false) == HOME_ITEM_SEARCH);
-	assert(home_focus_move(HOME_ITEM_NONE, 1, true) == HOME_ITEM_REPEAT);
+	/* Down from a tile that can still move stays on the tiles. */
+	assert(home_focus_vertical(HOME_FOCUS_TILES, true, true, true) ==
+	       HOME_FOCUS_TILES);
+	/* From the last row, to "Show more" when it exists. */
+	assert(home_focus_vertical(HOME_FOCUS_TILES, true, false, true) ==
+	       HOME_FOCUS_MORE);
+	assert(home_focus_vertical(HOME_FOCUS_TILES, true, false, false) ==
+	       HOME_FOCUS_TILES);
+	assert(home_focus_vertical(HOME_FOCUS_TILES, false, true, true) ==
+	       HOME_FOCUS_TILES);
+	/* Up from the button, back to the tiles; down stays. */
+	assert(home_focus_vertical(HOME_FOCUS_MORE, false, false, true) ==
+	       HOME_FOCUS_TILES);
+	assert(home_focus_vertical(HOME_FOCUS_MORE, true, false, true) ==
+	       HOME_FOCUS_MORE);
 }
 
 static void test_layout_rects(void)

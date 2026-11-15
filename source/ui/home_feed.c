@@ -37,6 +37,7 @@ typedef struct {
 static home_job job;
 static Thread worker;
 static home_feed_state state;
+static unsigned generation;
 static sp_playlist_ref items[HOME_MAX_PLAYLISTS];
 static int item_count, item_total;
 static bool items_recent;
@@ -128,6 +129,7 @@ static void start(const char *host, const char *token, const char *username)
 	snprintf(job.username, sizeof(job.username), "%s", username);
 	error[0] = '\0';
 	state = HOME_FEED_LOADING;
+	generation++;
 	/* Below the decoder, like every worker that can overlap playback. */
 	worker = threadCreate(worker_main, NULL, HOME_WORKER_STACK,
 	                      background_priority(), -2, false);
@@ -136,6 +138,7 @@ static void start(const char *host, const char *token, const char *username)
 		secure_clear(job.username, sizeof(job.username));
 		snprintf(error, sizeof(error), "%s", tr(STR_ERR_DETAIL_THREAD));
 		state = HOME_FEED_FAILED;
+		generation++;
 	}
 }
 
@@ -166,6 +169,7 @@ bool home_feed_poll(void)
 	if (job.result != 0) {
 		snprintf(error, sizeof(error), "%s", job.error);
 		state = HOME_FEED_FAILED;
+		generation++;
 		return true;
 	}
 	memcpy(items, job.out, (size_t)job.count * sizeof(items[0]));
@@ -173,6 +177,7 @@ bool home_feed_poll(void)
 	item_total = job.total > job.count ? job.total : job.count;
 	items_recent = job.is_recent;
 	state = HOME_FEED_READY;
+	generation++;
 	return true;
 }
 
@@ -187,6 +192,7 @@ void home_feed_stop(void)
 	secure_clear(job.token, sizeof(job.token));
 	secure_clear(job.username, sizeof(job.username));
 	state = HOME_FEED_IDLE;
+	generation++;
 	item_count = item_total = 0;
 	error[0] = '\0';
 }
@@ -194,6 +200,11 @@ void home_feed_stop(void)
 home_feed_state home_feed_get_state(void)
 {
 	return state;
+}
+
+unsigned home_feed_generation(void)
+{
+	return generation;
 }
 
 const sp_playlist_ref *home_feed_items(int *count)
