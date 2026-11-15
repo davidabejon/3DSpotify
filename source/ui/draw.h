@@ -79,12 +79,19 @@ typedef struct {
  * alone, for a bar that would not fit otherwise. */
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count);
 
+/* The progress bar's handle: none, at rest, or dragged by the stylus. */
+typedef enum {
+	UI_HANDLE_NONE,
+	UI_HANDLE_REST,
+	UI_HANDLE_PRESSED
+} ui_handle;
+
 /* A progress (5.4) or volume (5.5) bar in `r`: 1 px `tinta` outline,
  * `capa_alta` track, the download in `musgo` ahead of the progress in
- * `clorofila`, both in thousandths (download < 0: none). With `handle`, a
- * HANDLE_W x HANDLE_H `texto` handle outlined in `tinta`, centred on the
- * end of the progress. */
-void ui_progress(ui_rect r, int download, int progress, bool handle);
+ * `clorofila`, both in thousandths (download < 0: none). With a handle, a
+ * HANDLE_W x HANDLE_H one outlined in `tinta`, centred on the end of the
+ * progress: `texto` at rest, `lima` while dragged (6.3). */
+void ui_progress(ui_rect r, int download, int progress, ui_handle handle);
 
 /* The loading indicator (5.7), centred on (cx, cy): UI_LOADER_BARS bars,
  * UI_LOADER_W px wide in all. `step` advances every LOADER_STEP frames. */

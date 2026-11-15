@@ -20,6 +20,7 @@
 #include "press_logic.h"
 #include "search_path.h"
 #include "spinner_logic.h"
+#include "stream_chunks.h"
 #include "spotify_id.h"
 #include "settings_logic.h"
 #include "tabs_logic.h"
@@ -2179,6 +2180,77 @@ static void test_player_layout(void)
 	assert(player_fill_px(300, 0) == 0 && player_fill_px(300, -5) == 0);
 	assert(player_fill_px(300, 1000) == 300 && player_fill_px(300, 2000) == 300);
 	assert(player_fill_px(0, 500) == 0);
+
+	/* The bars' touch zones: each holds its bar, they meet without
+	 * overlapping, below the controls and above the button bar. */
+	ui_rect seek = player_seek_zone(40);
+	ui_rect vol = player_volume_zone(40);
+	assert(ui_rect_contains(seek, progress.x, progress.y));
+	assert(ui_rect_contains(seek, progress.x + progress.w - 1,
+	                        progress.y + progress.h - 1));
+	assert(ui_rect_contains(vol, volume.x, volume.y));
+	assert(ui_rect_contains(vol, volume.x + volume.w - 1,
+	                        volume.y + volume.h - 1));
+	assert(seek.y + seek.h == vol.y);
+	assert(seek.y > play.y + play.h);
+	assert(vol.y + vol.h == player_hints_rect().y);
+	assert(!ui_rect_contains(vol, SP_2, volume.y));   /* the "Vol." label */
+	/* A touch along a bar, its ends clamped. */
+	assert(player_bar_permille(progress, progress.x - 5) == 0);
+	assert(player_bar_permille(progress, progress.x) == 0);
+	assert(player_bar_permille(progress, progress.x + progress.w / 2) == 500);
+	assert(player_bar_permille(progress, progress.x + progress.w) == 1000);
+	assert(player_bar_permille(progress, SCREEN_BOTTOM_W) == 1000);
+	ui_rect empty = { 0, 0, 0, 0 };
+	assert(player_bar_permille(empty, 10) == 0);
+}
+
+static void test_stream_chunks(void)
+{
+	enum { LEN = 3 * STREAM_CHUNK + 100 };   /* 4 chunks, the last short */
+	uint8_t done[4] = {0};
+	assert(stream_chunk_count(LEN) == 4);
+	assert(stream_chunk_count(0) == 0);
+	assert(stream_chunk_floor(STREAM_CHUNK + 5) == STREAM_CHUNK);
+
+	/* Nothing yet: nothing readable; the live span from 0 is. */
+	assert(stream_available(done, LEN, 0, 10) == 10);
+	assert(stream_available(done, LEN, 500, 10) == 500);
+	/* The live span marks what it finishes, the short last chunk too. */
+	size_t next = 0;
+	stream_mark(done, LEN, STREAM_CHUNK - 1, &next);
+	assert(next == 0 && !done[0]);
+	stream_mark(done, LEN, STREAM_CHUNK + 10, &next);
+	assert(next == 1 && done[0] && !done[1]);
+	assert(stream_available(done, LEN, STREAM_CHUNK + 10, 10) ==
+	       STREAM_CHUNK + 10);
+
+	/* A seek to chunk 3: the span moves there and finishes the file. */
+	next = 3;
+	stream_mark(done, LEN, LEN, &next);
+	assert(next == 4 && done[3]);
+	/* From chunk 0 the bytes end where chunk 1 is missing, whatever the
+	 * live span is doing elsewhere. */
+	assert(stream_available(done, LEN, LEN, 10) == STREAM_CHUNK);
+	/* A stale watermark from an older span is not trusted: the live span
+	 * must be in the very next chunk. */
+	assert(stream_available(done, LEN, 3 * STREAM_CHUNK, 10) == STREAM_CHUNK);
+	assert(stream_available(done, LEN, LEN, 3 * STREAM_CHUNK + 5) == LEN);
+	assert(stream_available(done, LEN, 0, LEN) == LEN);
+	/* Inside the hole: nothing. */
+	assert(stream_available(done, LEN, LEN, 2 * STREAM_CHUNK + 1) ==
+	       2 * STREAM_CHUNK + 1);
+
+	/* The next missing chunk from where the decoder reads, past the end
+	 * back to the start. */
+	assert(stream_next_missing(done, LEN, 0) == STREAM_CHUNK);
+	assert(stream_next_missing(done, LEN, 2 * STREAM_CHUNK + 7) ==
+	       2 * STREAM_CHUNK);
+	assert(stream_next_missing(done, LEN, 3 * STREAM_CHUNK) == STREAM_CHUNK);
+	assert(stream_next_missing(done, LEN, LEN + 50) == STREAM_CHUNK);
+	done[1] = done[2] = 1;
+	assert(stream_next_missing(done, LEN, 0) == LEN);
+	assert(stream_next_missing(done, 0, 0) == 0);
 }
 
 static void test_player_shared_helpers(void)
@@ -2721,6 +2793,7 @@ int main(void)
 	test_tabs();
 	test_settings_layout();
 	test_player_layout();
+	test_stream_chunks();
 	test_player_shared_helpers();
 	test_now_layout();
 	test_list_bubbles();

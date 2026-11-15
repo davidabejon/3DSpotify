@@ -241,6 +241,10 @@ La canción elegida se reproduce localmente y sigue sonando aunque cambies de pe
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda; con la pista terminada, la vuelve a empezar; con un error, reintenta
 - Izquierda/derecha, o los botones de la pantalla — cambia de pista
 - Arriba/abajo — ajusta el volumen local
+- **Tocar la barra de volumen** — fija el volumen; arrastra para ajustarlo
+- **Arrastrar la barra de progreso** — el tirador y el tiempo siguen al dedo; la pista salta
+  ahí al levantar el lápiz. Si esa parte aún no se ha descargado, se descarga primero: la
+  pista queda en silencio hasta que llega, y luego se completa el resto del archivo.
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Búsqueda sin cortar la música
 - **START** — detiene y sale
 

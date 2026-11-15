@@ -352,6 +352,15 @@ typedef struct {
 	stb_vorbis_info info;
 	/* This track's preparation thread has been started. */
 	bool preparing;
+	/* After a seek: the clock shows `seek_frame`, the sample asked for,
+	 * until the decoder finds a page and knows where it really is; the
+	 * frames it decoded since the seek, to work that out; the byte the
+	 * decoder was sent to, and whether that was already corrected once. */
+	bool seek_sync;
+	long long seek_frame;
+	long long seek_decoded;
+	size_t seek_byte;
+	bool seek_refined;
 } player_stream;
 
 typedef struct {
@@ -701,6 +710,114 @@ static pump_step pump_end(bool success, const char *error)
 	return PUMP_END;
 }
 
+/* Sends the decoder to byte `at` and asks the download for what comes
+ * there (track_stream_seek). The audio queued so far is dropped; the clock
+ * shows `frame` until the decoder finds where it landed. */
+static void seek_to_byte(size_t at, long long frame)
+{
+	player_stream *s = &player.s;
+	ndspChnWaveBufClear(0);
+	for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++) {
+		s->waves[i].status = NDSP_WBUF_DONE;
+		s->wave_submitted[i] = false;
+	}
+	/* From here it scans for the next Ogg page, which tells it the
+	 * sample it is at. */
+	stb_vorbis_flush_pushdata(s->decoder);
+	s->decoded = NULL;
+	s->decoded_samples = s->decoded_offset = 0;
+	s->input_len = 0;
+	s->pcm_frames = 0;
+	s->eof = false;
+	s->final_wave_submitted = false;
+	s->source_pos = at;
+	s->completed_audio_frames = (size_t)frame;
+	s->displayed_played_frames = (size_t)frame;
+	s->seek_sync = true;
+	s->seek_frame = frame;
+	s->seek_decoded = 0;
+	s->seek_byte = at;
+	track_stream_seek(&dl.stream, at);
+}
+
+/* The byte where sample `frame` should be, as if the bit rate were even:
+ * Vorbis is not, so the guess is corrected once the decoder knows where it
+ * landed (seek_settle). */
+static size_t seek_guess(long long frame, long long total_frames)
+{
+	size_t body = dl.stream.len - SPOTIFY_OGG_HEADER;
+	if (total_frames <= 0 || frame <= 0)
+		return SPOTIFY_OGG_HEADER;
+	if (frame >= total_frames)
+		return dl.stream.len;
+	return SPOTIFY_OGG_HEADER +
+	       (size_t)((unsigned long long)body * (unsigned long long)frame /
+	                (unsigned long long)total_frames);
+}
+
+/* A frame of `samples` came out after a seek: once the decoder knows the
+ * sample it ends at, the clock follows the real position. Landed more
+ * than PLAYER_SEEK_SLACK_S off, it seeks once more, from where it landed,
+ * at the file's average rate. */
+#define PLAYER_SEEK_SLACK_S 2
+static void seek_settle(int samples)
+{
+	player_stream *s = &player.s;
+	s->seek_decoded += samples;
+	int offset = stb_vorbis_get_sample_offset(s->decoder);
+	if (offset < 0)
+		return;
+	s->seek_sync = false;
+	long long landed = (long long)offset - s->seek_decoded;
+	if (landed < 0)
+		landed = 0;
+	long long off = landed - s->seek_frame;
+	long long slack = (long long)PLAYER_SEEK_SLACK_S * s->info.sample_rate;
+	const sp_track *track = player_track();
+	long long total = track && track->duration_ms > 0
+	                  ? (long long)track->duration_ms * s->info.sample_rate /
+	                    1000 : 0;
+	if (!s->seek_refined && total > 0 && (off > slack || off < -slack)) {
+		s->seek_refined = true;
+		long long body = (long long)(dl.stream.len - SPOTIFY_OGG_HEADER);
+		long long at = (long long)s->seek_byte - off * body / total;
+		if (at < SPOTIFY_OGG_HEADER)
+			at = SPOTIFY_OGG_HEADER;
+		if (at > (long long)dl.stream.len)
+			at = (long long)dl.stream.len;
+		seek_to_byte((size_t)at, s->seek_frame);
+		return;
+	}
+	/* The clock counts from where the audio after the seek starts. */
+	long long base = (long long)s->completed_audio_frames + off;
+	s->completed_audio_frames = base < 0 ? 0 : (size_t)base;
+	s->displayed_played_frames = s->completed_audio_frames;
+}
+
+/* Moves the track playing to `permille` of its length, paused or not. Only
+ * once the decoder is open and the file's size known; whatever of it is
+ * not downloaded yet is asked for first, and the track stays silent until
+ * it comes. */
+static void player_seek(int permille)
+{
+	player_stream *s = &player.s;
+	const sp_track *track = player_track();
+	if (player.phase != PLAYER_PHASE_PLAYING || !s->decoder_open ||
+	    dl_abandoned || !dl.stream.data ||
+	    dl.stream.len <= SPOTIFY_OGG_HEADER || !track ||
+	    track->duration_ms <= 0)
+		return;
+	if (permille < 0)
+		permille = 0;
+	if (permille > 1000)
+		permille = 1000;
+	long long total = (long long)track->duration_ms * s->info.sample_rate /
+	                  1000;
+	long long frame = total * permille / 1000;
+	s->seek_refined = false;
+	seek_to_byte(seek_guess(frame, total), frame);
+}
+
 /* One step of download -> Vorbis -> PCM -> wave buffers. */
 static pump_step pump_once(void)
 {
@@ -714,8 +831,7 @@ static pump_step pump_once(void)
 		}
 	}
 
-	__sync_synchronize();
-	size_t available = dl.stream.downloaded;
+	size_t available = track_stream_available(&dl.stream, s->source_pos);
 	if (dl.stream.data && available > s->source_pos &&
 	    s->input_len < PLAYER_INPUT_CAPACITY) {
 		size_t copy = available - s->source_pos;
@@ -805,6 +921,8 @@ static pump_step pump_once(void)
 				return pump_end(false, tr(STR_ERR_CHANNELS_CHANGED));
 			s->decoded_samples = samples;
 			s->decoded_offset = 0;
+			if (s->seek_sync)
+				seek_settle(samples);
 			return PUMP_AGAIN;
 		}
 		if (used > 0)
@@ -812,12 +930,15 @@ static pump_step pump_once(void)
 		decoder_needs_more = true;
 	}
 
-	__sync_synchronize();
-	available = dl.stream.downloaded;
-	bool no_more_data = dl.done && s->source_pos >= available &&
+	available = track_stream_available(&dl.stream, s->source_pos);
+	/* The end of the file, or a download that stopped before the bytes the
+	 * decoder needs next. */
+	bool at_end = dl.stream.len && s->source_pos >= dl.stream.len;
+	bool stuck = dl.done && !at_end && available <= s->source_pos;
+	bool no_more_data = (at_end || stuck) &&
 	                    (!s->decoder_open || decoder_needs_more);
 	if (no_more_data && !s->eof) {
-		if (dl.stream.dl_failed) {
+		if (stuck || dl.stream.dl_failed) {
 			snprintf(error, sizeof(error), tr(STR_ERR_DOWNLOAD_FAILED_FMT),
 			         dl.stream.dl_err);
 			return pump_end(false, error);
@@ -887,6 +1008,9 @@ static void player_pump(void)
 	}
 	if (player.phase != PLAYER_PHASE_PLAYING)
 		return;
+	/* The download fills the holes after where the decoder reads first. */
+	if (!dl_abandoned)
+		track_stream_hint(&dl.stream, player.s.source_pos);
 	for (int step = 0; step < PLAYER_PUMP_MAX_STEPS; step++)
 		if (pump_once() != PUMP_AGAIN)
 			break;
@@ -968,8 +1092,12 @@ static player_info player_snapshot(void)
 	const sp_track *track = player_track();
 	/* An abandoned download is the skipped track's, not this one's. */
 	const download_job *job = dl_abandoned ? NULL : &dl;
+	/* What is there from where the decoder reads: after a seek ahead, the
+	 * bar shows how far the audio can go on, not the holes behind. */
+	size_t ahead = job ? track_stream_available(&job->stream,
+	                                            player.s.source_pos) : 0;
 	unsigned percent = job && job->stream.total
-	                   ? (unsigned)(job->stream.downloaded * 100 /
+	                   ? (unsigned)((unsigned long long)ahead * 100 /
 	                                job->stream.total) : 0;
 	if ((job && job->done && job->stream.dl_done) ||
 	    player.phase == PLAYER_PHASE_FINISHED)
@@ -988,6 +1116,9 @@ static player_info player_snapshot(void)
 		.duration_s = duration,
 		.download_pct = percent > 100 ? 100 : percent,
 		.volume_pct = (unsigned)(playback_volume * 100.0f + 0.5f),
+		.seekable = player.phase == PLAYER_PHASE_PLAYING &&
+		            player.s.decoder_open && !dl_abandoned &&
+		            dl.stream.len > SPOTIFY_OGG_HEADER && duration > 0,
 		.error = player.error,
 	};
 	return info;
@@ -1689,6 +1820,12 @@ static tabs_exit run_tabs(spotify_session *session)
 				break;
 			case PLAYER_ACTION_VOLUME_DOWN:
 				set_playback_volume(playback_volume - 0.1f);
+				break;
+			case PLAYER_ACTION_SEEK:
+				player_seek(view_player_value());
+				break;
+			case PLAYER_ACTION_VOLUME_SET:
+				set_playback_volume(view_player_value() / 1000.0f);
 				break;
 			case PLAYER_ACTION_BACK:
 				switch_tab(TAB_SEARCH);

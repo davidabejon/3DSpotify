@@ -199,7 +199,7 @@ static void draw_bar(const now_look *look)
 	            player_permille(look->download, 100),
 	            player_progress_permille(finished, look->elapsed,
 	                                     look->duration),
-	            true);
+	            UI_HANDLE_REST);
 }
 
 /* `roll` < 0: a text that fits; otherwise how far it has rolled. */

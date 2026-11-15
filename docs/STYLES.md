@@ -231,12 +231,25 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
 - Descarga: relleno `musgo` por delante del progreso.
 - Progreso: relleno `clorofila`.
 - Tirador: rectángulo 6×14 px `texto` con contorno 1 px `tinta`, centrado en el extremo del
-  progreso.
-- Actualizar como máximo una vez por segundo.
+  progreso. Arrastrado con el táctil: relleno `lima` (estado pulsado, §6.3).
+- Actualizar como máximo una vez por segundo, salvo mientras se arrastra: entonces sigue al
+  dedo.
 
 ### 5.5 Barra de volumen
 
 Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador.
+
+### 5.5.1 Barras táctiles
+
+- En el reproductor, las dos barras se arrastran con el táctil. Su zona táctil es más grande
+  que la barra: todo el ancho (la del volumen, desde la barra, sin la etiqueta «Vol.») y
+  desde bajo los tiempos hasta la barra de botones, partida a medio camino entre las dos.
+- Tocar dentro de la zona agarra la barra hasta levantar el lápiz, aunque se salga de ella;
+  fuera de los extremos cuenta como el extremo.
+- Volumen: sigue al dedo en el mismo frame (§6.7).
+- Progreso: el tirador y el tiempo transcurrido siguen al dedo; la pista salta a ese punto al
+  levantar el lápiz, no antes. Solo mientras la pista suena o está en pausa (no cargando ni
+  terminada). Si cambia la pista durante el arrastre, el arrastre se pierde.
 
 ### 5.6 Barra de botones
 
@@ -732,6 +745,14 @@ Error:
 - Sin nada en reproducción: mensaje centrado «Todavía no suena nada».
 - El audio sigue sonando en cualquier pestaña. B vuelve a «Búsqueda» sin cortarlo; con un
   detalle abierto, B lo cierra primero.
+- Saltar con la barra de progreso (§5.5.1): el audio ya en cola se descarta y la pista sigue
+  desde el punto elegido, pausada si lo estaba. La posición en bytes es una estimación
+  (Vorbis tiene tasa variable): el tiempo se corrige con la posición real en cuanto el
+  decodificador la encuentra, y si cae a más de 2 s del punto pedido se corrige una vez.
+- Si el punto aún no se ha descargado, la descarga se mueve allí y la pista queda en silencio
+  hasta que llega, con el tiempo en el punto elegido. Al terminar, la descarga vuelve a por
+  los huecos que queden, empezando por lo que sigue a lo que suena. La capa de descarga de la
+  barra muestra hasta dónde puede seguir sonando sin esperar.
 - El teclado (`swkbd`) bloquea el hilo principal: la pista se pausa mientras está abierto y
   sigue al cerrarlo.
 

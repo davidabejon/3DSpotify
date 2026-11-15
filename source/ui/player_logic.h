@@ -144,6 +144,45 @@ static inline ui_rect player_volume_rect(int label_w)
 	return r;
 }
 
+/* Where the stylus takes the bars: wider and taller than they are drawn,
+ * the whole width, split halfway between them. The progress bar's zone
+ * starts under the times; the volume's ends at the button bar. */
+static inline int player_bars_split(int label_w)
+{
+	ui_rect progress = player_progress_rect();
+	ui_rect volume = player_volume_rect(label_w);
+	return (progress.y + progress.h + volume.y) / 2;
+}
+
+static inline ui_rect player_seek_zone(int label_w)
+{
+	ui_rect progress = player_progress_rect();
+	int top = progress.y - SP_2;
+	ui_rect r = { 0, top, SCREEN_BOTTOM_W,
+	              player_bars_split(label_w) - top };
+	return r;
+}
+
+static inline ui_rect player_volume_zone(int label_w)
+{
+	ui_rect volume = player_volume_rect(label_w);
+	int top = player_bars_split(label_w);
+	ui_rect r = { volume.x - SP_2, top, SCREEN_BOTTOM_W - (volume.x - SP_2),
+	              SCREEN_H - BAR_H - top };
+	return r;
+}
+
+/* The share of bar `bar` at x, in thousandths, clamped: past either end
+ * is that end. */
+static inline int player_bar_permille(ui_rect bar, int x)
+{
+	if (bar.w <= 0 || x <= bar.x)
+		return 0;
+	if (x >= bar.x + bar.w)
+		return 1000;
+	return (x - bar.x) * 1000 / bar.w;
+}
+
 /* The notice of a failed track, under the tab bar. */
 static inline ui_rect player_notice_rect(void)
 {

@@ -1442,6 +1442,33 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((tree / "include" / "mbedtls" / "ssl.h").read_bytes(),
                          b"test")
 
+    def test_bars_seek_and_set_volume_by_touch(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        view = (build.ROOT / "ui" / "view_player.c").read_text(
+            encoding="utf-8")
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8")
+        # The view turns a drag into actions; main acts on them.
+        self.assertIn("return PLAYER_ACTION_SEEK;", view)
+        self.assertIn("return PLAYER_ACTION_VOLUME_SET;", view)
+        self.assertIn("player_seek(view_player_value());", app)
+        # A seek drops the queued audio, flushes the decoder and sends the
+        # download where it is needed.
+        seek = app[app.index("static void seek_to_byte("):
+                   app.index("static size_t seek_guess(")]
+        self.assertIn("ndspChnWaveBufClear(0);", seek)
+        self.assertIn("stb_vorbis_flush_pushdata(s->decoder);", seek)
+        self.assertIn("track_stream_seek(&dl.stream, at);", seek)
+        # The decoder only reads bytes that are there.
+        pump = app[app.index("static pump_step pump_once(void)"):
+                   app.index("static void player_pump(void)")]
+        self.assertNotIn("dl.stream.downloaded", pump)
+        self.assertIn("track_stream_available(&dl.stream, s->source_pos)",
+                      pump)
+        # The download never writes over a chunk that is already whole.
+        self.assertIn("if (span_blocked(ts)) {", track)
+        self.assertIn("stream_next_missing(ts->chunk_done", track)
+
 
 if __name__ == "__main__":
     unittest.main()

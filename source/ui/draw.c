@@ -253,7 +253,7 @@ void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
 	}
 }
 
-void ui_progress(ui_rect r, int download, int progress, bool handle)
+void ui_progress(ui_rect r, int download, int progress, ui_handle handle)
 {
 	ui_rect inside = outlined(r, COL_CAPA_ALTA);
 	if (download >= 0) {
@@ -264,10 +264,10 @@ void ui_progress(ui_rect r, int download, int progress, bool handle)
 	ui_rect played = inside;
 	played.w = player_fill_px(inside.w, progress);
 	ui_fill(played, COL_CLOROFILA);
-	if (handle) {
+	if (handle != UI_HANDLE_NONE) {
 		ui_rect knob = { played.x + played.w - HANDLE_W / 2,
 		                 r.y + r.h / 2 - HANDLE_H / 2, HANDLE_W, HANDLE_H };
-		outlined(knob, COL_TEXTO);
+		outlined(knob, handle == UI_HANDLE_PRESSED ? COL_LIMA : COL_TEXTO);
 	}
 }
 
