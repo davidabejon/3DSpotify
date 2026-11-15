@@ -110,6 +110,9 @@ void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
  * square with the note icon centred in `texto_2`, so the layout does not
  * move when the image arrives. */
 void ui_art(ui_rect box, const C2D_Image *image);
+/* The same with another icon (icons.h) where the cover goes: Liked Songs
+ * has a heart instead of a cover. */
+void ui_art_or(ui_rect box, const C2D_Image *image, int icon);
 
 /* A raised `capa_alta` bubble with an icon and a message (5.9). */
 void ui_bubble(ui_rect r, const C2D_Image *icon, const C2D_Text *text);

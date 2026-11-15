@@ -35,6 +35,7 @@ typedef struct {
 	char uri[SP_URI_MAX];
 	char host[128];
 	char token[1024];
+	char username[128];
 	int  doc;                     /* the document it is for... */
 	unsigned serial;              /* ...as long as it still has this serial */
 	sp_album  album;
@@ -50,6 +51,12 @@ typedef struct {
 } detail_job;
 
 static detail_doc docs[DETAIL_POOL];
+/* Liked Songs: the whole list of URIs, newest first, as its first load
+ * read it. Pages after it name the next ones from here, with no request
+ * for the list again. Written and read by the worker only (one runs at a
+ * time); a new first load replaces it. */
+static char liked_uris[DETAIL_PLAYLIST_MAX][SP_URI_MAX];
+static int liked_count, liked_total;
 static detail_stack stacks[DETAIL_STACKS];
 static detail_job job;
 static Thread worker;
@@ -101,9 +108,30 @@ static void worker_main(void *arg)
 		n = job.album.track_count;
 		for (int i = 0; i < n; i++)
 			job.uris[i] = job.album.track_uris[i];
+	} else if (job.kind == DETAIL_PLAYLIST &&
+	           strcmp(job.uri, SP_LIKED_URI) == 0) {
+		/* Liked Songs: the list comes whole, once; a page only names the
+		 * next SP_PLAYLIST_PAGE of it. */
+		rc = 0;
+		memset(&job.playlist, 0, sizeof(job.playlist));
+		if (!job.page) {
+			int got = sp_liked_s(sess, job.token, job.username, liked_uris,
+			                     DETAIL_PLAYLIST_MAX, &liked_total,
+			                     job.error, sizeof(job.error));
+			liked_count = got < 0 ? 0 : got;
+			rc = got < 0 ? -1 : 0;
+		}
+		int from = job.from < liked_count ? job.from : liked_count;
+		n = liked_count - from;
+		if (n > SP_PLAYLIST_PAGE)
+			n = SP_PLAYLIST_PAGE;
+		for (int i = 0; i < n; i++)
+			job.uris[i] = liked_uris[from + i];
+		job.playlist.items = n;
+		job.playlist.total_tracks = liked_total;
 	} else if (job.kind == DETAIL_PLAYLIST) {
-		/* Only the first items are asked for: the service honours the
-		 * range, so a list of thousands costs what a short one does. */
+		/* A page at a time: the service honours the range, so a list of
+		 * thousands costs what a short one does. */
 		rc = sp_playlist_s(sess, job.token, job.uri, job.from,
 		                   SP_PLAYLIST_PAGE, &job.playlist, job.error,
 		                   sizeof(job.error));
@@ -153,6 +181,27 @@ static void append_page(detail_doc *d)
 	          d->count < d->capacity;
 }
 
+/* Opening where the playlist was left: the track found in the rows from
+ * `from` takes the focus; not there, the next page is asked for, within
+ * DETAIL_RESUME_PAGES. */
+static void seek_focus(detail_doc *d, int from)
+{
+	if (!d->focus_uri[0])
+		return;
+	for (int i = from; i < d->count; i++)
+		if (strcmp(d->tracks[i].uri, d->focus_uri) == 0) {
+			d->selected = i;
+			d->first = i;
+			d->refocus = true;
+			d->focus_uri[0] = '\0';
+			return;
+		}
+	if (d->more && ++d->resume_pages < DETAIL_RESUME_PAGES)
+		d->loading_more = true;
+	else
+		d->focus_uri[0] = '\0';
+}
+
 /* The finished load into its document, unless the document moved on. */
 static void apply(detail_doc *d)
 {
@@ -180,6 +229,7 @@ static void apply(detail_doc *d)
 		d->selected = 0;
 		d->first = 0;
 		d->state = DETAIL_READY;
+		seek_focus(d, 0);
 		return;
 	} else {
 		const sp_artist *a = &job.artist;
@@ -205,6 +255,7 @@ static bool reap(void)
 	threadFree(worker);
 	worker = NULL;
 	secure_clear(job.token, sizeof(job.token));
+	secure_clear(job.username, sizeof(job.username));
 
 	detail_doc *d = &docs[job.doc];
 	if (job.page) {
@@ -212,10 +263,13 @@ static bool reap(void)
 		    d->state != DETAIL_READY || !d->loading_more)
 			return false;   /* still asked for if wanted: started again */
 		d->loading_more = false;
-		if (job.result == 0)
+		if (job.result == 0) {
+			int before = d->count;
 			append_page(d);
-		else
+			seek_focus(d, before);
+		} else {
 			d->retry_at = osGetTime() + DETAIL_MORE_RETRY_MS;
+		}
 		return on_top(job.doc);
 	}
 	if (job.cancel_requested || d->serial != job.serial ||
@@ -225,7 +279,8 @@ static bool reap(void)
 	return on_top(job.doc);
 }
 
-static void start(int slot, const char *host, const char *token)
+static void start(int slot, const char *host, const char *token,
+                  const char *username)
 {
 	detail_doc *d = &docs[slot];
 	memset(&job, 0, sizeof(job));
@@ -237,9 +292,13 @@ static void start(int slot, const char *host, const char *token)
 	snprintf(job.uri, sizeof(job.uri), "%s", d->uri);
 	snprintf(job.host, sizeof(job.host), "%s", host);
 	snprintf(job.token, sizeof(job.token), "%s", token);
+	snprintf(job.username, sizeof(job.username), "%s",
+	         username ? username : "");
 	/* Below the decoder, like every worker that can overlap playback. */
 	worker = threadCreate(worker_main, NULL, DETAIL_WORKER_STACK,
 	                      background_priority(), -2, false);
+	if (!worker)
+		secure_clear(job.username, sizeof(job.username));
 	if (!worker && job.page) {
 		secure_clear(job.token, sizeof(job.token));
 		d->loading_more = false;
@@ -375,9 +434,13 @@ void details_open_artist(app_tab tab, const char *uri)
 	open_entity(tab, DETAIL_ARTIST, uri);
 }
 
-void details_open_playlist(app_tab tab, const char *uri)
+void details_open_playlist(app_tab tab, const char *uri, const char *resume)
 {
 	open_entity(tab, DETAIL_PLAYLIST, uri);
+	detail_doc *d = details_top(tab);
+	if (d && d->kind == DETAIL_PLAYLIST && resume && resume[0] &&
+	    strcmp(d->uri, uri) == 0)
+		snprintf(d->focus_uri, sizeof(d->focus_uri), "%s", resume);
 }
 
 bool details_back(app_tab tab)
@@ -420,13 +483,14 @@ void details_clear(app_tab tab)
 	detail_stack_clear(s);
 }
 
-bool details_poll(app_tab active, const char *host, const char *token)
+bool details_poll(app_tab active, const char *host, const char *token,
+                  const char *username)
 {
 	bool changed = reap();
 	if (!worker && host && host[0] && token && token[0]) {
 		int slot = waiting(active);
 		if (slot >= 0) {
-			start(slot, host, token);
+			start(slot, host, token, username);
 			changed |= docs[slot].state == DETAIL_FAILED;
 		}
 	}
@@ -442,6 +506,9 @@ void details_stop(void)
 		worker = NULL;
 	}
 	secure_clear(job.token, sizeof(job.token));
+	secure_clear(job.username, sizeof(job.username));
+	secure_clear(liked_uris, sizeof(liked_uris));
+	liked_count = liked_total = 0;
 	for (int i = 0; i < DETAIL_STACKS; i++)
 		detail_stack_clear(&stacks[i]);
 	/* Nothing shows them any more: the views re-set their lists on the

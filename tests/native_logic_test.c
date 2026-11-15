@@ -623,18 +623,38 @@ static void test_meta_parse_recent(void)
 	    "\"lastPlayedTime\":1794500000000},"
 	    "{\"uri\":\"spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD\"}"
 	    "]}";
-	char uris[4][SP_URI_MAX];
-	int n = sp_parse_recent_playlists(JSON, strlen(JSON), uris, 4);
+	char uris[4][SP_URI_MAX], last[4][SP_URI_MAX];
+	int n = sp_parse_recent_playlists(JSON, strlen(JSON), uris, last, 4);
 	assert(n == 3);
+	/* Each playlist's last track, from its own object only. */
+	assert(strcmp(last[0], "spotify:track:6EGkbPJrb88STcdfMu1j1y") == 0);
+	assert(!last[1][0] && !last[2][0]);
 	assert(strcmp(uris[0], "spotify:playlist:37i9dQZF1EYkqdzj48dyYq") == 0);
 	assert(strcmp(uris[1], "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1") == 0);
 	assert(strcmp(uris[2], "spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD") == 0);
-	assert(sp_parse_recent_playlists(JSON, strlen(JSON), uris, 1) == 1);
+	assert(sp_parse_recent_playlists(JSON, strlen(JSON), uris, NULL, 1) == 1);
 	/* Cut short: a value that ends before its quote is dropped, one that
 	 * closed before the cut is kept. */
-	assert(sp_parse_recent_playlists(JSON, 60, uris, 4) == 0);
-	assert(sp_parse_recent_playlists(JSON, 70, uris, 4) == 1);
-	assert(sp_parse_recent_playlists("{}", 2, uris, 4) == 0);
+	assert(sp_parse_recent_playlists(JSON, 60, uris, NULL, 4) == 0);
+	assert(sp_parse_recent_playlists(JSON, 70, uris, NULL, 4) == 1);
+	assert(sp_parse_recent_playlists("{}", 2, uris, NULL, 4) == 0);
+
+	/* Liked Songs, trimmed from the real answer (probe_meta step 16). */
+	static const char LIKED[] =
+	    "{\"metadata\":{\"context_owner\":\"spotify:user:abc\"},"
+	    "\"pages\":[{\"tracks\":["
+	    "{\"uri\":\"spotify:track:1BLOVHYYlH4JUHQGcpt75R\","
+	    "\"metadata\":{\"added_at\":\"1790203910000\"}},"
+	    "{\"uri\":\"spotify:track:2to8o6eQqWD4wBjMIvizGW\"},"
+	    "{\"uri\":\"spotify:track:3Y4rUyw7XBCK6hGHCOt6rp\"}]}],"
+	    "\"uri\":\"spotify:user:abc:collection\"}";
+	char liked[2][SP_URI_MAX];
+	int total = 0;
+	assert(sp_parse_liked(LIKED, strlen(LIKED), liked, 2, &total) == 2);
+	assert(total == 3);
+	assert(strcmp(liked[0], "spotify:track:1BLOVHYYlH4JUHQGcpt75R") == 0);
+	assert(strcmp(liked[1], "spotify:track:2to8o6eQqWD4wBjMIvizGW") == 0);
+	assert(sp_parse_liked("{}", 2, liked, 2, &total) == 0 && total == 0);
 }
 
 static void set_ref(sp_playlist_ref *r, const char *uri, const char *name)

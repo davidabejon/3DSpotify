@@ -21,6 +21,8 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HOME_FAILED_TITLE] = "No se pudieron cargar tus playlists",
 	[STR_HINT_OPEN] = "Abrir",
 	[STR_PLAYLIST_TYPE] = "Playlist",
+	[STR_LIKED_SONGS] = "Canciones que te gustan",
+	[STR_RESUME_FMT] = "Lo ultimo: %s",
 
 	/* Vista de resultados. */
 	[STR_RESULTS_SEARCHING] = "Buscando...",

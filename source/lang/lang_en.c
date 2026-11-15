@@ -20,6 +20,8 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HOME_FAILED_TITLE] = "Could not load your playlists",
 	[STR_HINT_OPEN] = "Open",
 	[STR_PLAYLIST_TYPE] = "Playlist",
+	[STR_LIKED_SONGS] = "Liked Songs",
+	[STR_RESUME_FMT] = "Last played: %s",
 
 	/* Results view. */
 	[STR_RESULTS_SEARCHING] = "Searching...",

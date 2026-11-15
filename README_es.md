@@ -175,6 +175,14 @@ Si la cuenta no tiene historial, la etiqueta dice **«Tus playlists»** y la car
 propio orden. El DJ de Spotify no aparece: es una sesión en vivo de otro servicio, sin lista
 de canciones que este cliente pueda reproducir.
 
+- La primera tesela es siempre **Canciones que te gustan** (un corazón donde iría la
+  portada), de la más reciente a la más antigua, cargadas de 50 en 50 como una playlist.
+- Con una tesela resaltada, la pantalla superior muestra una vista previa: portada,
+  nombre, número de canciones y lo último que sonó en ella. La portada se carga cuando el
+  resaltado se queda quieto un momento.
+- Una playlist reciente se abre con esa última canción resaltada si la playlist la
+  contiene (a menudo no: la reproducción automática sigue después del final); si no,
+  arriba.
 - Muévete entre teselas con la cruceta; bajando desde la última fila llegas a **«Mostrar
   más»**, que lista hasta 24 playlists en una rejilla con desplazamiento. **B** vuelve a las
   seis.

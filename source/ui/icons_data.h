@@ -15,6 +15,7 @@ typedef enum {
 	ICON_PLAY,
 	ICON_PAUSE,
 	ICON_PREV,
+	ICON_HEART,
 	ICON_NEXT,
 	ICON_COUNT
 } icon_id;

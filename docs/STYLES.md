@@ -756,7 +756,14 @@ Error:
 - «Mostrar más» es la misma pestaña en otro modo, no un nivel de detalle: 5 filas de
   teselas entre las barras, con indicador de desplazamiento. B vuelve a la rejilla de 6 con
   el foco en «Mostrar más».
+- La primera tesela es siempre «Canciones que te gustan», con el icono del corazón
+  (§5.10) donde iría la portada. Se abre como una playlist más, por páginas (§7.11); la
+  lista entera llega en una petición (`context-resolve`, de la más reciente a la más
+  antigua) y los nombres se piden de 50 en 50.
 - La cruceta pasa de la última fila de teselas al botón «Mostrar más» y vuelve.
+- Una reciente se abre con el foco en la última canción que sonó en ella, si la
+  playlist la contiene en sus 4 primeras páginas; si no, arriba. A menudo no la contiene:
+  la reproducción automática sigue después del final.
 - A, o tocar la tesela en foco, abre el detalle de la playlist en la pila de «Inicio»
   (§7.9). Tocar una tesela fuera de foco la pone en foco.
 - Y abre el teclado de búsqueda desde cualquier modo.
@@ -766,7 +773,11 @@ Error:
   tienes playlists» y botón primario «Buscar canciones».
 - La burbuja de idioma (SELECT) tapa «Mostrar más» durante 60 frames: es transitoria y no
   es un control (§5.9).
-- Superior: logotipo o la ficha de lo que suena; con un detalle abierto, su ficha (§7.12).
+- Superior: con una tesela en foco, su ficha (§7.12) como vista previa: portada, nombre,
+  «N canciones» y «Lo ultimo: <canción - artista>» si la hay. La portada se pide cuando
+  el foco lleva 18 frames (300 ms) quieto, para no descargar al recorrer la rejilla. Con
+  el foco en «Mostrar más» o mientras carga, logotipo o la ficha de lo que suena; con un
+  detalle abierto, su ficha.
   Volver a conectar y emparejar están en «Ajustes».
 
 ### 7.8 Ajustes

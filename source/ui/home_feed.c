@@ -23,9 +23,16 @@ typedef struct {
 	char username[128];
 	sp_playlist_ref root[HOME_ROOT_MAX];
 	char recent[HOME_MAX_PLAYLISTS][SP_URI_MAX];
+	char last[HOME_MAX_PLAYLISTS][SP_URI_MAX];
 	sp_playlist_info header;
 	sp_playlist_ref out[HOME_MAX_PLAYLISTS];
 	bool missing[HOME_MAX_PLAYLISTS];
+	/* Where each playlist was left (its last track in the history) and
+	 * that track's "title - artist", named by one metadata batch. */
+	char resume_uri[HOME_MAX_PLAYLISTS][SP_URI_MAX];
+	char resume_text[HOME_MAX_PLAYLISTS][128];
+	const char *batch_uris[HOME_MAX_PLAYLISTS];
+	sp_track batch[HOME_MAX_PLAYLISTS];
 	int  count, total;
 	bool is_recent;
 	int  result;                  /* 0 or -1 */
@@ -39,6 +46,8 @@ static Thread worker;
 static home_feed_state state;
 static unsigned generation;
 static sp_playlist_ref items[HOME_MAX_PLAYLISTS];
+static char resume_uri[HOME_MAX_PLAYLISTS][SP_URI_MAX];
+static char resume_text[HOME_MAX_PLAYLISTS][128];
 static int item_count, item_total;
 static bool items_recent;
 static char error[192];
@@ -65,8 +74,9 @@ static void worker_main(void *arg)
 	 * so its failure only costs the order. */
 	char detail[192];
 	int nrecent = sp_recent_playlists_s(sess, job.token, job.username,
-	                                    job.recent, HOME_MAX_PLAYLISTS,
-	                                    detail, sizeof(detail));
+	                                    job.recent, job.last,
+	                                    HOME_MAX_PLAYLISTS, detail,
+	                                    sizeof(detail));
 	if (nrecent < 0)
 		nrecent = 0;
 	job.is_recent = nrecent > 0;
@@ -83,9 +93,17 @@ static void worker_main(void *arg)
 		nroot = 0;                /* the history alone, then */
 	}
 
+	/* Liked Songs takes the first place, as in the official client, so
+	 * the playlists get one fewer. */
 	job.count = home_merge((const char (*)[SP_URI_MAX])job.recent, nrecent,
-	                       job.root, nroot, root_total, job.out, job.missing,
-	                       HOME_MAX_PLAYLISTS, &job.total);
+	                       job.root, nroot, root_total, job.out + 1,
+	                       job.missing + 1, HOME_MAX_PLAYLISTS - 1,
+	                       &job.total);
+	memset(&job.out[0], 0, sizeof(job.out[0]));
+	snprintf(job.out[0].uri, sizeof(job.out[0].uri), "%s", SP_LIKED_URI);
+	job.missing[0] = false;
+	job.count++;
+	job.total++;
 
 	/* Recent playlists outside the folder: their own header names them.
 	 * One that does not answer (deleted, private) is left out, and so is a
@@ -110,6 +128,35 @@ static void worker_main(void *arg)
 			job.count = home_drop(job.out, job.missing, job.count, i);
 			job.total--;
 		}
+	}
+
+	/* Where each recent playlist was left, named in one batch. */
+	int nbatch = 0;
+	for (int i = 0; i < job.count; i++) {
+		job.resume_uri[i][0] = job.resume_text[i][0] = '\0';
+		for (int k = 0; k < nrecent; k++)
+			if (job.last[k][0] && strcmp(job.recent[k], job.out[i].uri) == 0) {
+				memcpy(job.resume_uri[i], job.last[k], SP_URI_MAX);
+				job.batch_uris[nbatch++] = job.resume_uri[i];
+				break;
+			}
+	}
+	if (nbatch > 0 && !job.cancel_requested) {
+		int got = sp_track_metadata_batch_s(sess, job.token, job.batch_uris,
+		                                    nbatch, job.batch, detail,
+		                                    sizeof(detail));
+		/* A track the batch leaves out keeps its place to resume, nameless:
+		 * the card then says nothing about it. */
+		for (int t = 0; t < got; t++)
+			for (int i = 0; i < job.count; i++)
+				if (strcmp(job.resume_uri[i], job.batch[t].uri) == 0) {
+					/* Bounded halves: the card cuts the line anyway. */
+					snprintf(job.resume_text[i], sizeof(job.resume_text[i]),
+					         "%.60s%s%.60s", job.batch[t].name,
+					         job.batch[t].artist[0] ? " - " : "",
+					         job.batch[t].artist);
+					break;
+				}
 	}
 	rc = job.cancel_requested ? -1 : 0;
 close:
@@ -176,6 +223,8 @@ bool home_feed_poll(void)
 		return true;
 	}
 	memcpy(items, job.out, (size_t)job.count * sizeof(items[0]));
+	memcpy(resume_uri, job.resume_uri, sizeof(resume_uri));
+	memcpy(resume_text, job.resume_text, sizeof(resume_text));
 	item_count = job.count;
 	item_total = job.total > job.count ? job.total : job.count;
 	items_recent = job.is_recent;
@@ -208,6 +257,18 @@ home_feed_state home_feed_get_state(void)
 unsigned home_feed_generation(void)
 {
 	return generation;
+}
+
+const char *home_feed_resume_uri(int index)
+{
+	return state == HOME_FEED_READY && index >= 0 && index < item_count
+	       ? resume_uri[index] : "";
+}
+
+const char *home_feed_resume_text(int index)
+{
+	return state == HOME_FEED_READY && index >= 0 && index < item_count
+	       ? resume_text[index] : "";
 }
 
 const sp_playlist_ref *home_feed_items(int *count)

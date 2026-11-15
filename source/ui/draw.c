@@ -320,6 +320,11 @@ void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
 
 void ui_art(ui_rect box, const C2D_Image *image)
 {
+	ui_art_or(box, image, ICON_NOTE);
+}
+
+void ui_art_or(ui_rect box, const C2D_Image *image, int icon)
+{
 	ui_rect inside = outlined(box, COL_CAPA_ALTA);
 	if (image && image->tex && image->subtex->width &&
 	    image->subtex->height) {
@@ -335,7 +340,7 @@ void ui_art(ui_rect box, const C2D_Image *image)
 		                scale, scale);
 		return;
 	}
-	C2D_Image note = icon_image(ICON_NOTE);
+	C2D_Image note = icon_image((icon_id)icon);
 	ui_icon(&note, box.x + (box.w - ICON_S) / 2,
 	        box.y + (box.h - ICON_S) / 2, COL_TEXTO_2);
 }

@@ -481,34 +481,58 @@ void sp_parse_playlist(const uint8_t *body, size_t len, const char *uri,
 	}
 }
 
+/* The next `key` (quoted, as "uri") in [p, end), or NULL. */
+static const char *json_key(const char *p, const char *end, const char *key)
+{
+	size_t n = strlen(key);
+	for (const char *s = p; s + n <= end; s++)
+		if (memcmp(s, key, n) == 0)
+			return s;
+	return NULL;
+}
+
+/* The string value after a key that ends at `*p`; `*p` moves past it. False
+ * when the value is not a string or is cut short by `end`. */
+static bool json_value(const char **p, const char *end, const char **v,
+                       size_t *vlen)
+{
+	const char *s = *p;
+	while (s < end && (*s == ' ' || *s == ':' || *s == '\t' || *s == '\r' ||
+	                   *s == '\n'))
+		s++;
+	if (s >= end || *s != '"')
+		return false;
+	const char *start = ++s;
+	while (s < end && *s != '"')
+		s++;
+	if (s >= end)
+		return false;              /* cut short: never keep half a URI */
+	*v = start;
+	*vlen = (size_t)(s - start);
+	*p = s + 1;
+	return true;
+}
+
 int sp_parse_recent_playlists(const char *json, size_t len,
-                              char uris[][SP_URI_MAX], int max)
+                              char uris[][SP_URI_MAX],
+                              char (*last)[SP_URI_MAX], int max)
 {
 	static const char KEY[] = "\"uri\"";
+	static const char LAST[] = "\"lastPlayedTrackUri\"";
 	const char *end = json + len;
 	int n = 0;
 	for (const char *p = json; n < max && p < end; ) {
-		const char *k = NULL;
-		for (const char *s = p; s + sizeof(KEY) - 1 <= end; s++)
-			if (memcmp(s, KEY, sizeof(KEY) - 1) == 0) {
-				k = s;
-				break;
-			}
+		const char *k = json_key(p, end, KEY);
 		if (!k)
 			break;
 		p = k + sizeof(KEY) - 1;
-		while (p < end && (*p == ' ' || *p == ':' || *p == '\t' ||
-		                   *p == '\r' || *p == '\n'))
-			p++;
-		if (p >= end || *p != '"')
+		const char *v;
+		size_t vlen;
+		if (!json_value(&p, end, &v, &vlen)) {
+			if (p >= end || !memchr(p, '"', (size_t)(end - p)))
+				break;
 			continue;
-		const char *v = ++p;
-		while (p < end && *p != '"')
-			p++;
-		if (p >= end)
-			break;                 /* cut short: never keep half a URI */
-		size_t vlen = (size_t)(p - v);
-		p++;
+		}
 		if (vlen >= SP_URI_MAX ||
 		    !has_prefix((const uint8_t *)v, vlen, "spotify:playlist:") ||
 		    vlen <= 17)
@@ -520,7 +544,54 @@ int sp_parse_recent_playlists(const char *json, size_t len,
 			continue;
 		memcpy(uris[n], v, vlen);
 		uris[n][vlen] = '\0';
+		/* Its last track, inside the same (flat) object. */
+		if (last) {
+			last[n][0] = '\0';
+			const char *close = memchr(p, '}', (size_t)(end - p));
+			const char *lk = close ? json_key(p, close, LAST) : NULL;
+			const char *lp = lk ? lk + sizeof(LAST) - 1 : NULL;
+			const char *t;
+			size_t tlen;
+			if (lp && json_value(&lp, close, &t, &tlen) &&
+			    tlen < SP_URI_MAX &&
+			    has_prefix((const uint8_t *)t, tlen, "spotify:track:")) {
+				memcpy(last[n], t, tlen);
+				last[n][tlen] = '\0';
+			}
+		}
 		n++;
 	}
+	return n;
+}
+
+int sp_parse_liked(const char *json, size_t len, char (*uris)[SP_URI_MAX],
+                   int max, int *total)
+{
+	static const char KEY[] = "\"uri\"";
+	const char *end = json + len;
+	int n = 0, all = 0;
+	for (const char *p = json; p < end; ) {
+		const char *k = json_key(p, end, KEY);
+		if (!k)
+			break;
+		p = k + sizeof(KEY) - 1;
+		const char *v;
+		size_t vlen;
+		if (!json_value(&p, end, &v, &vlen))
+			break;
+		/* The context's own "uri" (spotify:user:...:collection) is not a
+		 * track: only tracks count. */
+		if (vlen >= SP_URI_MAX || vlen <= 14 ||
+		    !has_prefix((const uint8_t *)v, vlen, "spotify:track:"))
+			continue;
+		all++;
+		if (n < max) {
+			memcpy(uris[n], v, vlen);
+			uris[n][vlen] = '\0';
+			n++;
+		}
+	}
+	if (total)
+		*total = all;
 	return n;
 }

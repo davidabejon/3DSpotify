@@ -168,6 +168,12 @@ first, then the rest of your playlist folder. If the account has no play history
 reads **"Your playlists"** and the folder keeps its own order. Spotify's DJ is left out: it
 is a live session of another service, with no track list this client can play.
 
+- The first tile is always **Liked Songs** (a heart where the cover goes), newest first,
+  loaded 50 at a time like a playlist.
+- With a tile highlighted, the top screen previews it: cover, name, number of tracks and
+  the last song played in it. The cover loads once the highlight rests for a moment.
+- A recent playlist opens with that last song highlighted when the playlist holds it
+  (often it does not: autoplay goes on past the end), otherwise at the top.
 - Move between tiles with the D-pad; down from the last row reaches **"Show more"**, which
   lists up to 24 playlists in a scrolling grid. **B** goes back to the six.
 - Tap a tile to highlight it; tap it again (or press **A**) to open the playlist

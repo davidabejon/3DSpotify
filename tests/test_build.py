@@ -266,7 +266,8 @@ class BuildTests(unittest.TestCase):
         # Every new string in both languages; Spanish without accents.
         keys = ("STR_HOME_RECENT", "STR_HOME_YOUR_PLAYLISTS",
                 "STR_HOME_SHOW_MORE", "STR_HOME_EMPTY",
-                "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE")
+                "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE",
+                "STR_LIKED_SONGS", "STR_RESUME_FMT")
         for name in ("lang_en.c", "lang_es.c"):
             table = (lang_dir / name).read_text(encoding="utf-8")
             for key in keys:
@@ -275,6 +276,16 @@ class BuildTests(unittest.TestCase):
                 if name == "lang_es.c":
                     self.assertIsNone(re.search(r"[áéíóúñÁÉÍÓÚÑ]",
                                                 match.group(1)), key)
+        # The focused tile previews on the top screen through the detail
+        # card, and Liked Songs leads the tiles with its heart.
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        sync = app[app.index("static const detail_doc *top_detail_sync("):]
+        self.assertIn("view_home_preview()", sync[:sync.index("\n}\n")])
+        self.assertIn("SP_LIKED_URI", feed)
+        self.assertIn("ICON_HEART", (ui_dir / "tile_grid.c").read_text(
+            encoding="utf-8"))
+        self.assertIn('"HEART"', (ui_dir / "gen_icons.py").read_text(
+            encoding="utf-8"))
         self.assertNotIn("STR_HOME_LAST_SEARCH",
                          (lang_dir / "lang.h").read_text(encoding="utf-8"))
         # The style guide and both READMEs describe it.

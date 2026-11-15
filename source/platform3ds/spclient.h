@@ -208,7 +208,20 @@ int  sp_rootlist_s(http_session *sess, const char *token, const char *username,
  * left out. Returns how many URIs were kept, or -1. */
 int  sp_recent_playlists_s(http_session *sess, const char *token,
                            const char *username, char uris[][SP_URI_MAX],
-                           int max, char *err, size_t errlen);
+                           char (*last)[SP_URI_MAX], int max,
+                           char *err, size_t errlen);
+
+/* Liked Songs as URIs, newest first, from context-resolve over a session:
+ * the whole collection in one JSON page (probe_meta step 16; the
+ * collection service pages, but mixes saved albums in and keeps no
+ * recency order). Up to `max` track URIs are kept; `total` (may be NULL)
+ * gets how many the answer held. Returns how many were kept, or -1. */
+int  sp_liked_s(http_session *sess, const char *token, const char *username,
+                char (*uris)[SP_URI_MAX], int max, int *total,
+                char *err, size_t errlen);
+
+/* The URI the home tab and the details use for Liked Songs. */
+#define SP_LIKED_URI "spotify:collection:tracks"
 
 /* One playlist's header and `max_tracks` items from item `from` (at most
  * SP_PLAYLIST_PAGE; 0 asks for the header alone, a few hundred bytes). The

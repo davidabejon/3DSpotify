@@ -1,6 +1,7 @@
 #include "tile_grid.h"
 
 #include "draw.h"
+#include "icons.h"
 #include "tabbar.h"
 #include "theme.h"
 
@@ -115,8 +116,11 @@ void tile_grid_ensure_parsed(tile_grid *g)
 	C2D_TextBufClear(g->buf);
 	int cols = grid_cols(&g->geom);
 	for (int i = 0; i < g->count; i++) {
-		const char *name = g->items[i].name[0] ? g->items[i].name
-		                                       : tr(STR_UNTITLED);
+		/* Liked Songs is named in the current language, not by the feed. */
+		const char *name = strcmp(g->items[i].uri, SP_LIKED_URI) == 0
+		                   ? tr(STR_LIKED_SONGS)
+		                   : g->items[i].name[0] ? g->items[i].name
+		                                         : tr(STR_UNTITLED);
 		ui_parse_fitted(&g->name[i], g->buf, g->scratch, name, TXT_CUERPO,
 		                grid_text_width(&g->geom, i % cols));
 	}
@@ -293,7 +297,10 @@ static void draw_tile(const tile_grid *g, ui_rect tile, int index,
 	tile = ui_item_frame(tile, focused, pressed, &ink, &meta_ink);
 	C2D_Image image;
 	bool shown = g && thumbs_client_image(&g->thumbs, index, &image);
-	ui_art(grid_cover_rect(tile), shown ? &image : NULL);
+	bool liked = g && index >= 0 && strcmp(g->items[index].uri,
+	                                       SP_LIKED_URI) == 0;
+	ui_art_or(grid_cover_rect(tile), shown ? &image : NULL,
+	          liked ? ICON_HEART : ICON_NOTE);
 	if (index < 0)
 		return;
 	ui_text(&g->name[index], grid_text_x(tile), tile.y + tile.h / 2,

@@ -217,7 +217,8 @@ int sp_rootlist_s(http_session *sess, const char *token, const char *username,
 
 int sp_recent_playlists_s(http_session *sess, const char *token,
                           const char *username, char uris[][SP_URI_MAX],
-                          int max, char *err, size_t errlen)
+                          char (*last)[SP_URI_MAX], int max,
+                          char *err, size_t errlen)
 {
 	/* The desktop client's own request. limit=50 counts every kind of
 	 * context, so the playlists among them are fewer. */
@@ -237,7 +238,31 @@ int sp_recent_playlists_s(http_session *sess, const char *token,
 		http_reply_free(&r);
 		return -1;
 	}
-	int n = sp_parse_recent_playlists(r.body, r.len, uris, max);
+	int n = sp_parse_recent_playlists(r.body, r.len, uris, last, max);
+	http_reply_free(&r);
+	return n;
+}
+
+int sp_liked_s(http_session *sess, const char *token, const char *username,
+               char (*uris)[SP_URI_MAX], int max, int *total,
+               char *err, size_t errlen)
+{
+	char user[192], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/context-resolve/v1/spotify:user:%s:collection", user);
+	http_reply r;
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "liked: %s", r.err);
+		return -1;
+	}
+	if (r.status != 200) {
+		snprintf(err, errlen, "liked returned HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	int n = sp_parse_liked(r.body, r.len, uris, max, total);
 	http_reply_free(&r);
 	return n;
 }

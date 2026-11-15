@@ -1006,9 +1006,12 @@ static void power_poll(void)
  * shows on its card. */
 static const detail_doc *top_detail_sync(void)
 {
-	const detail_doc *doc = active_view == VIEW_TABS &&
-	                        details_active(active_tab)
-	                        ? details_top(active_tab) : NULL;
+	const detail_doc *doc = NULL;
+	if (active_view == VIEW_TABS && details_active(active_tab))
+		doc = details_top(active_tab);
+	else if (active_view == VIEW_TABS && active_tab == TAB_HOME)
+		/* The focused tile's card: a preview of what A opens. */
+		doc = view_home_preview();
 	if (doc && strcmp(doc->art, detail_art_url) != 0) {
 		snprintf(detail_art_url, sizeof(detail_art_url), "%s", doc->art);
 		artwork_request(&detail_art, detail_art_url);
@@ -1441,7 +1444,8 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		search_poll();
-		details_poll(active_tab, session->host, session->library_token);
+		details_poll(active_tab, session->host, session->library_token,
+		             session->username);
 		home_feed_poll();
 		/* Not stopped on leaving the tab: it only fetches the rows on
 		 * screen and the next ones anyway. */
@@ -1465,7 +1469,8 @@ static tabs_exit run_tabs(spotify_session *session)
 				break;
 			case HOME_ACTION_OPEN:
 				/* On Home's own stack: L/R and back find it as left. */
-				details_open_playlist(TAB_HOME, view_home_selected_uri());
+				details_open_playlist(TAB_HOME, view_home_selected_uri(),
+				                      view_home_selected_resume());
 				switch_tab(TAB_HOME);
 				break;
 			case HOME_ACTION_RETRY:
