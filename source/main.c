@@ -10,6 +10,7 @@
 #include "artwork.h"
 #include "cfg3ds.h"
 #include "details.h"
+#include "home_feed.h"
 #include "icons.h"
 #include "lang.h"
 #include "login_logic.h"
@@ -49,6 +50,9 @@
 typedef struct {
 	char host[128];
 	char library_token[1024];
+	/* The canonical username, which the playlist paths name. Not a secret,
+	 * but personal: never logged nor drawn. */
+	char username[128];
 	char oauth_token[1280];
 	char refresh_token[512];
 	time_t oauth_expires_at;
@@ -84,7 +88,10 @@ typedef struct {
 
 static search_job search;
 static Thread search_thread;
-static sp_track playback_queue[SEARCH_LIMIT];
+/* The results (SEARCH_LIMIT) or a detail's list, a playlist's loaded pages
+ * included (DETAIL_PLAYLIST_MAX, ~1 KB a track). */
+#define PLAYBACK_QUEUE_MAX DETAIL_PLAYLIST_MAX
+static sp_track playback_queue[PLAYBACK_QUEUE_MAX];
 static int playback_queue_count;
 static float playback_volume = 0.7f;
 static artwork_state cover_art;
@@ -1285,7 +1292,8 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		/* As from the results: the thumbnails wait for the preparation
 		 * (STYLES.md 9). */
 		view_results_allow_thumbs(false);
-		playback_queue_count = doc->count;
+		playback_queue_count = doc->count < PLAYBACK_QUEUE_MAX
+		                       ? doc->count : PLAYBACK_QUEUE_MAX;
 		memcpy(playback_queue, doc->tracks,
 		       (size_t)playback_queue_count * sizeof(playback_queue[0]));
 		queue_from_results = false;
@@ -1334,6 +1342,8 @@ static void detail_input(spotify_session *session, u32 down)
 {
 	detail_doc *doc = details_top(active_tab);
 	detail_action action = view_detail_update(doc, down);
+	/* A playlist near the end of what is loaded asks for its next page. */
+	details_follow(active_tab);
 	/* The track the action is about: the one shown, or the focused row,
 	 * as the view has just written it back. Opening a level copies what
 	 * it needs from this one, which stays on the stack under it. */
@@ -1390,7 +1400,7 @@ static void switch_tab(app_tab tab)
 	}
 	switch (tab) {
 	case TAB_HOME:
-		view_home_enter(home_query);
+		view_home_enter();
 		break;
 	case TAB_SEARCH:
 		view_results_enter();
@@ -1417,6 +1427,8 @@ static tabs_exit run_tabs(spotify_session *session)
 {
 	active_view = VIEW_TABS;
 	tabbar_reset(TAB_HOME);
+	/* In the background: the home tab shows its skeleton meanwhile. */
+	home_feed_start(session->host, session->library_token, session->username);
 	switch_tab(TAB_HOME);
 	for (;;) {
 		hidScanInput();
@@ -1430,6 +1442,7 @@ static tabs_exit run_tabs(spotify_session *session)
 		player_pump();
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token);
+		home_feed_poll();
 		/* Not stopped on leaving the tab: it only fetches the rows on
 		 * screen and the next ones anyway. */
 		view_results_allow_thumbs(!player_preparing());
@@ -1450,9 +1463,14 @@ static tabs_exit run_tabs(spotify_session *session)
 			case HOME_ACTION_SEARCH:
 				keyboard_search(session, home_query);
 				break;
-			case HOME_ACTION_REPEAT:
-				search_start(session, home_query);
-				switch_tab(TAB_SEARCH);
+			case HOME_ACTION_OPEN:
+				/* On Home's own stack: L/R and back find it as left. */
+				details_open_playlist(TAB_HOME, view_home_selected_uri());
+				switch_tab(TAB_HOME);
+				break;
+			case HOME_ACTION_RETRY:
+				home_feed_retry(session->host, session->library_token,
+				                session->username);
 				break;
 			case HOME_ACTION_LANGUAGE:
 				/* The view shows the new language by itself. */
@@ -1566,6 +1584,7 @@ static void stop_tabs(void)
 	player_stop();
 	search_stop();
 	details_stop();
+	home_feed_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();
@@ -1809,6 +1828,8 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	int rc = login5_from_credentials(info->username, info->reusable,
 	                                 info->reusable_len, device_id,
 	                                 library, detail, sizeof(detail));
+	snprintf(session->username, sizeof(session->username), "%.*s",
+	         (int)sizeof(session->username) - 1, info->username);
 	ap_close(ap);
 	secure_clear(info, sizeof(*info));
 	secure_clear(device_id, sizeof(device_id));

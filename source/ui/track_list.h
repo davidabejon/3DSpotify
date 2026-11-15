@@ -25,14 +25,20 @@
 #include "list_logic.h"
 #include "press_logic.h"
 #include "spclient.h"
+#include "thumbs.h"
 
 #include <3ds.h>
 #include <citro2d.h>
 
 #include <stdbool.h>
 
-/* As many as a search returns (SEARCH_LIMIT, THUMBS_MAX). */
-#define TRACK_LIST_MAX 24
+/* The rows kept ready at once, text and covers: a search's worth
+ * (SEARCH_LIMIT), and the thumbnail pool (THUMBS_MAX). */
+#define TRACK_LIST_WINDOW 24
+/* The longest list: a playlist's loaded pages (DETAIL_PLAYLIST_MAX). Past
+ * the window, its rows are prepared as the list scrolls to them
+ * (list_window_base). */
+#define TRACK_LIST_MAX 500
 
 typedef enum {
 	TRACK_LIST_THUMBS,     /* the cover thumbnail, via thumbs.h */
@@ -61,11 +67,10 @@ typedef struct {
 	int count;
 	int selected;
 	int first;             /* first visible row: scroll / LIST_PITCH */
+	int base;              /* first row of the window kept ready */
 	int scroll;            /* px; whole rows except while dragging */
-	/* thumbs.c holds this list's covers, so its images are this list's.
-	 * Until then the placeholder shows. */
-	bool thumbs_synced;
-	int thumbs_serial;
+	/* The covers, through thumbs.c's pool (TRACK_LIST_THUMBS only). */
+	thumbs_client thumbs;
 
 	press_state press;     /* the focused row's, for A and taps */
 	int press_index;
@@ -77,11 +82,12 @@ typedef struct {
 	C2D_TextBuf buf, scratch;
 	bool stale;
 	lang_id parsed_lang;
-	C2D_Text title[TRACK_LIST_MAX];
-	C2D_Text artist[TRACK_LIST_MAX];
-	C2D_Text duration[TRACK_LIST_MAX];
-	C2D_Text number[TRACK_LIST_MAX];
-	float duration_width[TRACK_LIST_MAX];
+	/* Row base + i is entry i. */
+	C2D_Text title[TRACK_LIST_WINDOW];
+	C2D_Text artist[TRACK_LIST_WINDOW];
+	C2D_Text duration[TRACK_LIST_WINDOW];
+	C2D_Text number[TRACK_LIST_WINDOW];
+	float duration_width[TRACK_LIST_WINDOW];
 } track_list;
 
 /* After ui_init. False when the text buffers cannot be made. */
@@ -96,6 +102,10 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 /* Back to where a list was left: `first` as the first visible row, on
  * whole rows, with the focus kept in view. */
 void track_list_scroll_to(track_list *l, int first);
+/* The same tracks, more of them: a page appended at the end of the array
+ * `l` already shows (which must not have moved). Focus, scroll and the
+ * covers already fetched stay. */
+void track_list_extend(track_list *l, int count);
 /* No press, touch, drag or nudge in progress: entering the view. */
 void track_list_reset_input(track_list *l);
 
@@ -113,9 +123,7 @@ void track_list_thumbs_frame(track_list *l);
  * before it is on screen (results arriving on another tab) starts its
  * covers early, without taking them from a list on screen. */
 void track_list_offer_thumbs(track_list *l);
-/* Whether the thumbnails may download (STYLES.md 9: not while a track
- * prepares). Disallowing asks the worker to stop without waiting for it
- * (thumbs_stop); what it fetched stays on screen. */
+/* Whether the thumbnails may download: thumbs_allow, for every client. */
 void track_list_allow_thumbs(bool allow);
 
 /* The stylus on the list: tapping a row focuses it, tapping the focused

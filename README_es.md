@@ -137,7 +137,7 @@ pestañas, cada una con su icono:
 
 | Icono | Pestaña | Qué contiene |
 |---|---|---|
-| Casa | **Inicio** | Buscar canciones y repetir la última búsqueda. |
+| Casa | **Inicio** | Tus playlists recientes y un atajo a la búsqueda. |
 | Lupa | **Búsqueda** | Los últimos resultados, la búsqueda en curso o su error. |
 | Ecualizador | **Reproducción** | La canción que suena, con sus controles. |
 | Engranaje | **Ajustes** | Idioma, volver a conectar y emparejar otra cuenta. |
@@ -168,14 +168,29 @@ pestañas, cada una con su icono:
 
 ### Inicio
 
-Toca **«Buscar canciones»** o pulsa **A** para abrir el teclado. Debajo aparece tu última búsqueda como un botón secundario; tócalo o llega a él con arriba/abajo y pulsa **A**. Al confirmar, la app pasa a la pestaña **Búsqueda**.
+La pestaña muestra tus seis playlists reproducidas más recientemente como teselas (portada y
+nombre, en dos columnas), que se cargan en segundo plano mientras se ven teselas de espera.
+Primero van las que escuchaste por última vez y después el resto de tu carpeta de playlists.
+Si la cuenta no tiene historial, la etiqueta dice **«Tus playlists»** y la carpeta conserva su
+propio orden. El DJ de Spotify no aparece: es una sesión en vivo de otro servicio, sin lista
+de canciones que este cliente pueda reproducir.
 
-**Controles táctiles:**
-- Toca un botón para resaltarlo; el botón muestra un estado pulsado cuando levantas el lápiz dentro de él.
-- Si deslizas el lápiz fuera del botón antes de levantarlo, se cancela el toque.
+- Muévete entre teselas con la cruceta; bajando desde la última fila llegas a **«Mostrar
+  más»**, que lista hasta 24 playlists en una rejilla con desplazamiento. **B** vuelve a las
+  seis.
+- Toca una tesela para resaltarla; tócala otra vez (o pulsa **A**) para abrir la playlist
+  ([Detalles](#detalles)).
+- Si la carga falla, pulsa **A** (o toca **«Reintentar»**). Una cuenta sin playlists ofrece
+  en su lugar el botón **«Buscar canciones»**.
 
-**Indicadores de acción:** Los glifos con fondos de color muestran las acciones disponibles:
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — abre el teclado de búsqueda
+**Indicadores de acción:**
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — abre la playlist resaltada
+- <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — abre el teclado de búsqueda; al confirmar, la app pasa a la pestaña **Búsqueda**
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — en «Mostrar más», vuelve a las seis
+
+Las portadas que genera Spotify (mixes, blends, el DJ) no están en el CDN al que llega este
+cliente, así que esas teselas se quedan con el marcador de la nota. En los nombres con emoji,
+los caracteres que la fuente de la consola no tiene se ven como recuadros.
 
 Mientras el teclado está abierto, la canción que suena se pausa y sigue al cerrarlo.
 
@@ -232,17 +247,21 @@ Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su 
   **A**, o tocando). Reproducir empieza la canción con la lista de la que salió como
   cola.
 - **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares, con
-  miniaturas. **A** (o tocar la fila resaltada) reproduce desde esa canción con la
+  miniaturas. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
+  siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
+  «Cargando…»), hasta 500. Los episodios y archivos locales se omiten; la pantalla
+  superior indica cuántas de cuántas hay cargadas.
+  **A** (o tocar la fila resaltada) reproduce desde esa canción con la
   lista como cola; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> abre el detalle de la canción.
 - **B** vuelve un nivel atrás; sin detalles abiertos, hace lo de siempre en esa
   pestaña. **L/R** cambian de pestaña y conservan los detalles de cada una donde los
   dejaste.
-- Los detalles de álbum y artista se cargan en segundo plano: **B** cancela y, si la
-  carga falla, **A** reintenta.
+- Los detalles de álbum, artista y playlist se cargan en segundo plano: **B** cancela
+  y, si la carga falla, **A** reintenta.
 
-Los detalles se abren desde **Búsqueda** (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> sobre un resultado) y desde
-**Reproducción** (tocando el título, el artista o el álbum). Una búsqueda nueva cierra
-los detalles abiertos en **Búsqueda**.
+Los detalles se abren desde **Inicio** (una tesela de playlist), desde **Búsqueda**
+(<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> sobre un resultado) y desde **Reproducción** (tocando el título, el artista o el
+álbum). Una búsqueda nueva cierra los detalles abiertos en **Búsqueda**.
 
 ### Ajustes
 

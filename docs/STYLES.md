@@ -388,6 +388,42 @@ ficha de detalle de la pantalla superior (§7.12).
   de documento.
 - Lógica pura en `marquee_logic.h`.
 
+### 5.16 Tesela
+
+La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 o 3 columnas
+(las playlists de «Inicio», §7.7).
+
+```
+ ┌─────────────────────────┐ 32 px (TILE_H = TOUCH_MIN)
+ │ ┌──┐ Nombre de la play...│ t_cuerpo · texto
+ │ └──┘                    │
+ └─────────────────────────┘
+   4 px  portada 24×24, texto a e2 (8 px) de ella
+```
+
+- Alto 32 px: el mínimo táctil (§4.4), así que cada tesela es un objetivo válido.
+- Portada 24×24 (`TILE_COVER`) a 4 px de los bordes izquierdo, superior e inferior, con
+  contorno 1 px `tinta`; sin imagen, cuadrado `capa_alta` con el icono de nota centrado,
+  como la fila. El layout no cambia al llegar la imagen.
+- Nombre en `t_cuerpo` · `texto`, una línea, recortado con `...` (§3.3), a `e2` de la
+  portada y con `e2` de margen derecho. Sin nombre: «(sin titulo)».
+- Estados idénticos a la fila (§5.3, §6.3): reposo `capa` con contorno; en foco `clorofila`
+  con banda inferior `musgo` y texto `tinta`; pulsada, desplazada 2 px y relleno `musgo`.
+  Fila y tesela comparten el dibujo (`ui_item_frame` en `draw.c`).
+- Rejilla: 304 px de ancho útil (320 − 2·`e2`) y separación `GRID_GAP` = 4 px en ambos ejes.
+  El resto de la división va a las primeras columnas:
+
+  | Columnas | Anchos      | x de cada columna | Texto útil por tesela |
+  |---------:|-------------|-------------------|-----------------------|
+  | 1        | 304         | 8                 | 260 px                |
+  | 2        | 150, 150    | 8, 162            | 106 px                |
+  | 3        | 99, 99, 98  | 8, 111, 214       | 55 / 54 px            |
+
+- Cinco filas de teselas caben exactas entre las barras (4 + 5·32 + 4·4 + 4 = 184 px), como
+  las cuatro filas de resultados. Desplazamiento por filas enteras, arrastre (§6.9) e
+  indicador (§5.11) como en las listas.
+- Lógica pura en `grid_logic.h`; widget en `tile_grid.[ch]`.
+
 ---
 
 ## 6. Estados e interacción
@@ -459,6 +495,11 @@ Duración:
 - Si además la fila en foco quedó cortada o fuera de la vista, esa primera pulsación (cruceta,
   A o X) solo devuelve la lista a ella: no mueve el foco, ni reproduce, ni abre el detalle.
   A y X muestran igualmente su glifo pulsado (§6.5).
+- En una rejilla de teselas (§5.16), arriba/abajo cambian de fila y conservan la columna (si
+  la fila de destino es más corta, al último de esa fila); izquierda/derecha cambian de
+  columna dentro de la fila. Con 1 columna, izquierda/derecha saltan una página, como en
+  resultados. En los bordes no hay vuelta: la tesela se desplaza 3 px hacia ese lado durante
+  6 frames.
 
 ### 6.7 Volumen
 
@@ -689,9 +730,44 @@ Error:
 
 ### 7.7 Inicio
 
-- Inferior: barra de pestañas con «Inicio» activa, botón primario «Buscar canciones» a 16 px
-  bajo ella y, si la hay, la última búsqueda como botón secundario.
-- Barra de botones: [A] Buscar. Volver a conectar y emparejar están en «Ajustes».
+```
+ INFERIOR (rejilla de 6)                   INFERIOR (Mostrar más)
+ ┌──────────────────────────┐              ┌──────────────────────────┐
+ │ [▓⌂▓] [⌕] [▮▮▮] [⚙]      │ 0..32        │ [▓⌂▓] [⌕] [▮▮▮] [⚙]      │ 0..32
+ │ Recientes                │ 36..52       │┌──────────┐┌──────────┐▓│ 36..68
+ │┌──────────┐┌──────────┐  │ 56..88       ││▢ Lista 1 ││▢ Lista 2 │▓│
+ ││▢ Lista 1 ││▢ Lista 2 │  │              │└──────────┘└──────────┘░│ 5 filas
+ │└──────────┘└──────────┘  │              │ ...                     ░│ de 32 px
+ │ (3 filas, 2 columnas)    │ ..160        │                         ░│ ..212
+ │ [     Mostrar mas      ] │ 176..208     │──────────────────────────│
+ │──────────────────────────│              │ [A] Abrir [Y] Buscar [B] │
+ │ [A] Abrir [Y] Buscar     │ 216..240     └──────────────────────────┘
+ └──────────────────────────┘
+```
+
+- Las playlists vienen del historial de reproducción de la cuenta (las más recientes
+  primero), seguidas del resto de la carpeta de playlists en su orden, sin repetir; hasta
+  24. Sin historial, solo la carpeta, y la etiqueta dice «Tus playlists» en lugar de
+  «Recientes». El DJ de Spotify no aparece: es una sesión en vivo de otro servicio
+  (atributos `lexicon_*`), sin lista de pistas que este cliente pueda leer ni reproducir.
+- Rejilla de 6: etiqueta en `t_meta` · `texto_2` en 36..52; 3 filas × 2 columnas de teselas
+  (§5.16) en 56..160; «Mostrar más» como botón secundario (§5.2) a todo el ancho, a `e4`
+  debajo (176..208), solo si hay más de 6.
+- «Mostrar más» es la misma pestaña en otro modo, no un nivel de detalle: 5 filas de
+  teselas entre las barras, con indicador de desplazamiento. B vuelve a la rejilla de 6 con
+  el foco en «Mostrar más».
+- La cruceta pasa de la última fila de teselas al botón «Mostrar más» y vuelve.
+- A, o tocar la tesela en foco, abre el detalle de la playlist en la pila de «Inicio»
+  (§7.9). Tocar una tesela fuera de foco la pone en foco.
+- Y abre el teclado de búsqueda desde cualquier modo.
+- Barra de botones: `[A] Abrir [Y] Buscar`; en «Mostrar más», además `[B] Volver`.
+- Cargando: 6 teselas esqueleto y burbuja de espera «Cargando...» (§5.9). Error: aviso
+  (§5.8) con el detalle y botón primario «Reintentar». Vacío: mensaje centrado «Todavia no
+  tienes playlists» y botón primario «Buscar canciones».
+- La burbuja de idioma (SELECT) tapa «Mostrar más» durante 60 frames: es transitoria y no
+  es un control (§5.9).
+- Superior: logotipo o la ficha de lo que suena; con un detalle abierto, su ficha (§7.12).
+  Volver a conectar y emparejar están en «Ajustes».
 
 ### 7.8 Ajustes
 
@@ -717,11 +793,12 @@ Error:
 
 ### 7.9 Detalles: navegación común
 
-- «Búsqueda» y «Reproducción» tienen cada una su pila de detalles. Mientras la de la pestaña
-  activa no está vacía, la pantalla inferior la dibuja el detalle de arriba en lugar de la
-  vista de la pestaña, con la barra de pestañas encima y la misma pestaña activa; la
-  superior muestra su ficha (§7.12).
-- B cierra un nivel; con la pila vacía, B hace lo de siempre en esa pestaña.
+- «Inicio», «Búsqueda» y «Reproducción» tienen cada una su pila de detalles. Mientras la de
+  la pestaña activa no está vacía, la pantalla inferior la dibuja el detalle de arriba en
+  lugar de la vista de la pestaña, con la barra de pestañas encima y la misma pestaña
+  activa; la superior muestra su ficha (§7.12).
+- B cierra un nivel; con la pila vacía, B hace lo de siempre en esa pestaña (en «Inicio»,
+  salir de «Mostrar más» o nada).
 - L/R cambian de pestaña sin tocar las pilas: al volver, cada una está donde se dejó, con el
   foco y el desplazamiento de su lista.
 - Seis niveles como máximo por pestaña; al abrir uno más se descarta el más antiguo.
@@ -749,11 +826,15 @@ Error:
   pista no trae ese URI. El nombre se recorta con `...`: completo en la ficha de arriba.
 - No necesita red: los datos ya están en memoria.
 
-### 7.11 Detalle de álbum y de artista
+### 7.11 Detalle de álbum, de artista y de playlist
 
 - Lista de 4 filas como resultados (§7.4), con su arrastre (§6.9) e indicador (§5.11). Álbum:
   filas con número (§5.3), en orden de disco; de más de 24 pistas se muestran las 24
-  primeras. Artista: sus canciones populares, con miniatura.
+  primeras. Artista: sus canciones populares, con miniatura. Playlist: sus pistas con
+  miniatura (cada una es de un álbum distinto), por páginas de 50: la siguiente se pide sola
+  cuando la lista muestra una fila a 8 o menos de la última cargada, con la burbuja de
+  espera «Cargando...» (§5.9) mientras llega; la lista sigue respondiendo. Hasta 500 pistas.
+  Los episodios y archivos locales se omiten.
 - A, o tocar la fila en foco, reproduce desde ella con la lista como cola; X abre el detalle
   de canción. Barra: `[A] Reproducir [X] Detalle [B] Volver`.
 - Cargando: filas esqueleto y burbuja de espera «Cargando...» (§5.9). B cancela y cierra.
@@ -770,6 +851,9 @@ Error:
     año.
   - Álbum: artista / «Album - 2004» / «11 canciones» o «24 de 31 canciones» / sello.
   - Artista: «Canciones populares».
+  - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
+    página). Sin propietario: el
+    servicio solo da un id de usuario opaco.
   - Cargando o con error: su estado como título.
 - El texto que no cabe en la columna rueda (§5.15).
 - La imagen es la del detalle, nunca la de la pista que suena.
@@ -803,9 +887,18 @@ Error:
 - Las vistas de detalle solo marcan `dirty` por pulsación, llegada de datos, imagen o
   miniaturas, y cambio de idioma. La ficha de arriba, además, cada vez que un texto que rueda
   avanza un píxel (§5.15); si todo cabe, queda quieta.
-- Los detalles de álbum y artista se cargan en un hilo por debajo del decodificador, con una
-  sola sesión keep-alive para la entidad y el lote de pistas. Abrir otro detalle cancela la
-  carga en curso sin esperarla.
+- Los detalles de álbum, artista y playlist se cargan en un hilo por debajo del
+  decodificador, con una sola sesión keep-alive para la entidad y el lote de pistas. Abrir
+  otro detalle cancela la carga en curso sin esperarla. De una playlist se piden páginas
+  de 50 (`from`/`length`), cada una con su lote de nombres; las pistas van en un buffer
+  propio del documento, hecho al abrirlo y liberado al reutilizarlo. La lista solo prepara
+  el texto y las miniaturas de una ventana de 24 filas alrededor de lo visible; al moverse
+  la ventana, las miniaturas que ya estaban se recolocan sin volver a descargarse.
+- Las playlists de «Inicio» se cargan una vez al entrar en las pestañas, en otro hilo por
+  debajo del decodificador y con una sesión keep-alive (historial, carpeta y la cabecera de
+  las recientes que no están en ella). La rejilla solo marca `dirty` por pulsación, llegada
+  de datos o miniaturas y cambio de idioma; los nombres se preparan al cambiar el contenido
+  o el idioma.
 - Con el audio sonando en otra pestaña, el reproductor no marca `dirty`: solo cuentan la
   pestaña visible y la barra de pestañas. Cambiar de pestaña redibuja las dos pantallas una
   vez.
@@ -899,6 +992,10 @@ enum {
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,
 	PROGRESS_H = 8, VOLUME_H = 6,
+	/* §5.16 tesela: la fila de resultados en compacto, de una línea. */
+	TILE_H = TOUCH_MIN,
+	TILE_COVER = TILE_H - 2 * SP_1,
+	GRID_GAP = SP_1,
 };
 
 /* Movimiento (frames a 60 Hz) */

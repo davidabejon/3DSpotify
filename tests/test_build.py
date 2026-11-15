@@ -200,8 +200,8 @@ class BuildTests(unittest.TestCase):
         self.assertLess(app.index("view_home_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
         # Pure logic stays free of 3DS headers for the host tests.
-        for name in ("home_logic.h", "text_fit.h", "theme.h", "layout.h",
-                     "press_logic.h"):
+        for name in ("home_logic.h", "grid_logic.h", "home_feed_logic.h",
+                     "text_fit.h", "theme.h", "layout.h", "press_logic.h"):
             source = (ui_dir / name).read_text(encoding="utf-8")
             self.assertNotIn("#include <3ds", source)
             self.assertNotIn("#include <citro", source)
@@ -210,9 +210,20 @@ class BuildTests(unittest.TestCase):
                     app.index("/* --- Search ---")]
         self.assertIn("view_home_dirty()", frame)
         self.assertIn("view_home_draw_bottom()", frame)
-        # The repeat button runs the last query without the keyboard, and a
-        # cancelled keyboard does not wipe it.
-        self.assertIn("case HOME_ACTION_REPEAT:", app)
+        # The playlists load in the background from the start of the tabs,
+        # are reaped every frame and stopped before the thumbnails' wait;
+        # Retry loads them again. The old last-search button is gone.
+        loop = app[app.index("static tabs_exit run_tabs("):
+                   app.index("static void stop_tabs(")]
+        self.assertLess(loop.index("home_feed_start("), loop.index("for (;;)"))
+        self.assertIn("home_feed_poll();", loop)
+        self.assertIn("case HOME_ACTION_RETRY:", loop)
+        self.assertNotIn("HOME_ACTION_REPEAT", app)
+        stop = app[app.index("static void stop_tabs("):]
+        stop = stop[:stop.index("\n}\n")]
+        self.assertLess(stop.index("home_feed_stop();"),
+                        stop.index("thumbs_wait();"))
+        # A cancelled keyboard does not wipe the last query.
         ask = app[app.index("static bool ask_search_query("):
                   app.index("static void keyboard_search(")]
         self.assertIn("if (confirmed)", ask)
@@ -220,6 +231,68 @@ class BuildTests(unittest.TestCase):
         home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
         self.assertNotIn("HOME_ACTION_RECONNECT", home)
         self.assertNotIn("HOME_ACTION_PAIR", home)
+
+    def test_home_playlists_follow_style_guide_and_docs(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        lang_dir = build.ROOT / "lang"
+        docs = build.ROOT.parent / "docs"
+        for name in ("tile_grid.c", "tile_grid.h", "grid_logic.h",
+                     "home_feed.c", "home_feed.h", "home_feed_logic.h"):
+            self.assertTrue((ui_dir / name).is_file(), name)
+        # No loose colours or text scales in the new drawing code.
+        for name in ("tile_grid.c", "view_home.c"):
+            source = (ui_dir / name).read_text(encoding="utf-8")
+            self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", source), name)
+            self.assertIsNone(re.search(r"\b0\.(?!0f)\d+f\b", source), name)
+            self.assertNotIn("C2D_Color32", source, name)
+        # Rows and tiles share one frame for their states (5.3, 5.16).
+        self.assertIn("ui_item_frame(", (ui_dir / "track_list.c").read_text(
+            encoding="utf-8"))
+        self.assertIn("ui_item_frame(", (ui_dir / "tile_grid.c").read_text(
+            encoding="utf-8"))
+        theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
+        for token in ("TILE_H = TOUCH_MIN", "TILE_COVER", "GRID_GAP"):
+            self.assertIn(token, theme)
+        # The loader keeps credentials only while it runs.
+        feed = (ui_dir / "home_feed.c").read_text(encoding="utf-8")
+        for function in ("bool home_feed_poll(", "void home_feed_stop("):
+            body = feed[feed.index(function):]
+            body = body[:body.index("\n}\n")]
+            self.assertIn("secure_clear(job.token", body)
+            self.assertIn("secure_clear(job.username", body)
+        self.assertIn("background_priority()", feed)
+        self.assertNotIn("api.spotify.com", feed)
+        # Every new string in both languages; Spanish without accents.
+        keys = ("STR_HOME_RECENT", "STR_HOME_YOUR_PLAYLISTS",
+                "STR_HOME_SHOW_MORE", "STR_HOME_EMPTY",
+                "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE")
+        for name in ("lang_en.c", "lang_es.c"):
+            table = (lang_dir / name).read_text(encoding="utf-8")
+            for key in keys:
+                match = re.search(r"\[" + key + r"\] = \"([^\"]+)\"", table)
+                self.assertIsNotNone(match, (name, key))
+                if name == "lang_es.c":
+                    self.assertIsNone(re.search(r"[áéíóúñÁÉÍÓÚÑ]",
+                                                match.group(1)), key)
+        self.assertNotIn("STR_HOME_LAST_SEARCH",
+                         (lang_dir / "lang.h").read_text(encoding="utf-8"))
+        # The style guide and both READMEs describe it.
+        styles = (docs / "STYLES.md").read_text(encoding="utf-8")
+        self.assertIn("### 5.16 Tesela", styles)
+        home = styles[styles.index("### 7.7 Inicio"):
+                      styles.index("### 7.8 Ajustes")]
+        for text in ("Mostrar más", "Recientes", "Tus playlists", "[Y] Buscar"):
+            self.assertIn(text, home)
+        self.assertIn("Playlist:", styles[styles.index("### 7.12"):])
+        self.assertIn("TILE_H = TOUCH_MIN", styles)
+        readme = (build.ROOT.parent / "README.md").read_text(encoding="utf-8")
+        readme_es = (build.ROOT.parent / "README_es.md").read_text(
+            encoding="utf-8")
+        self.assertIn("Show more", readme)
+        self.assertIn("**Playlist:**", readme)
+        self.assertIn("Mostrar", readme_es)
+        self.assertIn("**Playlist:**", readme_es)
 
     def test_ui_follows_style_guide(self):
         import re
@@ -402,33 +475,43 @@ class BuildTests(unittest.TestCase):
         self.assertIn("track_list_allow_thumbs(allow);",
                       allow[:allow.index("\n}\n")])
         allow = rows[rows.index("void track_list_allow_thumbs("):]
+        self.assertIn("thumbs_allow(allow);", allow[:allow.index("\n}\n")])
+        allow = thumbs[thumbs.index("void thumbs_allow("):]
         self.assertIn("thumbs_stop();", allow[:allow.index("\n}\n")])
         self.assertIn("thumbs_init();", app)
         self.assertLess(app.index("thumbs_exit();", app.index("done:")),
                         app.index("ui_exit();", app.index("done:")))
-        # thumbs.c serves one list: the one on screen claims it from its
-        # view's update, where the uploads happen too; a list ready before
-        # it is shown only takes it when no other list has it.
-        frame = rows[rows.index("void track_list_thumbs_frame("):]
+        # thumbs.c serves one client (a list or a grid): the one on screen
+        # claims it from its view's update, where the uploads happen too; a
+        # list ready before it is shown only takes it when no other has it.
+        frame = thumbs[thumbs.index("void thumbs_client_frame("):]
         frame = frame[:frame.index("\n}\n")]
-        self.assertIn("if (thumbs_list != l)", frame)
+        self.assertIn("if (owner != c)", frame)
         self.assertIn("thumbs_poll()", frame)
-        offer = rows[rows.index("void track_list_offer_thumbs("):]
-        self.assertIn("thumbs_list)", offer[:offer.index("\n}\n")])
+        offer = thumbs[thumbs.index("void thumbs_client_offer("):]
+        self.assertIn("if (owner)", offer[:offer.index("\n}\n")])
+        self.assertIn("thumbs_client_frame(&l->thumbs);", rows)
+        self.assertIn("thumbs_client_offer(&l->thumbs);", rows)
         self.assertIn("track_list_thumbs_frame(&list);", results)
         self.assertIn("track_list_thumbs_frame(&list);", detail)
         self.assertIn("track_list_offer_thumbs(&list);", results)
-        # A fixed-size slot either way.
-        self.assertIn("thumbs_image(index, &image)", rows)
-        self.assertIn("thumbs_set_window(l->first)", rows)
-        # Only the list thumbs.c serves follows the scroll with downloads.
-        self.assertIn("if (l->style == TRACK_LIST_THUMBS && l == thumbs_list "
-                      "&& l->thumbs_synced)\n"
-                      "\t\tthumbs_set_window(l->first);", rows)
-        # Nothing thumbs.c holds for another list is drawn.
-        self.assertIn("l == thumbs_list &&\n"
-                      "\t             l->thumbs_synced && "
-                      "thumbs_image(index, &image)", rows)
+        # A fixed-size slot either way. A long list keeps a window of rows
+        # in the pool, so rows are offset by its base; a moved window
+        # keeps the pool and the covers that only changed place.
+        self.assertIn("thumbs_client_image(&l->thumbs, index - l->base,", rows)
+        self.assertIn("thumbs_client_window(&l->thumbs, l->first - l->base)",
+                      rows)
+        self.assertIn("thumbs_client_replace(&l->thumbs, urls, n);", rows)
+        self.assertIn("thumb_reuse_plan(", thumbs)
+        # Only the client thumbs.c serves follows the scroll with downloads.
+        window = thumbs[thumbs.index("void thumbs_client_window("):]
+        self.assertIn("if (owner == c && c->synced)\n"
+                      "\t\tthumbs_set_window(first);",
+                      window[:window.index("\n}\n")])
+        # Nothing thumbs.c holds for another client is drawn.
+        image = thumbs[thumbs.index("bool thumbs_client_image("):]
+        self.assertIn("owner == c && c->synced &&",
+                      image[:image.index("\n}\n")])
 
     def test_results_play_directly_and_scroll_by_touch(self):
         ui_dir = build.ROOT / "ui"
@@ -616,7 +699,7 @@ class BuildTests(unittest.TestCase):
         for section in ("### 5.14 Enlace", "### 5.15 Texto que rueda",
                         "### 7.9 Detalles: navegación común",
                         "### 7.10 Detalle de canción",
-                        "### 7.11 Detalle de álbum y de artista",
+                        "### 7.11 Detalle de álbum, de artista y de playlist",
                         "### 7.12 Ficha de detalle (pantalla superior)"):
             self.assertIn(section, style)
         self.assertIn("[A] Reproducir [X] Detalle [Y] Buscar [B] Volver",

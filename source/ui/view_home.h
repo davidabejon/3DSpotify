@@ -1,16 +1,18 @@
-/* The home view: what the app shows once the session is ready. One primary
- * action, search, plus a secondary button that runs the last search again
- * without the keyboard. Drawn with the Bisagra system (docs/STYLES.md).
+/* The home view (docs/STYLES.md 7.7): the account's recent playlists as
+ * tiles, six at first and up to HOME_MAX_PLAYLISTS behind "Show more".
+ * The playlists come from home_feed.h, which the view reads by itself;
+ * while they load it shows skeleton tiles, on failure a notice with
+ * "Retry", and with none a message and "Search songs". Y opens the search
+ * keyboard from anywhere in the tab.
  *
  * Input follows STYLES.md 6: every press shows the pressed state for at
  * least ANIM_PRESS_MIN frames, touch acts when the stylus is lifted inside
- * the control, and A inverts its glyph in the button bar. Actions that take
- * the screens over (the keyboard) are returned once the pressed state has
- * been seen, so the feedback is never skipped. The tab bar (tabbar.h) sits
- * where the header was and is drawn by the caller.
+ * the control, and buttons invert their glyph in the button bar. Actions
+ * are returned once the pressed state has been seen, so the feedback is
+ * never skipped. The tab bar (tabbar.h) is drawn by the caller.
  *
- * Parsed text is cached and only rebuilt when the query or the language
- * changes; GPU frames are only needed while something animates. Main
+ * Parsed text is cached and only rebuilt when the content or the language
+ * changes; GPU frames are only needed while something changes. Main
  * thread only, like everything that touches citro2d. */
 #ifndef VIEW_HOME_H
 #define VIEW_HOME_H
@@ -21,10 +23,13 @@
 
 typedef enum {
 	HOME_ACTION_NONE,
-	/* Open the keyboard for a new search. */
+	/* Open the playlist view_home_selected_uri() names. */
+	HOME_ACTION_OPEN,
+	/* Open the keyboard for a new search (Y, or the empty state's
+	 * button). */
 	HOME_ACTION_SEARCH,
-	/* Run the last search again, skipping the keyboard. */
-	HOME_ACTION_REPEAT,
+	/* Load the playlists again after a failure. */
+	HOME_ACTION_RETRY,
 	/* SELECT: switch the language. The view shows the bubble with the new
 	 * language's name by itself. */
 	HOME_ACTION_LANGUAGE
@@ -34,15 +39,17 @@ typedef enum {
 bool view_home_init(void);
 void view_home_exit(void);
 
-/* The last search ("" for none), shown on the repeat button. Call on
- * entering the view (switching to its tab too): it resets the animations
- * and forces a repaint. */
-void view_home_enter(const char *last_query);
+/* Entering the view (switching to its tab too): no press in progress, and
+ * a repaint. "Show more" and the focus are kept. */
+void view_home_enter(void);
 
 /* Once per frame, after hidScanInput, with that frame's new key presses.
- * Handles A, SELECT, the D-pad and touch; START and the tabs stay with
- * the caller. */
+ * Handles A, B, Y, SELECT, the D-pad and touch; START and the tabs stay
+ * with the caller. */
 home_action view_home_update(u32 down);
+
+/* The playlist to open after HOME_ACTION_OPEN. */
+const char *view_home_selected_uri(void);
 
 /* True when a GPU frame is needed: the content, focus, language or an
  * animation changed since the last draw. */

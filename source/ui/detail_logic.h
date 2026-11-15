@@ -26,6 +26,18 @@ typedef enum {
 	DETAIL_BUTTON_COUNT
 } detail_button;
 
+/* Whether a paged list wants its next page: the last row on screen
+ * (`first` + `visible` - 1) is within `ahead` rows of the last loaded, or
+ * the focus is. */
+static inline bool detail_wants_more(int first, int selected, int visible,
+                                     int count, int ahead)
+{
+	int last_shown = first + visible - 1;
+	if (selected > last_shown)
+		last_shown = selected;
+	return count <= 0 || last_shown >= count - 1 - ahead;
+}
+
 static inline ui_rect detail_button_rect(int button)
 {
 	return settings_item_rect(button);

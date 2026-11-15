@@ -302,3 +302,225 @@ bool sp_parse_artist(const pbv *a, const char *country, sp_artist *out)
 		                &out->track_count, NULL);
 	return true;
 }
+
+/* ------------------------------------------------------------ playlists */
+
+/* copy_str, but a cut never splits a UTF-8 sequence: playlist names are
+ * user text, emoji included, and half a character draws as garbage. */
+static void copy_utf8(char *dst, size_t cap, const pbv *v)
+{
+	size_t n = v->len < cap - 1 ? v->len : cap - 1;
+	if (n < v->len)
+		while (n > 0 && (v->p[n] & 0xC0) == 0x80)
+			n--;
+	memcpy(dst, v->p, n);
+	dst[n] = '\0';
+}
+
+static bool has_prefix(const uint8_t *p, size_t len, const char *prefix)
+{
+	size_t n = strlen(prefix);
+	return len >= n && memcmp(p, prefix, n) == 0;
+}
+
+bool sp_is_track_uri(const char *uri)
+{
+	return uri && strncmp(uri, "spotify:track:", 14) == 0 && uri[14];
+}
+
+bool sp_list_is_live(const pbv *attrs)
+{
+	/* The DJ's attributes (probe_meta step 15.5): lexicon_set_type
+	 * "your_dj", lexicon_context_url "hm://lexicon-session-provider/...".
+	 * Any lexicon_ key marks a session that service builds as it plays. */
+	size_t at = 0;
+	pbv entry;
+	while (pb_next_bytes(attrs, 12, &at, &entry)) {
+		pbv key;
+		if (pb_get_bytes(entry.p, entry.len, 1, &key) &&
+		    has_prefix(key.p, key.len, "lexicon_"))
+			return true;
+	}
+	return false;
+}
+
+void sp_parse_list_attributes(const pbv *attrs, char *name, size_t namelen,
+                              char *art, size_t artlen)
+{
+	if (name && namelen)
+		name[0] = '\0';
+	if (art && artlen)
+		art[0] = '\0';
+	pbv v;
+	if (name && namelen && pb_get_bytes(attrs->p, attrs->len, 1, &v))
+		copy_utf8(name, namelen, &v);
+	if (!art || !artlen)
+		return;
+
+	/* A user-set cover: the 20-byte id names the 300px JPEG on i.scdn.co
+	 * (about 15-30 KB, checked in probe_meta step 15.4). */
+	if (pb_get_bytes(attrs->p, attrs->len, 3, &v) && v.len == 20) {
+		static const char HEX[] = "0123456789abcdef";
+		char hex[41];
+		for (int i = 0; i < 20; i++) {
+			hex[i * 2] = HEX[v.p[i] >> 4];
+			hex[i * 2 + 1] = HEX[v.p[i] & 15];
+		}
+		hex[40] = '\0';
+		snprintf(art, artlen, "https://i.scdn.co/image/%s", hex);
+		if (strlen(art) != 64)
+			art[0] = '\0';         /* did not fit: better none than half */
+		return;
+	}
+
+	/* Otherwise a sized URL, if one is on the CDN this client can reach. */
+	static const char *const PREFER[] = { "small", "default", "large" };
+	for (size_t k = 0; k < sizeof(PREFER) / sizeof(PREFER[0]); k++) {
+		size_t at = 0;
+		pbv size;
+		while (pb_next_bytes(attrs, 13, &at, &size)) {
+			pbv target, url;
+			if (!pb_get_bytes(size.p, size.len, 1, &target) ||
+			    target.len != strlen(PREFER[k]) ||
+			    memcmp(target.p, PREFER[k], target.len) != 0 ||
+			    !pb_get_bytes(size.p, size.len, 2, &url))
+				continue;
+			if (has_prefix(url.p, url.len, "https://i.scdn.co/") &&
+			    url.len < artlen) {
+				memcpy(art, url.p, url.len);
+				art[url.len] = '\0';
+				return;
+			}
+		}
+	}
+}
+
+int sp_parse_rootlist(const uint8_t *body, size_t len, sp_playlist_ref *out,
+                      int max, int *total)
+{
+	uint64_t length = 0;
+	pb_get_varint(body, len, 2, &length);
+	if (total)
+		*total = (int)length;
+
+	pbv contents;
+	if (!pb_get_bytes(body, len, 5, &contents))
+		return 0;
+
+	/* items and meta_items are two parallel repeated fields, interleaved or
+	 * not: each is walked with its own cursor. */
+	int n = 0;
+	size_t ai = 0, am = 0;
+	pbv item;
+	while (n < max && pb_next_bytes(&contents, 3, &ai, &item)) {
+		pbv meta = { NULL, 0 };
+		bool has_meta = pb_next_bytes(&contents, 4, &am, &meta);
+		pbv uri, attrs = { NULL, 0 };
+		if (!pb_get_bytes(item.p, item.len, 1, &uri) ||
+		    !has_prefix(uri.p, uri.len, "spotify:playlist:") ||
+		    uri.len >= SP_URI_MAX)
+			continue;
+		bool has_attrs = has_meta && pb_get_bytes(meta.p, meta.len, 2, &attrs);
+		if (has_attrs && sp_list_is_live(&attrs))
+			continue;
+
+		sp_playlist_ref *r = &out[n++];
+		memset(r, 0, sizeof(*r));
+		memcpy(r->uri, uri.p, uri.len);
+		r->uri[uri.len] = '\0';
+		if (has_attrs)
+			sp_parse_list_attributes(&attrs, r->name, sizeof(r->name),
+			                         r->art, sizeof(r->art));
+		uint64_t tracks = 0;
+		if (has_meta && pb_get_varint(meta.p, meta.len, 3, &tracks))
+			r->length = (int)tracks;
+	}
+	return n;
+}
+
+void sp_parse_playlist(const uint8_t *body, size_t len, const char *uri,
+                       int max_tracks, sp_playlist_info *out)
+{
+	memset(out, 0, sizeof(*out));
+	if (uri)
+		snprintf(out->uri, sizeof(out->uri), "%s", uri);
+	if (max_tracks > SP_PLAYLIST_PAGE)
+		max_tracks = SP_PLAYLIST_PAGE;
+
+	uint64_t length = 0;
+	if (pb_get_varint(body, len, 2, &length))
+		out->total_tracks = (int)length;
+	pbv attrs;
+	if (pb_get_bytes(body, len, 3, &attrs)) {
+		sp_parse_list_attributes(&attrs, out->name, sizeof(out->name),
+		                         out->art, sizeof(out->art));
+		out->live = sp_list_is_live(&attrs);
+	}
+
+	pbv contents;
+	if (!pb_get_bytes(body, len, 5, &contents))
+		return;
+	/* `items` counts what was read, so the next page starts right after:
+	 * past a full page nothing more is read, even if the service sent
+	 * more than was asked. */
+	size_t at = 0;
+	pbv item;
+	while (out->track_count < max_tracks &&
+	       pb_next_bytes(&contents, 3, &at, &item)) {
+		out->items++;
+		pbv u;
+		if (!pb_get_bytes(item.p, item.len, 1, &u) ||
+		    !has_prefix(u.p, u.len, "spotify:track:") || u.len >= SP_URI_MAX ||
+		    u.len <= 14) {
+			out->skipped++;
+			continue;
+		}
+		char *dst = out->track_uris[out->track_count++];
+		memcpy(dst, u.p, u.len);
+		dst[u.len] = '\0';
+	}
+}
+
+int sp_parse_recent_playlists(const char *json, size_t len,
+                              char uris[][SP_URI_MAX], int max)
+{
+	static const char KEY[] = "\"uri\"";
+	const char *end = json + len;
+	int n = 0;
+	for (const char *p = json; n < max && p < end; ) {
+		const char *k = NULL;
+		for (const char *s = p; s + sizeof(KEY) - 1 <= end; s++)
+			if (memcmp(s, KEY, sizeof(KEY) - 1) == 0) {
+				k = s;
+				break;
+			}
+		if (!k)
+			break;
+		p = k + sizeof(KEY) - 1;
+		while (p < end && (*p == ' ' || *p == ':' || *p == '\t' ||
+		                   *p == '\r' || *p == '\n'))
+			p++;
+		if (p >= end || *p != '"')
+			continue;
+		const char *v = ++p;
+		while (p < end && *p != '"')
+			p++;
+		if (p >= end)
+			break;                 /* cut short: never keep half a URI */
+		size_t vlen = (size_t)(p - v);
+		p++;
+		if (vlen >= SP_URI_MAX ||
+		    !has_prefix((const uint8_t *)v, vlen, "spotify:playlist:") ||
+		    vlen <= 17)
+			continue;
+		bool seen = false;
+		for (int i = 0; i < n && !seen; i++)
+			seen = strlen(uris[i]) == vlen && memcmp(uris[i], v, vlen) == 0;
+		if (seen)
+			continue;
+		memcpy(uris[n], v, vlen);
+		uris[n][vlen] = '\0';
+		n++;
+	}
+	return n;
+}

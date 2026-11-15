@@ -12,8 +12,14 @@ const char *const lang_strings_en[STR_COUNT] = {
 
 	/* Home view. */
 	[STR_HOME_SEARCH] = "Search songs",
-	[STR_HOME_LAST_SEARCH] = "Last search",
 	[STR_HINT_SEARCH] = "Search",
+	[STR_HOME_RECENT] = "Recent",
+	[STR_HOME_YOUR_PLAYLISTS] = "Your playlists",
+	[STR_HOME_SHOW_MORE] = "Show more",
+	[STR_HOME_EMPTY] = "You have no playlists yet",
+	[STR_HOME_FAILED_TITLE] = "Could not load your playlists",
+	[STR_HINT_OPEN] = "Open",
+	[STR_PLAYLIST_TYPE] = "Playlist",
 
 	/* Results view. */
 	[STR_RESULTS_SEARCHING] = "Searching...",

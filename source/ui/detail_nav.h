@@ -1,8 +1,8 @@
 /* The detail stacks: which detail screen each tab shows, and how to go back
  * (docs/plan_vistas_detalle.md 3.1).
  *
- * The Search and Playing tabs each keep a stack of open details (track,
- * album, artist). While a tab's stack is not empty its top replaces the
+ * The Search, Playing and Home tabs each keep a stack of open details
+ * (track, album, artist, and on Home the playlist it starts from). While a tab's stack is not empty its top replaces the
  * tab's own view; B pops one level; L/R leave the stacks alone, so coming
  * back to a tab finds it as it was. The graph track -> album -> track ->
  * artist -> ... has no end, so a full stack drops its oldest level.
@@ -19,8 +19,8 @@
 #include <string.h>
 
 #define DETAIL_DEPTH 6
-#define DETAIL_STACKS 2
-/* Every level of both stacks at once, and never more. */
+#define DETAIL_STACKS 3
+/* Every level of every stack at once, and never more: ~22 KB each. */
 #define DETAIL_POOL (DETAIL_STACKS * DETAIL_DEPTH)
 
 typedef struct {
@@ -31,7 +31,8 @@ typedef struct {
 /* Which stack `tab` keeps, or -1 for a tab that opens no details. */
 static inline int detail_tab_stack(app_tab tab)
 {
-	return tab == TAB_SEARCH ? 0 : tab == TAB_PLAYER ? 1 : -1;
+	return tab == TAB_SEARCH ? 0 : tab == TAB_PLAYER ? 1
+	     : tab == TAB_HOME ? 2 : -1;
 }
 
 static inline void detail_stack_clear(detail_stack *s)

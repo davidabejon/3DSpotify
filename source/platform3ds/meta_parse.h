@@ -60,4 +60,55 @@ int sp_parse_track_batch(const uint8_t *body, size_t len,
 bool sp_parse_album(const pbv *album, sp_album *out);
 bool sp_parse_artist(const pbv *artist, const char *country, sp_artist *out);
 
+/* ------------------------------------------------------------ playlists
+ *
+ * playlist4_external.proto, checked against the wire (probe_meta step 15):
+ *   SelectedListContent { length 2, attributes 3, contents 5 }
+ *   ListItems { items 3 (repeated), meta_items 4 (repeated, parallel) }
+ *   Item { uri 1 }   MetaItem { attributes 2, length 3 }
+ *   ListAttributes { name 1, picture 3 (20-byte image id),
+ *                    picture_size 13 (repeated { target_name 1, url 2 }) }
+ */
+
+/* True for spotify:track: URIs, the only items this client plays: a
+ * playlist may also hold spotify:episode: and spotify:local: entries. */
+bool sp_is_track_uri(const char *uri);
+
+/* Whether a ListAttributes is a live session rather than a list: any
+ * format attribute (12, { key 1, value 2 }) whose key starts with
+ * "lexicon_", which is how the AI DJ comes. Those have no tracks to read
+ * and only the official client's session service plays them. */
+bool sp_list_is_live(const pbv *attrs);
+
+/* A ListAttributes' name and cover. The cover is the `picture` id as an
+ * i.scdn.co URL, else a picture_size URL on i.scdn.co ("small" first) that
+ * fits `artlen`; anything else leaves `art` empty. A name cut to fit stays
+ * whole UTF-8. Either output may be NULL. */
+void sp_parse_list_attributes(const pbv *attrs, char *name, size_t namelen,
+                              char *art, size_t artlen);
+
+/* A decorated rootlist answer. Keeps spotify:playlist: entries only (folder
+ * markers spotify:start-group:/end-group: and anything else are skipped, so
+ * folders come out flattened) and not live sessions (sp_list_is_live), each
+ * with its meta_item's name, cover and length. `total` (may be NULL) gets SelectedListContent.length. Returns
+ * how many were kept, at most `max`. */
+int  sp_parse_rootlist(const uint8_t *body, size_t len, sp_playlist_ref *out,
+                       int max, int *total);
+
+/* A playlist answer (header and a range of items) into `out`, which is
+ * cleared first; `uri` is copied in as given. Track URIs go to
+ * track_uris (at most SP_PLAYLIST_PAGE and at most `max_tracks`); other
+ * items count in `skipped`. Reading stops once the page is full: `items`
+ * says how many items were read, for where the next page starts. `live`
+ * marks a session (sp_list_is_live). */
+void sp_parse_playlist(const uint8_t *body, size_t len, const char *uri,
+                       int max_tracks, sp_playlist_info *out);
+
+/* The /recently-played/v3 JSON: {"playContexts":[{"uri":"spotify:...",
+ * "lastPlayedTime":..., "lastPlayedTrackUri":...}, ...]}. Keeps the
+ * spotify:playlist: contexts in the order sent (most recent first),
+ * dropping repeats. Returns how many, at most `max`. */
+int  sp_parse_recent_playlists(const char *json, size_t len,
+                               char uris[][SP_URI_MAX], int max);
+
 #endif

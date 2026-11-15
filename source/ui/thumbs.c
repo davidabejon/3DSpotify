@@ -18,7 +18,8 @@
 
 #define THUMB_TEX_SIZE 64
 #define THUMB_TEXEL_BYTES (THUMB_TEX_SIZE * THUMB_TEX_SIZE * 4)
-/* art_small is a 64 px JPEG of a few KB: generous caps, far below the
+/* art_small is a 64 px JPEG of a few KB, a playlist cover a 300 px one of
+ * 15-30 KB (probe_meta step 15.4): generous caps, far below the
  * artwork's. */
 #define THUMB_MAX_BYTES (128 * 1024)
 #define THUMB_MAX_DIMENSION 640
@@ -223,7 +224,7 @@ static void settle_worker(void)
 		start_worker();
 }
 
-void thumbs_set_tracks(const sp_track *tracks, int n)
+void thumbs_set_urls(const char *const *list, int n)
 {
 	if (pool_size == 0)
 		return;
@@ -231,14 +232,45 @@ void thumbs_set_tracks(const sp_track *tracks, int n)
 		n = 0;
 	if (n > THUMBS_MAX)
 		n = THUMBS_MAX;
+	const char *wanted[THUMBS_MAX];
+	for (int i = 0; i < THUMBS_MAX; i++)
+		wanted[i] = i < n && list[i] ? list[i] : "";
+	/* The slots as they were: covers that only changed position move with
+	 * their texture (the pool is all or nothing, so any slot may take any
+	 * texture). The worker's result for a slot is dropped anyway once the
+	 * generation moves on. */
+	static char old_urls[THUMBS_MAX][THUMB_URL_SIZE];
+	static thumb_state old_states[THUMBS_MAX];
+	static C3D_Tex old_tex[THUMBS_MAX];
+	static Tex3DS_SubTexture old_sub[THUMBS_MAX];
+	static int old_sizes[THUMBS_MAX][2];
+	const char *old_ptrs[THUMBS_MAX];
+	int src[THUMBS_MAX];
+	bool kept[THUMBS_MAX];
 	bool work = false;
 	LightLock_Lock(&lock);
 	generation++;
+	memcpy(old_urls, urls, sizeof(old_urls));
+	memcpy(old_states, states, sizeof(old_states));
+	memcpy(old_tex, textures, sizeof(old_tex));
+	memcpy(old_sub, subtex, sizeof(old_sub));
+	memcpy(old_sizes, sizes, sizeof(old_sizes));
+	for (int i = 0; i < THUMBS_MAX; i++)
+		old_ptrs[i] = old_urls[i];
+	thumb_reuse_plan(old_ptrs, old_states, count, wanted, n, THUMBS_MAX, src,
+	                 kept);
 	for (int i = 0; i < THUMBS_MAX; i++) {
-		const char *url = i < n ? tracks[i].art_small : "";
-		bool same = i < count && strcmp(urls[i], url) == 0;
-		if (i < n && thumb_keep(states[i], same))
+		int j = src[i];
+		textures[i] = old_tex[j];
+		subtex[i] = old_sub[j];
+		sizes[i][0] = old_sizes[j][0];
+		sizes[i][1] = old_sizes[j][1];
+		if (kept[i]) {
+			memcpy(urls[i], old_urls[j], sizeof(urls[i]));
+			states[i] = old_states[j];
 			continue;
+		}
+		const char *url = wanted[i];
 		snprintf(urls[i], sizeof(urls[i]), "%s", url);
 		bool fetchable = i < n && art_url_allowed(url) &&
 		                 strlen(url) < sizeof(urls[i]);
@@ -328,4 +360,116 @@ bool thumbs_stopping(void)
 {
 	settle_worker();
 	return worker && !want_worker;
+}
+
+/* --- Clients ------------------------------------------------------------ */
+
+/* The client the pool serves: the last one shown with covers. */
+static thumbs_client *owner;
+static bool allowed = true;
+
+/* Gives the pool the client's URLs when allowed; until then nothing it
+ * holds is drawn for it. */
+static void hold(thumbs_client *c)
+{
+	if (!c)
+		return;
+	c->synced = false;
+	if (!allowed || c->count == 0)
+		return;
+	/* Visible items first (STYLES.md 9). */
+	thumbs_set_urls(c->urls, c->count);
+	thumbs_set_window(c->first);
+	c->synced = true;
+}
+
+void thumbs_client_set(thumbs_client *c, const char *const *list, int n)
+{
+	if (n < 0 || !list)
+		n = 0;
+	if (n > THUMBS_MAX)
+		n = THUMBS_MAX;
+	for (int i = 0; i < THUMBS_MAX; i++)
+		c->urls[i] = i < n ? list[i] : NULL;
+	c->count = n;
+	c->first = 0;
+	c->synced = false;
+	/* New content: the pool is handed it by the next claim. */
+	if (owner == c)
+		owner = NULL;
+}
+
+void thumbs_client_replace(thumbs_client *c, const char *const *list, int n)
+{
+	if (n < 0 || !list)
+		n = 0;
+	if (n > THUMBS_MAX)
+		n = THUMBS_MAX;
+	for (int i = 0; i < THUMBS_MAX; i++)
+		c->urls[i] = i < n ? list[i] : NULL;
+	c->count = n;
+	if (owner != c)
+		return;   /* handed over by the next claim, as after a set */
+	if (allowed) {
+		/* Still this client's: covers already here move to their new
+		 * places in the same frame, so the rows on screen keep them. */
+		thumbs_set_urls(c->urls, c->count);
+		thumbs_set_window(c->first);
+		c->synced = true;
+		c->serial++;
+	} else {
+		c->synced = false;
+	}
+}
+
+void thumbs_client_window(thumbs_client *c, int first)
+{
+	c->first = first;
+	if (owner == c && c->synced)
+		thumbs_set_window(first);
+}
+
+void thumbs_client_frame(thumbs_client *c)
+{
+	if (owner != c) {
+		owner = c;
+		hold(c);
+		/* Covers it kept from before show again at once: nothing new
+		 * may arrive to ask for the repaint. */
+		c->serial++;
+	}
+	if (thumbs_poll())
+		c->serial++;
+}
+
+void thumbs_client_offer(thumbs_client *c)
+{
+	if (owner)
+		return;
+	owner = c;
+	hold(c);
+}
+
+void thumbs_client_release(thumbs_client *c)
+{
+	if (owner == c)
+		owner = NULL;
+}
+
+bool thumbs_client_image(const thumbs_client *c, int index, C2D_Image *out)
+{
+	return c && index >= 0 && index < c->count && owner == c && c->synced &&
+	       thumbs_image(index, out);
+}
+
+void thumbs_allow(bool allow)
+{
+	if (allow == allowed)
+		return;
+	allowed = allow;
+	/* Stopped, what was fetched stays usable; nothing new arrives. */
+	if (allow)
+		hold(owner);
+	else
+		thumbs_stop();
 }

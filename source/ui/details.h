@@ -26,28 +26,49 @@
 #include "tabs_logic.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* A list's worth: SEARCH_LIMIT, THUMBS_MAX and SP_ALBUM_MAX_TRACKS. */
 #define DETAIL_MAX_TRACKS 24
+/* A playlist loads page after page (SP_PLAYLIST_PAGE) as its list nears
+ * the end, up to this many tracks, in a buffer of its own (~1 KB each)
+ * made when it opens and let go when its document is reused. */
+#define DETAIL_PLAYLIST_MAX 500
+/* The next page is asked for when the list shows a row this close to the
+ * last one loaded. */
+#define DETAIL_MORE_AHEAD 8
 
-typedef enum { DETAIL_TRACK, DETAIL_ALBUM, DETAIL_ARTIST } detail_kind;
+typedef enum {
+	DETAIL_TRACK, DETAIL_ALBUM, DETAIL_ARTIST, DETAIL_PLAYLIST
+} detail_kind;
 typedef enum { DETAIL_LOADING, DETAIL_READY, DETAIL_FAILED } detail_state;
 
 typedef struct {
 	detail_kind  kind;
 	detail_state state;
-	char uri[SP_URI_MAX];         /* the album's or artist's; the track's */
+	char uri[SP_URI_MAX];         /* the album's, artist's or playlist's;
+	                               * the track's */
 	/* The header, for the top screen. */
-	char title[128];              /* track, album or artist */
+	char title[128];              /* track, album, artist or playlist */
 	char subtitle[128];           /* the artist of a track or album */
 	char art[80];                 /* cover or portrait, large */
 	char label[64];
 	int  year, album_type, total_tracks;
 	/* DETAIL_TRACK: a copy of the list it came from; the track shown is
-	 * tracks[selected] and "Play" queues the whole list. DETAIL_ALBUM and
-	 * DETAIL_ARTIST: their tracks. */
-	sp_track tracks[DETAIL_MAX_TRACKS];
-	int  count;
+	 * tracks[selected] and "Play" queues the whole list. DETAIL_ALBUM,
+	 * DETAIL_ARTIST and DETAIL_PLAYLIST: their tracks. `tracks` points at
+	 * inline_tracks, or at a playlist's own buffer; it never moves while
+	 * the document is in use. */
+	sp_track *tracks;
+	int  count, capacity;
+	sp_track inline_tracks[DETAIL_MAX_TRACKS];
+	sp_track *owned;
+	/* DETAIL_PLAYLIST paging: the first item not read yet; whether items
+	 * are left and fit; a page asked for or on its way; after a page
+	 * failed, not again before this osGetTime(). */
+	int  next_from;
+	bool more, loading_more;
+	uint64_t retry_at;
 	/* The view's state, so going back finds the list as it was left. */
 	int  selected, first;
 	char error[192];
@@ -66,14 +87,21 @@ detail_doc *details_top(app_tab tab);
  * copied (at most DETAIL_MAX_TRACKS, keeping `index` inside). */
 void details_open_track(app_tab tab, const sp_track *list, int count,
                         int index);
-/* Opens an album or artist by URI, in DETAIL_LOADING; details_poll starts
- * the load. Ignored for an empty URI. */
+/* Opens an album, artist or playlist by URI, in DETAIL_LOADING;
+ * details_poll starts the load. Ignored for an empty URI. A playlist
+ * shows its first DETAIL_MAX_TRACKS tracks, episodes and local files left
+ * out; total_tracks counts every item it holds. */
 void details_open_album(app_tab tab, const char *uri);
 void details_open_artist(app_tab tab, const char *uri);
+void details_open_playlist(app_tab tab, const char *uri);
 
 /* Pops one level of `tab`; a load for it is asked to stop. False when the
  * stack was already empty, so B does what the tab's own view does. */
 bool details_back(app_tab tab);
+/* Asks for the next page of the playlist on top of `tab` when its list
+ * (selected and first, as the view wrote them) nears the end of what is
+ * loaded. Once per frame while the detail shows; details_poll runs it. */
+void details_follow(app_tab tab);
 /* Loads a failed album or artist on top of `tab` again. */
 void details_retry(app_tab tab);
 /* Empties `tab`'s stack: a new search replaces what its details came from. */

@@ -1,6 +1,8 @@
 #include "art_url.h"
 #include "detail_logic.h"
 #include "detail_nav.h"
+#include "grid_logic.h"
+#include "home_feed_logic.h"
 #include "home_logic.h"
 #include "http_logic.h"
 #include "image_util.h"
@@ -324,6 +326,368 @@ static void test_meta_parse_album(void)
 	assert(a.name[0] == '\0' && a.track_count == 0);
 }
 
+/* One rootlist entry: an Item with `uri` and its MetaItem, built into the
+ * caller's ListItems. `pic` adds a 20-byte picture id (all bytes `pic`). */
+static void add_root_entry(pb *items, const char *uri, const char *name,
+                           int pic, const char *sized_url, int length)
+{
+	uint8_t item_s[96], attrs_s[256], size_s[160], meta_s[320];
+	pb item, attrs, size, meta;
+	pb_init(&item, item_s, sizeof(item_s));
+	pb_str(&item, 1, uri);
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	if (name)
+		pb_str(&attrs, 1, name);
+	if (pic) {
+		uint8_t id[20];
+		memset(id, pic, sizeof(id));
+		pb_bytes(&attrs, 3, id, sizeof(id));
+	}
+	if (sized_url) {
+		pb_init(&size, size_s, sizeof(size_s));
+		pb_str(&size, 1, "default");
+		pb_str(&size, 2, sized_url);
+		pb_sub(&attrs, 13, &size);
+	}
+	pb_init(&meta, meta_s, sizeof(meta_s));
+	pb_sub(&meta, 2, &attrs);
+	if (length)
+		pb_varint(&meta, 3, (uint64_t)length);
+	pb_sub(items, 3, &item);
+	pb_sub(items, 4, &meta);
+}
+
+static void test_meta_parse_rootlist(void)
+{
+	static uint8_t items_s[4096], body_s[4200];
+	pb items, body;
+	pb_init(&items, items_s, sizeof(items_s));
+	add_root_entry(&items, "spotify:playlist:7ccWAm7GdeAUpA2Eu9YI5q", "relax",
+	               0xAB, NULL, 32);
+	/* A folder: its markers go, the playlist inside stays. */
+	add_root_entry(&items, "spotify:start-group:abc:Folder", "Folder", 0,
+	               NULL, 0);
+	add_root_entry(&items, "spotify:playlist:4FScOx76dqrpgQbhk258xR",
+	               "Alterna2026", 0, NULL, 132);
+	add_root_entry(&items, "spotify:end-group:abc", NULL, 0, NULL, 0);
+	/* A generated cover off the reachable CDN reads as none... */
+	add_root_entry(&items, "spotify:playlist:37i9dQZF1EJDBB41SW1yDD",
+	               "Blend", 0,
+	               "https://blend-playlist-covers.spotifycdn.com/v2/x.jpg", 50);
+	/* ...one on i.scdn.co is kept; no name stays empty. */
+	add_root_entry(&items, "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1", NULL,
+	               0, "https://i.scdn.co/image/ab67706c0000da84", 0);
+	add_root_entry(&items, "spotify:album:2noRn2Aes5aoNVsU6iWThc", "Album", 0,
+	               NULL, 0);
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 7);
+	pb_sub(&body, 5, &items);
+	assert(pb_ok(&body));
+
+	static sp_playlist_ref refs[8];
+	int total = -1;
+	int n = sp_parse_rootlist(body.p, body.len, refs, 8, &total);
+	assert(total == 7);
+	assert(n == 4);
+	assert(strcmp(refs[0].uri, "spotify:playlist:7ccWAm7GdeAUpA2Eu9YI5q") == 0);
+	assert(strcmp(refs[0].name, "relax") == 0 && refs[0].length == 32);
+	assert(strcmp(refs[0].art, "https://i.scdn.co/image/"
+	              "abababababababababababababababababababab") == 0);
+	assert(strcmp(refs[1].name, "Alterna2026") == 0 && !refs[1].art[0]);
+	assert(refs[1].length == 132);
+	assert(strcmp(refs[2].name, "Blend") == 0 && !refs[2].art[0]);
+	assert(!refs[3].name[0]);
+	assert(strcmp(refs[3].art, "https://i.scdn.co/image/ab67706c0000da84") == 0);
+
+	/* `max` bounds what is kept. */
+	assert(sp_parse_rootlist(body.p, body.len, refs, 2, NULL) == 2);
+	assert(strcmp(refs[1].name, "Alterna2026") == 0);
+	/* An empty folder is a valid answer. */
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 0);
+	assert(sp_parse_rootlist(body.p, body.len, refs, 8, &total) == 0);
+	assert(total == 0);
+
+	/* A cut name stays whole UTF-8: "aé" cut to 2 bytes keeps only "a". */
+	static uint8_t attrs_s[64];
+	pb attrs;
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	pb_str(&attrs, 1, "a\xC3\xA9");
+	pbv av = { attrs.p, attrs.len };
+	char small[3];
+	sp_parse_list_attributes(&av, small, sizeof(small), NULL, 0);
+	assert(strcmp(small, "a") == 0);
+}
+
+static void test_meta_parse_rootlist_live(void)
+{
+	static uint8_t items_s[1024], body_s[1100], fa_s[64], attrs_s[128],
+	               meta_s[160], item_s[64];
+	pb items, body, fa, attrs, meta, item;
+	pb_init(&items, items_s, sizeof(items_s));
+	add_root_entry(&items, "spotify:playlist:7ccWAm7GdeAUpA2Eu9YI5q", "relax",
+	               0, NULL, 32);
+	/* The DJ, as the rootlist decorates it. */
+	pb_init(&item, item_s, sizeof(item_s));
+	pb_str(&item, 1, "spotify:playlist:37i9dQZF1EYkqdzj48dyYq");
+	pb_init(&fa, fa_s, sizeof(fa_s));
+	pb_str(&fa, 1, "lexicon_context_url");
+	pb_str(&fa, 2, "hm://lexicon-session-provider/x");
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	pb_str(&attrs, 1, "DJ");
+	pb_sub(&attrs, 12, &fa);
+	pb_init(&meta, meta_s, sizeof(meta_s));
+	pb_sub(&meta, 2, &attrs);
+	pb_sub(&items, 3, &item);
+	pb_sub(&items, 4, &meta);
+	add_root_entry(&items, "spotify:playlist:4FScOx76dqrpgQbhk258xR",
+	               "Alterna2026", 0, NULL, 132);
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 3);
+	pb_sub(&body, 5, &items);
+	assert(pb_ok(&body));
+
+	static sp_playlist_ref refs[4];
+	int n = sp_parse_rootlist(body.p, body.len, refs, 4, NULL);
+	assert(n == 2);
+	assert(strcmp(refs[0].name, "relax") == 0);
+	/* The entry after it still reads its own meta_item. */
+	assert(strcmp(refs[1].name, "Alterna2026") == 0 && refs[1].length == 132);
+}
+
+static void test_list_window(void)
+{
+	/* A list that fits is its own window. */
+	assert(list_window_base(0, 0, 24, 24) == 0);
+	assert(list_window_base(5, 19, 24, 24) == 0);
+	/* Rows 0-17 on screen leave the window at 0; 18 moves it, centred. */
+	assert(list_window_base(0, 17, 200, 24) == 0);
+	assert(list_window_base(0, 18, 200, 24) == 9);
+	/* The rows on screen (5, the peek row included) are always inside. */
+	int base = 0;
+	for (int first = 0; first <= 195; first++) {
+		base = list_window_base(base, first, 200, 24);
+		assert(first >= base && first + 5 <= base + 24);
+	}
+	for (int first = 195; first >= 0; first--) {
+		base = list_window_base(base, first, 200, 24);
+		assert(first >= base && first + 5 <= base + 24);
+	}
+	assert(base == 0);
+	/* Never past the end, and a window left past a shorter list comes
+	 * back inside it. */
+	assert(list_window_base(0, 195, 200, 24) == 176);
+	assert(list_window_base(150, 10, 60, 24) == 1);
+}
+
+static void test_detail_paging(void)
+{
+	/* 50 loaded, 4 rows on screen, 8 ahead. */
+	assert(!detail_wants_more(0, 0, 4, 50, 8));
+	assert(!detail_wants_more(37, 37, 4, 50, 8));    /* last shown 40 */
+	assert(detail_wants_more(38, 38, 4, 50, 8));     /* last shown 41 */
+	/* The focus counts even when a drag left it below the rows shown. */
+	assert(detail_wants_more(0, 45, 4, 50, 8));
+	/* Nothing loaded yet (a first page of episodes only): ask. */
+	assert(detail_wants_more(0, 0, 4, 0, 8));
+}
+
+static void test_thumb_reuse(void)
+{
+	const char *old_urls[4] = { "a", "b", "c", "d" };
+	thumb_state old_states[4] = { THUMB_READY, THUMB_READY, THUMB_DECODED,
+	                              THUMB_READY };
+	int src[4];
+	bool kept[4];
+	/* The window moved by two: c and d come forward with their textures,
+	 * except c, still waiting for its upload in its own staging buffer. */
+	const char *moved[4] = { "c", "d", "e", "f" };
+	thumb_reuse_plan(old_urls, old_states, 4, moved, 4, 4, src, kept);
+	assert(src[1] == 3 && kept[1]);
+	assert(!kept[0] && !kept[2] && !kept[3]);
+	/* Every texture goes somewhere, once. */
+	bool seen[4] = { false };
+	for (int i = 0; i < 4; i++) {
+		assert(src[i] >= 0 && src[i] < 4 && !seen[src[i]]);
+		seen[src[i]] = true;
+	}
+	/* Unchanged positions keep their own, a decoded one included. */
+	thumb_reuse_plan(old_urls, old_states, 4, old_urls, 4, 4, src, kept);
+	for (int i = 0; i < 4; i++)
+		assert(src[i] == i && kept[i]);
+	/* A shorter list: the slots past it keep nothing. */
+	const char *two[2] = { "d", "a" };
+	thumb_reuse_plan(old_urls, old_states, 4, two, 2, 4, src, kept);
+	assert(src[0] == 3 && kept[0] && src[1] == 0 && kept[1]);
+	assert(!kept[2] && !kept[3]);
+}
+
+static void test_meta_parse_playlist(void)
+{
+	static uint8_t items_s[4096], attrs_s[128], body_s[4400];
+	pb items, attrs, body;
+	pb_init(&items, items_s, sizeof(items_s));
+	char uri[SP_URI_MAX];
+	for (int i = 0; i < 30; i++) {
+		uint8_t item_s[96];
+		pb item;
+		pb_init(&item, item_s, sizeof(item_s));
+		if (i == 1)
+			pb_str(&item, 1, "spotify:episode:4rOoJ6Egrf8K2IrywzwOMk");
+		else if (i == 2)
+			pb_str(&item, 1, "spotify:local:Artist:Album:A+very+long+title:200");
+		else {
+			snprintf(uri, sizeof(uri), "spotify:track:%022d", i);
+			pb_str(&item, 1, uri);
+		}
+		pb_sub(&items, 3, &item);
+	}
+	pb_init(&attrs, attrs_s, sizeof(attrs_s));
+	pb_str(&attrs, 1, "TWICE Relaxing Songs");
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_varint(&body, 2, 1275);
+	pb_sub(&body, 3, &attrs);
+	pb_sub(&body, 5, &items);
+	assert(pb_ok(&body));
+
+	static sp_playlist_info pl;
+	const char *pl_uri = "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1";
+	sp_parse_playlist(body.p, body.len, pl_uri, 99, &pl);
+	assert(strcmp(pl.uri, pl_uri) == 0);
+	assert(strcmp(pl.name, "TWICE Relaxing Songs") == 0 && !pl.art[0]);
+	assert(pl.total_tracks == 1275);
+	/* A page of 30 items: 28 tracks, an episode and a local file. */
+	assert(pl.skipped == 2 && pl.items == 30 && !pl.live);
+	assert(pl.track_count == 28);
+	assert(strcmp(pl.track_uris[0], "spotify:track:0000000000000000000000") == 0);
+	assert(strcmp(pl.track_uris[1], "spotify:track:0000000000000000000003") == 0);
+	for (int i = 0; i < pl.track_count; i++)
+		assert(sp_is_track_uri(pl.track_uris[i]));
+
+	/* A full page stops reading: `items` says where the next one starts,
+	 * past the two skipped items it went through. */
+	sp_parse_playlist(body.p, body.len, pl_uri, 5, &pl);
+	assert(pl.track_count == 5 && pl.items == 7 && pl.skipped == 2);
+	assert(strcmp(pl.track_uris[4], "spotify:track:0000000000000000000006") == 0);
+
+	/* A header alone: nothing read, the total still known. */
+	sp_parse_playlist(body.p, body.len, pl_uri, 0, &pl);
+	assert(pl.track_count == 0 && pl.items == 0 && pl.total_tracks == 1275);
+
+	/* The DJ: lexicon format attributes and no items. */
+	static uint8_t fa_s[64], dj_attrs_s[160], dj_s[200];
+	pb fa, dj_attrs, dj;
+	pb_init(&fa, fa_s, sizeof(fa_s));
+	pb_str(&fa, 1, "lexicon_set_type");
+	pb_str(&fa, 2, "your_dj");
+	pb_init(&dj_attrs, dj_attrs_s, sizeof(dj_attrs_s));
+	pb_str(&dj_attrs, 1, "DJ");
+	pb_sub(&dj_attrs, 12, &fa);
+	pb_init(&dj, dj_s, sizeof(dj_s));
+	pb_sub(&dj, 3, &dj_attrs);
+	assert(pb_ok(&dj));
+	sp_parse_playlist(dj.p, dj.len, "spotify:playlist:37i9dQZF1EYkqdzj48dyYq",
+	                  SP_PLAYLIST_PAGE, &pl);
+	assert(pl.live && pl.track_count == 0 && strcmp(pl.name, "DJ") == 0);
+	pbv djv = { dj_attrs.p, dj_attrs.len };
+	assert(sp_list_is_live(&djv));
+	/* Other format attributes (a blend's) are not a session. */
+	pb_init(&fa, fa_s, sizeof(fa_s));
+	pb_str(&fa, 1, "madeFor.username");
+	pb_str(&fa, 2, "someone");
+	pb_init(&dj_attrs, dj_attrs_s, sizeof(dj_attrs_s));
+	pb_sub(&dj_attrs, 12, &fa);
+	djv.p = dj_attrs.p;
+	djv.len = dj_attrs.len;
+	assert(!sp_list_is_live(&djv));
+
+	assert(sp_is_track_uri("spotify:track:3n3Ppam7vgaVa1iaRUc9Lp"));
+	assert(!sp_is_track_uri("spotify:track:"));
+	assert(!sp_is_track_uri("spotify:episode:4rOoJ6Egrf8K2IrywzwOMk"));
+	assert(!sp_is_track_uri(NULL));
+}
+
+static void test_meta_parse_recent(void)
+{
+	/* Trimmed from the real answer (probe_meta step 15.2). */
+	static const char JSON[] =
+	    "{\"playContexts\":["
+	    "{\"uri\":\"spotify:playlist:37i9dQZF1EYkqdzj48dyYq\","
+	    "\"lastPlayedTime\":1794727708085,"
+	    "\"lastPlayedTrackUri\":\"spotify:track:6EGkbPJrb88STcdfMu1j1y\"},"
+	    "{\"uri\":\"spotify:album:2noRn2Aes5aoNVsU6iWThc\","
+	    "\"lastPlayedTime\":1794529389812},"
+	    "{\"uri\": \"spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1\","
+	    "\"lastPlayedTime\":1794529389811},"
+	    "{\"uri\":\"spotify:playlist:37i9dQZF1EYkqdzj48dyYq\","
+	    "\"lastPlayedTime\":1794500000000},"
+	    "{\"uri\":\"spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD\"}"
+	    "]}";
+	char uris[4][SP_URI_MAX];
+	int n = sp_parse_recent_playlists(JSON, strlen(JSON), uris, 4);
+	assert(n == 3);
+	assert(strcmp(uris[0], "spotify:playlist:37i9dQZF1EYkqdzj48dyYq") == 0);
+	assert(strcmp(uris[1], "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1") == 0);
+	assert(strcmp(uris[2], "spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD") == 0);
+	assert(sp_parse_recent_playlists(JSON, strlen(JSON), uris, 1) == 1);
+	/* Cut short: a value that ends before its quote is dropped, one that
+	 * closed before the cut is kept. */
+	assert(sp_parse_recent_playlists(JSON, 60, uris, 4) == 0);
+	assert(sp_parse_recent_playlists(JSON, 70, uris, 4) == 1);
+	assert(sp_parse_recent_playlists("{}", 2, uris, 4) == 0);
+}
+
+static void set_ref(sp_playlist_ref *r, const char *uri, const char *name)
+{
+	memset(r, 0, sizeof(*r));
+	snprintf(r->uri, sizeof(r->uri), "%s", uri);
+	snprintf(r->name, sizeof(r->name), "%s", name);
+}
+
+static void test_home_merge(void)
+{
+	static sp_playlist_ref root[4], out[8];
+	bool missing[8];
+	set_ref(&root[0], "spotify:playlist:A", "a");
+	set_ref(&root[1], "spotify:playlist:B", "b");
+	set_ref(&root[2], "spotify:playlist:C", "c");
+	set_ref(&root[3], "spotify:playlist:D", "d");
+	/* History: C, X (not in the folder), C again, A. */
+	static const char recent[4][SP_URI_MAX] = {
+		"spotify:playlist:C", "spotify:playlist:X", "spotify:playlist:C",
+		"spotify:playlist:A",
+	};
+	int total = 0;
+	int n = home_merge(recent, 4, root, 4, 4, out, missing, 8, &total);
+	assert(n == 5 && total == 5);
+	/* Recent first, named from the folder; then the rest in its order. */
+	assert(strcmp(out[0].uri, "spotify:playlist:C") == 0 && !missing[0]);
+	assert(strcmp(out[0].name, "c") == 0);
+	assert(strcmp(out[1].uri, "spotify:playlist:X") == 0 && missing[1]);
+	assert(!out[1].name[0]);
+	assert(strcmp(out[2].uri, "spotify:playlist:A") == 0);
+	assert(strcmp(out[3].uri, "spotify:playlist:B") == 0);
+	assert(strcmp(out[4].uri, "spotify:playlist:D") == 0 && !missing[4]);
+
+	/* Capped: the total still counts everything, folder entries that were
+	 * never fetched included. */
+	n = home_merge(recent, 4, root, 4, 30, out, missing, 2, &total);
+	assert(n == 2 && total == 5 + 26);
+	/* No history: the folder as it is. */
+	n = home_merge(NULL, 0, root, 4, 4, out, missing, 8, &total);
+	assert(n == 4 && strcmp(out[0].uri, "spotify:playlist:A") == 0);
+	/* No folder: the history alone. */
+	n = home_merge(recent, 4, root, 0, 0, out, missing, 8, &total);
+	assert(n == 3 && missing[0] && missing[1] && missing[2]);
+
+	/* A missing playlist whose header failed goes; the rest close ranks. */
+	n = home_merge(recent, 4, root, 4, 4, out, missing, 8, &total);
+	n = home_drop(out, missing, n, 1);
+	assert(n == 4 && strcmp(out[1].uri, "spotify:playlist:A") == 0);
+	assert(!missing[1]);
+	assert(home_drop(out, missing, n, 9) == n);
+}
+
 static void test_meta_parse_artist(void)
 {
 	static uint8_t top_s[2][256], artist_s[1024];
@@ -370,7 +734,7 @@ static void test_detail_stack(void)
 {
 	assert(detail_tab_stack(TAB_SEARCH) == 0);
 	assert(detail_tab_stack(TAB_PLAYER) == 1);
-	assert(detail_tab_stack(TAB_HOME) < 0);
+	assert(detail_tab_stack(TAB_HOME) == 2);
 	assert(detail_tab_stack(TAB_SETTINGS) < 0);
 
 	detail_stack s;
@@ -908,77 +1272,51 @@ static void test_text_fit(void)
 
 static void test_home_layout(void)
 {
-	const float content = 119.5f;
-	ui_rect search = home_search_rect(content);
-	ui_rect label = home_label_rect();
-	ui_rect repeat = home_repeat_rect(50);
 	ui_rect tabs = tabs_bar_rect();
 	ui_rect hints = home_hints_rect();
+	ui_rect label = home_label_rect();
+	grid_geom six = home_six_geom();
+	grid_geom more = home_more_geom();
+	ui_rect button = home_more_rect();
 
-	/* The tab bar on top, the button bar at the bottom; 8 px side margins
-	 * (STYLES.md 4.2). */
+	/* Plan 3.4: label 36..52, six tiles 56..160, "Show more" 176..208. */
 	assert(tabs.y == 0 && tabs.h == TAB_H);
-	assert(hints.h == BAR_H && hints.y + hints.h == SCREEN_H);
-	assert(search.x == SP_2 && repeat.x == SP_2);
-	/* Blocks SP_4 apart, starting SP_4 under the tab bar. */
-	assert(search.y == tabs.h + SP_4);
-	assert(label.y == search.y + search.h + SP_4);
-	assert(repeat.y >= label.y + label.h);
-
-	/* Buttons: 32 px high, hugging content plus SP_3 each side (5.2),
-	 * rounded up to whole pixels (4.3). */
-	assert(search.h == TOUCH_MIN && repeat.h == TOUCH_MIN);
-	assert(search.w == 120 + 2 * SP_3);
-	assert(home_search_rect(0).w == TOUCH_MIN);
-	assert(home_repeat_rect(1000).w == SCREEN_BOTTOM_W - 2 * SP_2);
-	assert(home_repeat_max_text_width() + 2 * SP_3 ==
-	       home_repeat_rect(1000).w);
-
-	/* Focus borders and hard shadows stay clear of each other and of the
-	 * button bar: 4 px between targets at least (4.4). */
+	assert(label.x == SP_2 && label.y == 36 && label.y + label.h == 52);
+	assert(six.cols == 2 && six.rows == 3 && six.top == 56);
+	ui_rect last = grid_cell_rect(&six, HOME_RECENT_SHOWN - 1, 0);
+	assert(last.y + last.h == 160);
+	assert(button.x == SP_2 && button.y == 176 && button.h == TOUCH_MIN);
+	assert(button.w == GRID_WIDTH);
+	/* Clear of the button bar, its shadow and its press included (4.4). */
 	int ring = FOCUS_GAP + FOCUS_W;
 	int below = ring > SHADOW_OFF ? ring : SHADOW_OFF;
-	assert((repeat.y - ring) - (search.y + search.h + below) >= SP_1);
-	assert(repeat.y + repeat.h + below + PRESS_SHIFT <= hints.y);
-
-	/* Hit testing matches what is drawn. */
-	assert(home_hit_test(search.x, search.y, content, false, 0) ==
-	       HOME_ITEM_SEARCH);
-	assert(home_hit_test(search.x + search.w - 1, search.y + search.h - 1,
-	                     content, true, 50) == HOME_ITEM_SEARCH);
-	assert(home_hit_test(search.x + search.w, search.y, content, false, 0)
-	       == HOME_ITEM_NONE);
-	assert(home_hit_test(repeat.x + 1, repeat.y + 1, content, true, 50) ==
-	       HOME_ITEM_REPEAT);
-	assert(home_hit_test(repeat.x + 1, repeat.y + 1, content, false, 50) ==
-	       HOME_ITEM_NONE);
-	assert(home_hit_test(repeat.x + repeat.w + 1, repeat.y + 1, content,
-	                     true, 50) == HOME_ITEM_NONE);
-	/* Bars and empty space do nothing (6.4). */
-	assert(home_hit_test(10, 10, content, true, 50) == HOME_ITEM_NONE);
-	assert(home_hit_test(10, 230, content, true, 50) == HOME_ITEM_NONE);
-
-	/* The bubble: centred, SP_2 above the button bar, clear of the
-	 * repeat button and its shadow. */
-	ui_rect bubble = home_bubble_rect(100);
-	assert(bubble.w == 100 + 2 * SP_3);
-	assert(bubble.x * 2 + bubble.w == SCREEN_BOTTOM_W);
-	assert(bubble.y + bubble.h + SP_2 == hints.y);
-	assert(bubble.y > repeat.y + repeat.h + SHADOW_OFF);
-	assert(home_bubble_rect(1000).w == SCREEN_BOTTOM_W - 2 * SP_2);
+	assert(button.y + button.h + below + PRESS_SHIFT <= hints.y);
+	assert(button.y - (last.y + last.h) >= SP_4);
+	/* "Show more": five rows exactly between the bars. */
+	ui_rect area = grid_area(&more);
+	assert(area.y == TAB_H && area.y + area.h == hints.y);
+	/* The label sits over the six, not over a tile. */
+	assert(label.y + label.h <= grid_area(&six).y + SP_1);
+	assert(!home_has_more(6) && home_has_more(7));
 }
 
 static void test_home_focus(void)
 {
-	assert(home_focus_move(HOME_ITEM_SEARCH, 1, true) == HOME_ITEM_REPEAT);
-	assert(home_focus_move(HOME_ITEM_REPEAT, 1, true) == HOME_ITEM_REPEAT);
-	assert(home_focus_move(HOME_ITEM_REPEAT, -1, true) == HOME_ITEM_SEARCH);
-	assert(home_focus_move(HOME_ITEM_SEARCH, -1, true) == HOME_ITEM_SEARCH);
-	/* Without a last search there is only the search button. */
-	assert(home_focus_move(HOME_ITEM_SEARCH, 1, false) == HOME_ITEM_SEARCH);
-	/* A focus that went away falls back. */
-	assert(home_focus_move(HOME_ITEM_REPEAT, 0, false) == HOME_ITEM_SEARCH);
-	assert(home_focus_move(HOME_ITEM_NONE, 1, true) == HOME_ITEM_REPEAT);
+	/* Down from a tile that can still move stays on the tiles. */
+	assert(home_focus_vertical(HOME_FOCUS_TILES, true, true, true) ==
+	       HOME_FOCUS_TILES);
+	/* From the last row, to "Show more" when it exists. */
+	assert(home_focus_vertical(HOME_FOCUS_TILES, true, false, true) ==
+	       HOME_FOCUS_MORE);
+	assert(home_focus_vertical(HOME_FOCUS_TILES, true, false, false) ==
+	       HOME_FOCUS_TILES);
+	assert(home_focus_vertical(HOME_FOCUS_TILES, false, true, true) ==
+	       HOME_FOCUS_TILES);
+	/* Up from the button, back to the tiles; down stays. */
+	assert(home_focus_vertical(HOME_FOCUS_MORE, false, false, true) ==
+	       HOME_FOCUS_TILES);
+	assert(home_focus_vertical(HOME_FOCUS_MORE, true, false, true) ==
+	       HOME_FOCUS_MORE);
 }
 
 static void test_layout_rects(void)
@@ -1304,6 +1642,105 @@ static void test_thumb_queue(void)
 	assert(!thumb_keep(THUMB_FAILED, true));   /* try again */
 	assert(!thumb_keep(THUMB_WAITING, true));
 	assert(!thumb_keep(THUMB_LOADING, true));
+}
+
+static void test_grid_layout(void)
+{
+	/* §3.3 of the home plan: widths, columns and text per column. */
+	static const int widths[3][3] = { { 304 }, { 150, 150 }, { 99, 99, 98 } };
+	static const int xs[3][3] = { { 8 }, { 8, 162 }, { 8, 111, 214 } };
+	static const int text[3][3] = { { 260 }, { 106, 106 }, { 55, 55, 54 } };
+	for (int cols = 1; cols <= 3; cols++) {
+		grid_geom g = { cols, 36, 5 };
+		int sum = 0;
+		for (int c = 0; c < cols; c++) {
+			assert(grid_col_width(&g, c) == widths[cols - 1][c]);
+			assert(grid_col_x(&g, c) == xs[cols - 1][c]);
+			assert(grid_text_width(&g, c) == text[cols - 1][c]);
+			sum += grid_col_width(&g, c);
+		}
+		assert(sum + (cols - 1) * GRID_GAP == 304);
+		/* No overlap, every cell inside the screen with its margins. */
+		for (int i = 0; i < 3 * cols; i++)
+			for (int j = i + 1; j < 3 * cols; j++) {
+				ui_rect a = grid_cell_rect(&g, i, 0);
+				ui_rect b = grid_cell_rect(&g, j, 0);
+				assert(a.x + a.w <= b.x || b.x + b.w <= a.x ||
+				       a.y + a.h <= b.y || b.y + b.h <= a.y);
+				assert(a.x >= SP_2 && a.x + a.w <= SCREEN_BOTTOM_W - SP_2);
+			}
+	}
+	assert(TILE_H >= TOUCH_MIN);
+	assert(TILE_COVER + 2 * SP_1 == TILE_H);
+
+	/* Five rows from 36 fill the space between the bars exactly. */
+	grid_geom more = { 2, 36, 5 };
+	ui_rect area = grid_area(&more);
+	assert(area.y == TAB_H && area.y + area.h == SCREEN_H - BAR_H);
+	ui_rect last = grid_cell_rect(&more, 9, 0);
+	assert(last.y + last.h + SP_1 == SCREEN_H - BAR_H);
+	/* The home grid of six: three rows from 56 end at 160. */
+	grid_geom six = { 2, 56, 3 };
+	ui_rect six_last = grid_cell_rect(&six, 5, 0);
+	assert(six_last.y == 128 && six_last.y + six_last.h == 160);
+	assert(grid_max_scroll(&six, 6) == 0);
+
+	/* Hits: tiles only, not gaps, not past the count, not outside. */
+	assert(grid_hit(&more, 24, 10, 40, 0) == 0);
+	assert(grid_hit(&more, 24, 170, 40, 0) == 1);
+	assert(grid_hit(&more, 24, 159, 40, 0) == -1);   /* column gap */
+	assert(grid_hit(&more, 24, 10, 69, 0) == -1);    /* row gap */
+	assert(grid_hit(&more, 24, 10, 73, 0) == 2);
+	assert(grid_hit(&more, 3, 170, 73, 0) == -1);    /* past the count */
+	assert(grid_hit(&more, 24, 10, 220, 0) == -1);   /* on the button bar */
+	assert(grid_hit(&more, 24, 10, 40, GRID_PITCH) == 2);
+
+	/* Scrolling: 24 tiles in 2 columns are 12 rows, 7 beyond the five. */
+	assert(grid_rows(&more, 24) == 12);
+	assert(grid_max_scroll(&more, 24) == 7 * GRID_PITCH);
+	assert(grid_snap(&more, GRID_PITCH / 2, 24) == 1);
+	assert(grid_snap(&more, 10000, 24) == 7);
+	assert(grid_row_whole(&more, 4, 0) && !grid_row_whole(&more, 5, 0));
+	/* The SP_1 margin above the first row: four pixels of scroll still
+	 * leave it whole, the fifth cuts it under the tab bar. */
+	assert(grid_row_whole(&more, 0, SP_1));
+	assert(!grid_row_whole(&more, 0, SP_1 + 1));
+	assert(grid_align(&more, 0, 11, 24) == 1);       /* row 5 into view */
+	assert(grid_align(&more, 7 * GRID_PITCH, 0, 24) == 0);
+	ui_rect thumb = grid_scroll_thumb(&more, 0, 24);
+	ui_rect track = grid_scroll_track(&more);
+	assert(thumb.y == track.y && thumb.h < track.h);
+	thumb = grid_scroll_thumb(&more, grid_max_scroll(&more, 24), 24);
+	assert(thumb.y + thumb.h == track.y + track.h);
+	assert(grid_scroll_thumb(&six, 0, 6).h == grid_scroll_track(&six).h);
+}
+
+static void test_grid_focus(void)
+{
+	grid_geom g = { 2, 36, 5 };
+	int dx, dy;
+	/* Down keeps the column; into a shorter last row, its last tile. */
+	assert(grid_move(&g, 5, 1, GRID_DOWN, &dx, &dy) == 3 && !dx && !dy);
+	assert(grid_move(&g, 5, 3, GRID_DOWN, &dx, &dy) == 4);
+	assert(grid_move(&g, 5, 4, GRID_DOWN, &dx, &dy) == 4 && dy == 1);
+	assert(grid_move(&g, 5, 2, GRID_UP, &dx, &dy) == 0 && !dy);
+	assert(grid_move(&g, 5, 1, GRID_UP, &dx, &dy) == 1 && dy == -1);
+	/* Left/right within the row; no wrap at either side. */
+	assert(grid_move(&g, 5, 0, GRID_RIGHT, &dx, &dy) == 1 && !dx);
+	assert(grid_move(&g, 5, 1, GRID_RIGHT, &dx, &dy) == 1 && dx == 1);
+	assert(grid_move(&g, 5, 2, GRID_LEFT, &dx, &dy) == 2 && dx == -1);
+	assert(grid_move(&g, 5, 4, GRID_RIGHT, &dx, &dy) == 4 && dx == 1);
+	/* One column: left/right jump a page. */
+	grid_geom one = { 1, 36, 5 };
+	assert(grid_move(&one, 12, 0, GRID_RIGHT, &dx, &dy) == 5 && !dy);
+	assert(grid_move(&one, 12, 9, GRID_RIGHT, &dx, &dy) == 11);
+	assert(grid_move(&one, 12, 11, GRID_RIGHT, &dx, &dy) == 11 && dy == 1);
+	assert(grid_move(&one, 12, 3, GRID_LEFT, &dx, &dy) == 0 && !dy);
+	/* Three columns, a row of one at the end. */
+	grid_geom three = { 3, 36, 5 };
+	assert(grid_move(&three, 7, 5, GRID_DOWN, &dx, &dy) == 6);
+	assert(grid_move(&three, 7, 6, GRID_UP, &dx, &dy) == 3);
+	assert(grid_move(&three, 0, 0, GRID_DOWN, &dx, &dy) == 0);
 }
 
 static void test_list_drag(void)
@@ -2176,6 +2613,8 @@ int main(void)
 	test_spinner();
 	test_top_mode();
 	test_list_drag();
+	test_grid_layout();
+	test_grid_focus();
 	test_art_url();
 	test_thumb_queue();
 	test_list_logic();
@@ -2199,6 +2638,14 @@ int main(void)
 	test_meta_parse_album();
 	test_meta_parse_artist();
 	test_meta_parse_batch();
+	test_meta_parse_rootlist();
+	test_meta_parse_playlist();
+	test_meta_parse_rootlist_live();
+	test_list_window();
+	test_detail_paging();
+	test_thumb_reuse();
+	test_meta_parse_recent();
+	test_home_merge();
 	test_detail_stack();
 	test_detail_pool();
 	test_detail_buttons();

@@ -30,6 +30,8 @@ static int drawn_rolls[1 + NOW_LINES];
 static const detail_doc *parsed_doc;
 static unsigned parsed_serial;
 static detail_state parsed_state;
+/* A playlist's count grows as its pages arrive. */
+static int parsed_count;
 static lang_id parsed_lang = LANG_COUNT;
 static bool drawn_valid;
 
@@ -145,6 +147,25 @@ static void parse_album(const detail_doc *d)
 	add_line(d->label);
 }
 
+/* Plan 3.6: the name, what it is, and how many of its tracks the list
+ * shows. The owner is left out: the service only names it by an opaque
+ * user id (probe_meta step 15), nothing a person would recognise. */
+static void parse_playlist(const detail_doc *d)
+{
+	set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNTITLED),
+	         TXT_TITULO);
+	add_line(tr(STR_PLAYLIST_TYPE));
+	char line[64];
+	if (d->total_tracks > d->count)
+		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_CUT_FMT), d->count,
+		         d->total_tracks);
+	else if (d->count == 1)
+		snprintf(line, sizeof(line), "%s", tr(STR_ALBUM_TRACK_ONE));
+	else
+		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_FMT), d->count);
+	add_line(line);
+}
+
 static void parse(const detail_doc *d)
 {
 	C2D_TextBufClear(text_buf);
@@ -158,6 +179,8 @@ static void parse(const detail_doc *d)
 		set_text(&texts[0], tr(STR_DETAIL_FAILED_TITLE), TXT_TITULO);
 	} else if (d->kind == DETAIL_ALBUM) {
 		parse_album(d);
+	} else if (d->kind == DETAIL_PLAYLIST) {
+		parse_playlist(d);
 	} else {
 		set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNKNOWN_ARTIST),
 		    TXT_TITULO);
@@ -168,7 +191,8 @@ static void parse(const detail_doc *d)
 static bool changed(const detail_doc *d)
 {
 	return d != parsed_doc || d->serial != parsed_serial ||
-	       d->state != parsed_state || parsed_lang != lang_get();
+	       d->state != parsed_state || d->count != parsed_count ||
+	       parsed_lang != lang_get();
 }
 
 /* --- State and drawing ------------------------------------------------- */
@@ -199,6 +223,7 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art)
 		parsed_doc = doc;
 		parsed_serial = doc->serial;
 		parsed_state = doc->state;
+		parsed_count = doc->count;
 		parsed_lang = lang_get();
 		parsed_ms = osGetTime();
 	}

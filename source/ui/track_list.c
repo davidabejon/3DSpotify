@@ -12,56 +12,21 @@
 #define ROW_GLYPHS     3200
 #define SCRATCH_GLYPHS UI_FIELD_SIZE
 
-/* The list thumbs.c serves: the last one shown with thumbnails. */
-static track_list *thumbs_list;
-static bool thumbs_allowed = true;
-
-/* Gives thumbs.c the list when allowed; until then nothing it holds is
- * drawn for it. Covers already fetched for the same position and URL are
- * kept, so coming back to a list costs nothing. */
-static void hold_thumbs(track_list *l)
-{
-	if (!l)
-		return;
-	l->thumbs_synced = false;
-	if (!thumbs_allowed || l->count == 0)
-		return;
-	/* Visible rows first (STYLES.md 9). */
-	thumbs_set_tracks(l->tracks, l->count);
-	thumbs_set_window(l->first);
-	l->thumbs_synced = true;
-}
-
 void track_list_thumbs_frame(track_list *l)
 {
-	if (l->style != TRACK_LIST_THUMBS)
-		return;
-	if (thumbs_list != l) {
-		thumbs_list = l;
-		hold_thumbs(l);
-	}
-	if (thumbs_poll())
-		l->thumbs_serial++;
+	if (l->style == TRACK_LIST_THUMBS)
+		thumbs_client_frame(&l->thumbs);
 }
 
 void track_list_offer_thumbs(track_list *l)
 {
-	if (l->style != TRACK_LIST_THUMBS || thumbs_list)
-		return;
-	thumbs_list = l;
-	hold_thumbs(l);
+	if (l->style == TRACK_LIST_THUMBS)
+		thumbs_client_offer(&l->thumbs);
 }
 
 void track_list_allow_thumbs(bool allow)
 {
-	if (allow == thumbs_allowed)
-		return;
-	thumbs_allowed = allow;
-	/* Stopped, what was fetched stays usable; nothing new arrives. */
-	if (allow)
-		hold_thumbs(thumbs_list);
-	else
-		thumbs_stop();
+	thumbs_allow(allow);
 }
 
 /* --- Lifetime ---------------------------------------------------------- */
@@ -85,8 +50,7 @@ bool track_list_init(track_list *l, track_list_style style)
 
 void track_list_exit(track_list *l)
 {
-	if (thumbs_list == l)
-		thumbs_list = NULL;
+	thumbs_client_release(&l->thumbs);
 	if (l->buf)
 		C2D_TextBufDelete(l->buf);
 	if (l->scratch)
@@ -103,6 +67,40 @@ void track_list_reset_input(track_list *l)
 	l->edge_frames = 0;
 }
 
+/* Hands thumbs.c the covers of the window. Keeping ownership, so the
+ * rows on screen keep theirs while the window moves. */
+static void offer_window(track_list *l, bool replace)
+{
+	const char *urls[TRACK_LIST_WINDOW];
+	int n = l->count - l->base;
+	if (n > TRACK_LIST_WINDOW)
+		n = TRACK_LIST_WINDOW;
+	if (n < 0)
+		n = 0;
+	for (int i = 0; i < n; i++)
+		urls[i] = l->tracks[l->base + i].art_small;
+	if (replace)
+		thumbs_client_replace(&l->thumbs, urls, n);
+	else
+		thumbs_client_set(&l->thumbs, urls, n);
+}
+
+/* The window follows the rows on screen; the fetch priority follows the
+ * scroll. */
+static void follow_window(track_list *l)
+{
+	int base = list_window_base(l->base, l->first, l->count,
+	                            TRACK_LIST_WINDOW);
+	if (base != l->base) {
+		l->base = base;
+		l->stale = true;
+		if (l->style == TRACK_LIST_THUMBS)
+			offer_window(l, true);
+	}
+	if (l->style == TRACK_LIST_THUMBS)
+		thumbs_client_window(&l->thumbs, l->first - l->base);
+}
+
 void track_list_set(track_list *l, const sp_track *tracks, int count,
                     int selected)
 {
@@ -114,10 +112,10 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 	l->selected = list_clamp(selected, l->count);
 	l->first = list_scroll(0, l->selected, l->count, RESULTS_PER_PAGE);
 	l->scroll = l->first * LIST_PITCH;
-	l->thumbs_synced = false;
-	/* New tracks: thumbs.c is handed them by the next claim. */
-	if (thumbs_list == l)
-		thumbs_list = NULL;
+	l->base = list_window_base(0, l->first, l->count, TRACK_LIST_WINDOW);
+	/* New tracks: thumbs.c is handed their covers by the next claim. */
+	offer_window(l, false);
+	thumbs_client_window(&l->thumbs, l->first - l->base);
 	l->stale = true;
 	track_list_reset_input(l);
 }
@@ -131,6 +129,23 @@ void track_list_scroll_to(track_list *l, int first)
 	if (!list_row_whole(l->selected, l->scroll, l->count))
 		l->first = list_align(l->scroll, l->selected, l->count);
 	l->scroll = l->first * LIST_PITCH;
+	follow_window(l);
+}
+
+void track_list_extend(track_list *l, int count)
+{
+	int old = l->count;
+	l->count = count < old ? old : count > TRACK_LIST_MAX ? TRACK_LIST_MAX
+	                                                      : count;
+	if (l->count == old)
+		return;
+	/* New rows inside the window need their text and covers. */
+	if (old < l->base + TRACK_LIST_WINDOW) {
+		l->stale = true;
+		if (l->style == TRACK_LIST_THUMBS)
+			offer_window(l, true);
+	}
+	follow_window(l);
 }
 
 /* --- Text -------------------------------------------------------------- */
@@ -169,8 +184,11 @@ void track_list_ensure_parsed(track_list *l)
 		return;
 	C2D_TextBufClear(l->buf);
 	int width = row_text_width();
-	for (int i = 0; i < l->count; i++) {
-		const sp_track *t = &l->tracks[i];
+	int n = l->count - l->base;
+	if (n > TRACK_LIST_WINDOW)
+		n = TRACK_LIST_WINDOW;
+	for (int i = 0; i < n; i++) {
+		const sp_track *t = &l->tracks[l->base + i];
 		char text[16];
 		list_format_duration(t->duration_ms, text, sizeof(text));
 		parse(&l->duration[i], l->buf, text);
@@ -182,7 +200,7 @@ void track_list_ensure_parsed(track_list *l)
 		ui_parse_fitted(&l->artist[i], l->buf, l->scratch, track_artist(t),
 		                TXT_CUERPO, width);
 		if (l->style == TRACK_LIST_NUMBERS) {
-			snprintf(text, sizeof(text), "%d", i + 1);
+			snprintf(text, sizeof(text), "%d", l->base + i + 1);
 			parse(&l->number[i], l->buf, text);
 		}
 	}
@@ -200,7 +218,7 @@ track_list_look track_list_get_look(const track_list *l)
 		.scroll = l->scroll,
 		.pressed = press_down(&l->press) ? l->press_index : -1,
 		.edge = l->edge_frames > 0 ? l->edge_dir * EDGE_SHIFT : 0,
-		.thumbs = l->thumbs_serial,
+		.thumbs = l->thumbs.serial,
 	};
 }
 
@@ -221,13 +239,6 @@ void track_list_tick(track_list *l)
 }
 
 /* --- Input ------------------------------------------------------------- */
-
-/* The fetch priority follows the scroll, for the list thumbs.c serves. */
-static void follow_window(const track_list *l)
-{
-	if (l->style == TRACK_LIST_THUMBS && l == thumbs_list && l->thumbs_synced)
-		thumbs_set_window(l->first);
-}
 
 /* The buttons: focus `index` and bring the list to whole rows with it in
  * view (6.6), even when a drag left it cut. */
@@ -373,8 +384,8 @@ void track_list_release(track_list *l)
 static void draw_thumb(const track_list *l, ui_rect row, int index)
 {
 	C2D_Image image;
-	bool shown = l && index >= 0 && l == thumbs_list &&
-	             l->thumbs_synced && thumbs_image(index, &image);
+	bool shown = l && thumbs_client_image(&l->thumbs, index - l->base,
+	                                      &image);
 	ui_art(list_thumb_rect(row), shown ? &image : NULL);
 }
 
@@ -385,7 +396,7 @@ static void draw_number(const track_list *l, ui_rect row, int index)
 	ui_rect box = list_thumb_rect(row);
 	ui_fill(box, COL_TINTA);
 	ui_fill(ui_rect_inset(box, OUTLINE_W), COL_CAPA_ALTA);
-	ui_text_centered(&l->number[index], box.x + box.w / 2,
+	ui_text_centered(&l->number[index - l->base], box.x + box.w / 2,
 	                 box.y + box.h / 2, TXT_META, COL_TEXTO_2);
 }
 
@@ -397,26 +408,8 @@ static void draw_row(const track_list *l, ui_rect row, int index,
 	bool pressed = index >= 0 && index == look->pressed;
 	if (focused)
 		row = ui_rect_offset(row, 0, look->edge);
-	if (pressed)
-		row = ui_rect_offset(row, PRESS_SHIFT, PRESS_SHIFT);
-
-	u32 title_ink = COL_TEXTO;
-	u32 meta_ink = COL_TEXTO_2;
-	if (pressed || focused) {
-		/* Focused: `clorofila` with a `musgo` bottom band; pressed: the
-		 * dark fill (6.3). Text in `tinta` either way. */
-		ui_fill(row, COL_TINTA);
-		ui_rect inside = ui_rect_inset(row, OUTLINE_W);
-		ui_fill(inside, pressed ? COL_MUSGO : COL_CLOROFILA);
-		if (!pressed) {
-			ui_rect band = { inside.x, inside.y + inside.h - BEVEL_W,
-			                 inside.w, BEVEL_W };
-			ui_fill(band, COL_MUSGO);
-		}
-		title_ink = meta_ink = COL_TINTA;
-	} else {
-		ui_panel(row);
-	}
+	u32 title_ink, meta_ink;
+	row = ui_item_frame(row, focused, pressed, &title_ink, &meta_ink);
 	if (index >= 0 && l->style == TRACK_LIST_NUMBERS)
 		draw_number(l, row, index);
 	else
@@ -424,14 +417,17 @@ static void draw_row(const track_list *l, ui_rect row, int index,
 	if (index < 0)
 		return;
 
+	/* Rows on screen are always inside the window (list_window_base). */
+	int w = index - l->base;
+	if (w < 0 || w >= TRACK_LIST_WINDOW)
+		return;
 	int x = list_text_x(row);
 	int title_cy = row.y + SP_1 + ui_line_height(TXT_CABEZA) / 2;
 	int artist_cy = row.y + row.h - SP_1 - ui_line_height(TXT_CUERPO) / 2;
-	ui_text(&l->title[index], x, title_cy, TXT_CABEZA, title_ink);
-	ui_text(&l->artist[index], x, artist_cy, TXT_CUERPO, meta_ink);
-	int duration_x = row.x + row.w - SP_2 -
-	                 ui_px_ceil(l->duration_width[index]);
-	ui_text(&l->duration[index], duration_x, title_cy, TXT_META, meta_ink);
+	ui_text(&l->title[w], x, title_cy, TXT_CABEZA, title_ink);
+	ui_text(&l->artist[w], x, artist_cy, TXT_CUERPO, meta_ink);
+	int duration_x = row.x + row.w - SP_2 - ui_px_ceil(l->duration_width[w]);
+	ui_text(&l->duration[w], duration_x, title_cy, TXT_META, meta_ink);
 }
 
 void track_list_draw(const track_list *l, const track_list_look *look)

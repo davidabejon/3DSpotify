@@ -26,6 +26,14 @@ ui_rect ui_bevel_rect(ui_rect r, u32 fill, u32 light, u32 dark,
 /* A non-interactive panel (5.1): `capa` with a 1 px `tinta` outline. */
 void ui_panel(ui_rect r);
 
+/* A result row's or a tile's frame in its state (5.3, 5.16, 6.3): at rest
+ * a panel; focused, `clorofila` with a `musgo` bottom band; pressed, moved
+ * PRESS_SHIFT and filled `musgo`. Returns where its content goes and the
+ * inks for its main and secondary text (`tinta` on the accent). Any nudge
+ * is the caller's, applied to `r` first. */
+ui_rect ui_item_frame(ui_rect r, bool focused, bool pressed, u32 *ink,
+                      u32 *meta_ink);
+
 /* The focus border (6.2): 2 px of `lima`, 1 px outside the outline. */
 void ui_focus_ring(ui_rect r);
 

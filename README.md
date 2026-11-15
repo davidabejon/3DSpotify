@@ -134,7 +134,7 @@ icon:
 
 | Icon | Tab | What it holds |
 |---|---|---|
-| House | **Home** | Search for songs and repeat the last search. |
+| House | **Home** | Your recent playlists, and a shortcut to search. |
 | Magnifying glass | **Search** | The latest results, the search in progress, or its error. |
 | Equalizer | **Playing** | The current track and its controls. |
 | Gear | **Settings** | Language, reconnect and pair another account. |
@@ -162,14 +162,27 @@ icon:
 
 ### Home
 
-Tap **"Search songs"** or press **A** to open the keyboard. Your last search appears below as a secondary button; tap it or move to it with up/down and press **A**. Once confirmed, the app moves to the **Search** tab.
+The tab shows your six most recently played playlists as tiles (cover and name, in two
+columns), loaded in the background while skeleton tiles show. The ones you played last come
+first, then the rest of your playlist folder. If the account has no play history, the label
+reads **"Your playlists"** and the folder keeps its own order. Spotify's DJ is left out: it
+is a live session of another service, with no track list this client can play.
 
-**Touch controls:**
-- Tap a button to highlight it; the button shows a pressed state when you lift the stylus inside it.
-- Sliding the stylus off a button before lifting cancels the tap.
+- Move between tiles with the D-pad; down from the last row reaches **"Show more"**, which
+  lists up to 24 playlists in a scrolling grid. **B** goes back to the six.
+- Tap a tile to highlight it; tap it again (or press **A**) to open the playlist
+  ([Details](#details)).
+- If loading fails, press **A** (or tap **"Retry"**). An account with no playlists gets a
+  **"Search songs"** button instead.
 
-**Button hints:** Glyphs with colored backgrounds show available actions:
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — opens the search keyboard
+**Button hints:**
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — opens the highlighted playlist
+- <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — opens the search keyboard; once confirmed, the app moves to the **Search** tab
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — in "Show more", back to the six
+
+Covers that Spotify generates itself (mixes, blends, the DJ) are not on the CDN this client
+reaches, so those tiles keep the note placeholder. Names with emoji show the characters the
+console's font lacks as boxes.
 
 While the keyboard is open, the playing track pauses; it resumes once the keyboard closes.
 
@@ -226,15 +239,20 @@ From a song you can open its detail, and from there its artist and album:
 - **Song:** **Play**, **Artist: …** and **Album: …** buttons (up/down and **A**, or
   tap). Play starts the song with the list it came from as the queue.
 - **Album:** its tracks, numbered. **Artist:** their popular tracks, with thumbnails.
+  **Playlist:** its tracks, with thumbnails, loaded 50 at a time: the next page comes by
+  itself as you near the end of the list (a "Loading…" bubble shows meanwhile), up to 500.
+  Episodes and local files are left out; the top screen says how many of how many are
+  loaded.
   **A** (or tapping the highlighted row) plays from that song with the list as the
   queue; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> opens the song's detail.
 - **B** goes back one level; with no detail left, it does what it always does on that
   tab. **L/R** change tab and keep each tab's details where you left them.
-- Album and artist details load in the background: **B** cancels, and if loading
-  fails **A** retries.
+- Album, artist and playlist details load in the background: **B** cancels, and if
+  loading fails **A** retries.
 
-Details open from **Search** (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> on a result) and from **Playing** (tap the
-title, artist or album). A new search closes the details open in **Search**.
+Details open from **Home** (a playlist tile), from **Search** (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> on a result) and from
+**Playing** (tap the title, artist or album). A new search closes the details open in
+**Search**.
 
 ### Settings
 

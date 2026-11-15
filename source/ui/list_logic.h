@@ -314,6 +314,33 @@ static inline ui_rect list_bubble_slot_rect(float content_width, int slot)
 	return r;
 }
 
+/* Long lists keep only a window of `window` rows ready (their text and
+ * covers), from `base`. The window moves when the rows on screen, from
+ * `first` (the peek row of a drag included), come within LIST_WINDOW_MARGIN
+ * of either end of it, and it then centres on them; a list that fits is
+ * always the window from 0. Returns the (possibly unchanged) base. */
+#define LIST_WINDOW_MARGIN 2
+
+static inline int list_window_base(int base, int first, int count,
+                                   int window)
+{
+	if (count <= window)
+		return 0;
+	int shown = RESULTS_PER_PAGE + 1;
+	int max_base = count - window;
+	if (base > max_base)
+		base = max_base;
+	if (base < 0)
+		base = 0;
+	bool low = base > 0 && first < base + LIST_WINDOW_MARGIN;
+	bool high = base < max_base &&
+	            first + shown > base + window - LIST_WINDOW_MARGIN;
+	if (!low && !high && first >= base && first + shown <= base + window)
+		return base;
+	int centred = first - (window - shown) / 2;
+	return centred < 0 ? 0 : centred > max_base ? max_base : centred;
+}
+
 /* "m:ss" for a duration; negative durations show as 0:00. */
 static inline void list_format_duration(int duration_ms, char *out,
                                         size_t outlen)

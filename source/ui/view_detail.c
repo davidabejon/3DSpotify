@@ -49,6 +49,10 @@ static lang_id parsed_lang = LANG_COUNT;
 static const detail_doc *parsed_doc;
 static unsigned parsed_serial;
 static detail_state parsed_state;
+/* A playlist grows page by page: the count the list was last given, and
+ * whether the next page is on its way (the waiting bubble shows). */
+static int parsed_count;
+static bool loading_more;
 
 static detail_mode mode = MODE_NONE;
 /* Which track buttons the track allows (6.1). */
@@ -76,6 +80,7 @@ typedef struct {
 	bool retry;
 	bool glyph[GLYPH_COUNT];
 	bool bubble;
+	bool more;
 	int loader_step;
 	track_list_look list;
 } detail_look;
@@ -210,6 +215,19 @@ static void parse_text(const detail_doc *doc)
  * on; either way the text is parsed again, as on a language switch. */
 static void sync(const detail_doc *doc)
 {
+	loading_more = doc && doc->loading_more && mode == MODE_LIST;
+	/* A page arrived: the same list, longer, focus and scroll kept. A first
+	 * page of nothing but episodes left it empty until now. */
+	if (!doc_changed(doc) && doc->count != parsed_count) {
+		if (mode == MODE_LIST) {
+			track_list_extend(&list, doc->count);
+		} else if (mode == MODE_EMPTY && doc->count > 0) {
+			mode = MODE_LIST;
+			list.style = TRACK_LIST_THUMBS;
+			track_list_set(&list, doc->tracks, doc->count, doc->selected);
+		}
+		parsed_count = doc->count;
+	}
 	bool changed = doc_changed(doc);
 	if (!changed && parsed_lang == lang_get())
 		return;
@@ -233,6 +251,7 @@ static void sync(const detail_doc *doc)
 	parsed_doc = doc;
 	parsed_serial = doc ? doc->serial : 0;
 	parsed_state = doc ? doc->state : DETAIL_LOADING;
+	parsed_count = doc ? doc->count : 0;
 	parsed_lang = lang_get();
 }
 
@@ -245,8 +264,9 @@ static detail_look current_look(void)
 		.focus = focus,
 		.retry = press_down(&press_retry),
 		.bubble = bubble_frames >= 0,
-		.loader_step = mode == MODE_LOADING ? loader_frames / LOADER_STEP
-		                                    : 0,
+		.more = loading_more,
+		.loader_step = mode == MODE_LOADING || loading_more
+		               ? loader_frames / LOADER_STEP : 0,
 		.list = track_list_get_look(&list),
 	};
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
@@ -259,7 +279,8 @@ static detail_look current_look(void)
 static bool same_look(const detail_look *a, const detail_look *b)
 {
 	if (a->mode != b->mode || a->focus != b->focus || a->retry != b->retry ||
-	    a->bubble != b->bubble || a->loader_step != b->loader_step ||
+	    a->bubble != b->bubble || a->more != b->more ||
+	    a->loader_step != b->loader_step ||
 	    !track_list_same_look(&a->list, &b->list))
 		return false;
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
@@ -281,7 +302,7 @@ static void tick(void)
 		press_tick(&press_glyph[i]);
 	if (bubble_frames >= 0 && ++bubble_frames >= BUBBLE_SHOW)
 		bubble_frames = -1;
-	if (mode == MODE_LOADING)
+	if (mode == MODE_LOADING || loading_more)
 		loader_frames++;
 }
 
@@ -463,7 +484,8 @@ detail_action view_detail_update(detail_doc *doc, u32 down)
 bool view_detail_dirty(const detail_doc *doc)
 {
 	if (doc_changed(doc) || parsed_lang != lang_get() || !drawn_valid ||
-	    track_list_text_stale(&list))
+	    track_list_text_stale(&list) || doc->count != parsed_count ||
+	    (doc->loading_more && mode == MODE_LIST) != loading_more)
 		return true;
 	detail_look look = current_look();
 	return !same_look(&look, &drawn);
@@ -561,7 +583,7 @@ void view_detail_draw_bottom(const detail_doc *doc)
 	/* While loading, the waiting bubble (5.9 with the indicator of 5.7)
 	 * over the skeleton rows; the language bubble stacks above it. */
 	int slot = 0;
-	if (look.mode == MODE_LOADING) {
+	if (look.mode == MODE_LOADING || look.more) {
 		ui_bubble_loading(list_bubble_rect(
 			ui_bubble_loading_content_width(&loading_text)),
 			look.loader_step, &loading_text);

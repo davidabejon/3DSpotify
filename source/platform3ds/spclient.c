@@ -17,16 +17,6 @@
  * which is a confusing way to be told the shape is wrong. The kinds and the
  * message parsers live in meta_parse.c. */
 
-/* Defined with the playlist code below; the rootlist is the same shape and
- * shares it. */
-static int read_list_items(const pbv *content, char uris[][64], int max);
-
-static void copy_str(char *dst, size_t cap, const pbv *v)
-{
-	size_t n = v->len < cap - 1 ? v->len : cap - 1;
-	memcpy(dst, v->p, n);
-	dst[n] = '\0';
-}
 
 const char *sp_format_name(int format)
 {
@@ -188,159 +178,98 @@ int sp_artist_metadata(http_session *sess, const char *token,
 	return 0;
 }
 
-int sp_rootlist(const char *host, const char *token, const char *username,
-                char uris[][64], char names[][64], char arts[][80], int max,
-                int *count, char *err, size_t errlen)
-{
-	char path[320];
-	snprintf(path, sizeof(path),
-	         "/playlist/v2/user/%s/rootlist?decorate=revision,attributes,length",
-	         username);
-
-	http_reply r;
-	if (http_get_proto(host, path, token, &r) != 0) {
-		snprintf(err, errlen, "rootlist: %s", r.err);
-		return -1;
-	}
-	if (r.status != 200) {
-		snprintf(err, errlen, "rootlist returned HTTP %d", r.status);
-		http_reply_free(&r);
-		return -1;
-	}
-
-	const uint8_t *body = (const uint8_t *)r.body;
-	uint64_t length = 0;
-	pb_get_varint(body, r.len, 2, &length);   /* SelectedListContent.length */
-	*count = (int)length;
-
-	pbv whole = { body, r.len };
-	int n = read_list_items(&whole, uris, max);
-
-	/* meta_items runs parallel to items, one per entry, and carries the
-	 * ListAttributes the decoration asked for -- which is how the rows get
-	 * real names without one request each. The same attributes carry the
-	 * cover: `picture` (3) is the 20-byte image id for user-set covers,
-	 * while generated ones (mosaic/pickasso) arrive as a format attribute
-	 * with key "image_url". */
-	if (names) {
-		for (int i = 0; i < n; i++) {
-			names[i][0] = '\0';
-			if (arts)
-				arts[i][0] = '\0';
-		}
-		pbv contents;
-		if (pb_get_bytes(body, r.len, 5, &contents)) {
-			size_t at = 0;
-			int i = 0;
-			while (at < contents.len && i < n) {
-				pbv rest = { contents.p + at, contents.len - at };
-				pbv meta;
-				if (!pb_get_bytes(rest.p, rest.len, 4, &meta))
-					break;
-				pbv attrs, nm, pic;
-				if (pb_get_bytes(meta.p, meta.len, 2, &attrs)) {
-					if (pb_get_bytes(attrs.p, attrs.len, 1, &nm)) {
-						size_t len = nm.len < 63 ? nm.len : 63;
-						memcpy(names[i], nm.p, len);
-						names[i][len] = '\0';
-					}
-					if (arts &&
-					    pb_get_bytes(attrs.p, attrs.len, 3, &pic)) {
-						if (pic.len == 20) {
-							/* i.scdn.co/image/<hex id> is the CDN shape
-							 * every 64px thumb URL already uses. */
-							static const char hexd[] = "0123456789abcdef";
-							snprintf(arts[i], 80,
-							         "https://i.scdn.co/image/");
-							char *o = arts[i] + strlen(arts[i]);
-							for (int k = 0; k < 20; k++) {
-								*o++ = hexd[pic.p[k] >> 4];
-								*o++ = hexd[pic.p[k] & 15];
-							}
-							*o = '\0';
-						} else if (pic.len > 8 && pic.len < 79 &&
-						           memcmp(pic.p, "https://", 8) == 0) {
-							memcpy(arts[i], pic.p, pic.len);
-							arts[i][pic.len] = '\0';
-						}
-					}
-				}
-				i++;
-				at = (size_t)(meta.p + meta.len - contents.p);
-			}
-		}
-	}
-
-	http_reply_free(&r);
-	return n;
-}
-
 /* ------------------------------------------------------------- playlists */
 
-/* SelectedListContent.contents (5) -> ListItems.items (3) -> Item.uri (1).
- * `items` is repeated, and pb_get_bytes only yields the first, so the list is
- * walked by hand. */
-static int read_list_items(const pbv *content, char uris[][64], int max)
+/* One protobuf GET over the session, checked for a 200. */
+static int session_get_proto(http_session *sess, const char *token,
+                             const char *path, const char *what,
+                             http_reply *r, char *err, size_t errlen)
 {
-	pbv contents;
-	if (!pb_get_bytes(content->p, content->len, 5, &contents))
-		return 0;
-
-	int n = 0;
-	size_t at = 0;
-	while (at < contents.len && n < max) {
-		pbv rest = { contents.p + at, contents.len - at };
-		pbv item;
-		if (!pb_get_bytes(rest.p, rest.len, 3, &item))
-			break;
-		pbv uri;
-		if (pb_get_bytes(item.p, item.len, 1, &uri)) {
-			size_t len = uri.len < 63 ? uri.len : 63;
-			memcpy(uris[n], uri.p, len);
-			uris[n][len] = '\0';
-			n++;
-		}
-		at = (size_t)(item.p + item.len - contents.p);
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/x-protobuf", NULL, 0, 0, r) != 0) {
+		snprintf(err, errlen, "%s: %s", what, r->err);
+		return -1;
 	}
+	if (r->status != 200) {
+		snprintf(err, errlen, "%s returned HTTP %d", what, r->status);
+		http_reply_free(r);
+		return -1;
+	}
+	return 0;
+}
+
+int sp_rootlist_s(http_session *sess, const char *token, const char *username,
+                  sp_playlist_ref *out, int max, int *total,
+                  char *err, size_t errlen)
+{
+	char user[192], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/playlist/v2/user/%s/rootlist?decorate=revision,attributes,length",
+	         user);
+	http_reply r;
+	if (session_get_proto(sess, token, path, "rootlist", &r, err, errlen) != 0)
+		return -1;
+	int n = sp_parse_rootlist((const uint8_t *)r.body, r.len, out, max, total);
+	http_reply_free(&r);
 	return n;
 }
 
-int sp_playlist(const char *host, const char *token, const char *playlist_id,
-                char *name, size_t namelen, char uris[][64], int max,
-                int *count, char *err, size_t errlen)
+int sp_recent_playlists_s(http_session *sess, const char *token,
+                          const char *username, char uris[][SP_URI_MAX],
+                          int max, char *err, size_t errlen)
 {
-	if (name && namelen)
-		name[0] = '\0';
-
-	char path[160];
-	snprintf(path, sizeof(path), "/playlist/v2/playlist/%s", playlist_id);
-
+	/* The desktop client's own request. limit=50 counts every kind of
+	 * context, so the playlists among them are fewer. */
+	char user[192], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/recently-played/v3/user/%s/recently-played"
+	         "?format=json&offset=0&limit=50&filter=default", user);
 	http_reply r;
-	if (http_get_proto(host, path, token, &r) != 0) {
-		snprintf(err, errlen, "playlist: %s", r.err);
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "history: %s", r.err);
 		return -1;
 	}
 	if (r.status != 200) {
-		snprintf(err, errlen, "playlist returned HTTP %d", r.status);
+		snprintf(err, errlen, "history returned HTTP %d", r.status);
 		http_reply_free(&r);
 		return -1;
 	}
-
-	const uint8_t *body = (const uint8_t *)r.body;
-	uint64_t length = 0;
-	pb_get_varint(body, r.len, 2, &length);
-	if (count)
-		*count = (int)length;
-
-	pbv attrs, nm;
-	if (name && namelen && pb_get_bytes(body, r.len, 3, &attrs) &&
-	    pb_get_bytes(attrs.p, attrs.len, 1, &nm))      /* ListAttributes.name */
-		copy_str(name, namelen, &nm);
-
-	pbv whole = { body, r.len };
-	int n = read_list_items(&whole, uris, max);
+	int n = sp_parse_recent_playlists(r.body, r.len, uris, max);
 	http_reply_free(&r);
 	return n;
+}
+
+int sp_playlist_s(http_session *sess, const char *token, const char *uri,
+                  int from, int max_tracks, sp_playlist_info *out,
+                  char *err, size_t errlen)
+{
+	memset(out, 0, sizeof(*out));
+	if (strncmp(uri, "spotify:playlist:", 17) != 0 || !uri[17]) {
+		snprintf(err, errlen, "not a playlist: %s", uri);
+		return -1;
+	}
+	if (max_tracks > SP_PLAYLIST_PAGE)
+		max_tracks = SP_PLAYLIST_PAGE;
+	if (max_tracks < 0)
+		max_tracks = 0;
+	if (from < 0)
+		from = 0;
+
+	/* from/length is honoured (a 1275-track list: 110 KB whole, 2.3 KB for
+	 * 24); without the decoration the header came back with no length. */
+	char path[192];
+	snprintf(path, sizeof(path),
+	         "/playlist/v2/playlist/%s?decorate=attributes,length"
+	         "&from=%d&length=%d", uri + 17, from, max_tracks);
+	http_reply r;
+	if (session_get_proto(sess, token, path, "playlist", &r, err, errlen) != 0)
+		return -1;
+	sp_parse_playlist((const uint8_t *)r.body, r.len, uri, max_tracks, out);
+	http_reply_free(&r);
+	return 0;
 }
 
 int sp_liked(const char *host, const char *token, const char *username,
