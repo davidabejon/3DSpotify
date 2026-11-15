@@ -30,15 +30,18 @@
 /* A list's worth: SEARCH_LIMIT, THUMBS_MAX and SP_ALBUM_MAX_TRACKS. */
 #define DETAIL_MAX_TRACKS 24
 
-typedef enum { DETAIL_TRACK, DETAIL_ALBUM, DETAIL_ARTIST } detail_kind;
+typedef enum {
+	DETAIL_TRACK, DETAIL_ALBUM, DETAIL_ARTIST, DETAIL_PLAYLIST
+} detail_kind;
 typedef enum { DETAIL_LOADING, DETAIL_READY, DETAIL_FAILED } detail_state;
 
 typedef struct {
 	detail_kind  kind;
 	detail_state state;
-	char uri[SP_URI_MAX];         /* the album's or artist's; the track's */
+	char uri[SP_URI_MAX];         /* the album's, artist's or playlist's;
+	                               * the track's */
 	/* The header, for the top screen. */
-	char title[128];              /* track, album or artist */
+	char title[128];              /* track, album, artist or playlist */
 	char subtitle[128];           /* the artist of a track or album */
 	char art[80];                 /* cover or portrait, large */
 	char label[64];
@@ -66,10 +69,13 @@ detail_doc *details_top(app_tab tab);
  * copied (at most DETAIL_MAX_TRACKS, keeping `index` inside). */
 void details_open_track(app_tab tab, const sp_track *list, int count,
                         int index);
-/* Opens an album or artist by URI, in DETAIL_LOADING; details_poll starts
- * the load. Ignored for an empty URI. */
+/* Opens an album, artist or playlist by URI, in DETAIL_LOADING;
+ * details_poll starts the load. Ignored for an empty URI. A playlist
+ * shows its first DETAIL_MAX_TRACKS tracks, episodes and local files left
+ * out; total_tracks counts every item it holds. */
 void details_open_album(app_tab tab, const char *uri);
 void details_open_artist(app_tab tab, const char *uri);
+void details_open_playlist(app_tab tab, const char *uri);
 
 /* Pops one level of `tab`; a load for it is asked to stop. False when the
  * stack was already empty, so B does what the tab's own view does. */

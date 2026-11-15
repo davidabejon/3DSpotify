@@ -597,7 +597,7 @@ static void test_detail_stack(void)
 {
 	assert(detail_tab_stack(TAB_SEARCH) == 0);
 	assert(detail_tab_stack(TAB_PLAYER) == 1);
-	assert(detail_tab_stack(TAB_HOME) < 0);
+	assert(detail_tab_stack(TAB_HOME) == 2);
 	assert(detail_tab_stack(TAB_SETTINGS) < 0);
 
 	detail_stack s;

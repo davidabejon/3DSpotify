@@ -1457,6 +1457,11 @@ static tabs_exit run_tabs(spotify_session *session)
 			case HOME_ACTION_SEARCH:
 				keyboard_search(session, home_query);
 				break;
+			case HOME_ACTION_OPEN:
+				/* On Home's own stack: L/R and back find it as left. */
+				details_open_playlist(TAB_HOME, view_home_selected_uri());
+				switch_tab(TAB_HOME);
+				break;
 			case HOME_ACTION_RETRY:
 				home_feed_retry(session->host, session->library_token,
 				                session->username);

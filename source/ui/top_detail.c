@@ -145,6 +145,25 @@ static void parse_album(const detail_doc *d)
 	add_line(d->label);
 }
 
+/* Plan 3.6: the name, what it is, and how many of its tracks the list
+ * shows. The owner is left out: the service only names it by an opaque
+ * user id (probe_meta step 15), nothing a person would recognise. */
+static void parse_playlist(const detail_doc *d)
+{
+	set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNTITLED),
+	         TXT_TITULO);
+	add_line(tr(STR_PLAYLIST_TYPE));
+	char line[64];
+	if (d->total_tracks > d->count)
+		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_CUT_FMT), d->count,
+		         d->total_tracks);
+	else if (d->count == 1)
+		snprintf(line, sizeof(line), "%s", tr(STR_ALBUM_TRACK_ONE));
+	else
+		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_FMT), d->count);
+	add_line(line);
+}
+
 static void parse(const detail_doc *d)
 {
 	C2D_TextBufClear(text_buf);
@@ -158,6 +177,8 @@ static void parse(const detail_doc *d)
 		set_text(&texts[0], tr(STR_DETAIL_FAILED_TITLE), TXT_TITULO);
 	} else if (d->kind == DETAIL_ALBUM) {
 		parse_album(d);
+	} else if (d->kind == DETAIL_PLAYLIST) {
+		parse_playlist(d);
 	} else {
 		set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNKNOWN_ARTIST),
 		    TXT_TITULO);

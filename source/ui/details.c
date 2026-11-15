@@ -25,6 +25,7 @@ typedef struct {
 	unsigned serial;              /* ...as long as it still has this serial */
 	sp_album  album;
 	sp_artist artist;
+	sp_playlist_info playlist;
 	const char *uris[DETAIL_MAX_TRACKS];
 	sp_track tracks[DETAIL_MAX_TRACKS];
 	int  count;
@@ -86,6 +87,14 @@ static void worker_main(void *arg)
 		n = job.album.track_count;
 		for (int i = 0; i < n; i++)
 			job.uris[i] = job.album.track_uris[i];
+	} else if (job.kind == DETAIL_PLAYLIST) {
+		/* Only the first items are asked for: the service honours the
+		 * range, so a list of thousands costs what a short one does. */
+		rc = sp_playlist_s(sess, job.token, job.uri, DETAIL_MAX_TRACKS,
+		                   &job.playlist, job.error, sizeof(job.error));
+		n = job.playlist.track_count;
+		for (int i = 0; i < n; i++)
+			job.uris[i] = job.playlist.track_uris[i];
 	} else {
 		/* The service already sends the account country's top tracks, so
 		 * no country is needed to choose them (plan, phase 0). */
@@ -130,6 +139,11 @@ static void apply(detail_doc *d)
 		d->year = a->year;
 		d->album_type = a->type;
 		d->total_tracks = a->total_tracks;
+	} else if (job.kind == DETAIL_PLAYLIST) {
+		const sp_playlist_info *p = &job.playlist;
+		snprintf(d->title, sizeof(d->title), "%s", p->name);
+		snprintf(d->art, sizeof(d->art), "%s", p->art);
+		d->total_tracks = p->total_tracks;
 	} else {
 		const sp_artist *a = &job.artist;
 		snprintf(d->title, sizeof(d->title), "%s", a->name);
@@ -289,6 +303,11 @@ void details_open_album(app_tab tab, const char *uri)
 void details_open_artist(app_tab tab, const char *uri)
 {
 	open_entity(tab, DETAIL_ARTIST, uri);
+}
+
+void details_open_playlist(app_tab tab, const char *uri)
+{
+	open_entity(tab, DETAIL_PLAYLIST, uri);
 }
 
 bool details_back(app_tab tab)
