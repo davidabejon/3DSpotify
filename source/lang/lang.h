@@ -176,6 +176,9 @@ typedef enum {
 	STR_PLAYER_IDLE,
 	STR_PLAYER_POSITION_FMT,
 	STR_PLAYER_VOLUME,
+	/* The bubble after touching the progress bar before the whole track
+	 * has downloaded: it cannot move yet. */
+	STR_PLAYER_SEEK_WAIT,
 	STR_ERR_NO_REFRESH_CREDENTIAL,
 	STR_ERR_NO_ACCESS_TOKEN,
 	STR_ERR_SAVE_RENEWED_OAUTH,

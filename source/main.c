@@ -288,6 +288,20 @@ static void switch_language(void)
 	cfg_set_async("language", lang_code(lang_get()));
 }
 
+/* Holding up or down, on the D-pad or the Circle Pad, keeps moving through
+ * the lists and between a view's buttons: a first step at once, then one
+ * more after NAV_REPEAT_DELAY frames and every NAV_REPEAT_INTERVAL after
+ * that (hidKeysDownRepeat). */
+#define NAV_REPEAT_DELAY 24
+#define NAV_REPEAT_INTERVAL 6
+#define NAV_REPEAT_KEYS (KEY_UP | KEY_DOWN)
+
+/* This frame's new presses, with up and down again while held. */
+static u32 keys_down(void)
+{
+	return hidKeysDown() | (hidKeysDownRepeat() & NAV_REPEAT_KEYS);
+}
+
 static void download_worker(void *arg)
 {
 	download_job *job = arg;
@@ -1794,7 +1808,7 @@ static tabs_exit run_tabs(spotify_session *session)
 	switch_tab(TAB_HOME);
 	for (;;) {
 		hidScanInput();
-		u32 down = hidKeysDown();
+		u32 down = keys_down();
 		u32 held = hidKeysHeld();
 		u32 up = hidKeysUp();
 		if (down & KEY_START)
@@ -2645,6 +2659,7 @@ int main(int argc, char **argv)
 	shuffle_init();
 	recent_init();
 	volume_init();
+	hidSetRepeatParameters(NAV_REPEAT_DELAY, NAV_REPEAT_INTERVAL);
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
 	bool soc_ready = false;

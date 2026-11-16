@@ -149,6 +149,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_PLAYER_IDLE] = "Todavía no suena nada.",
 	[STR_PLAYER_POSITION_FMT] = "%d de %d",
 	[STR_PLAYER_VOLUME] = "Volumen",
+	[STR_PLAYER_SEEK_WAIT] = "Espera a que se descargue al 100%",
 	[STR_ERR_NO_REFRESH_CREDENTIAL] = "No hay una credencial para renovar OAuth.",
 	[STR_ERR_NO_ACCESS_TOKEN] = "Spotify no devolvió un access token.",
 	[STR_ERR_SAVE_RENEWED_OAUTH] = "No se pudo guardar la credencial OAuth renovada.",

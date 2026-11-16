@@ -8,7 +8,9 @@
  * right the skip buttons, touch acts on lifting the stylus, and up/down
  * change the volume bar in the same frame (6.7). The stylus drags the
  * bars: the volume follows it at once; the progress bar's handle and the
- * time follow it, and the track moves there when it lifts. The title, the artist and
+ * time follow it, and the track moves there when it lifts; before the
+ * whole track has downloaded the progress bar does not move and a bubble
+ * (5.9) says to wait for 100%. The title, the artist and
  * the album are links, touch only, to their details
  * (docs/plan_vistas_detalle.md 4.4). Per 9, a GPU frame is
  * only needed when the clock's second, the volume, the pause, a press or
