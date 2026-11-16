@@ -1,3 +1,4 @@
+#include "about_layout.h"
 #include "art_cache_logic.h"
 #include "art_url.h"
 #include "detail_logic.h"
@@ -1102,6 +1103,7 @@ static void test_language_tables(void)
 			       strcmp(text, "Album") == 0 ||
 			       strcmp(text, "Album: %s") == 0 ||
 			       strcmp(text, "EP") == 0 ||
+			       strcmp(text, "Premium") == 0 ||
 			       strcmp(text, "3DSpotify") == 0);
 			/* The tables stay ASCII until lifted on purpose (lang.h). */
 			for (const char *p = text; *p; p++)
@@ -2467,7 +2469,9 @@ static void test_top_mode(void)
 			/* A detail on the tab takes the top screen, music or not. */
 			assert(top_mode_for((app_tab)tab, phase, true) == TOP_DETAIL);
 			top_mode mode = top_mode_for((app_tab)tab, phase, false);
-			if (!music)
+			if (tab == TAB_SETTINGS)
+				assert(mode == TOP_ABOUT);
+			else if (!music)
 				assert(mode == TOP_LOGO);
 			else if (tab == TAB_PLAYER)
 				assert(mode == TOP_ART_BIG);
@@ -2947,6 +2951,37 @@ static void test_text_compose(void)
 	assert(text_utf8_decode("\xed\xa0\x80", &cp) == 1 && cp == 0xFFFD);
 }
 
+static void test_about_layout(void)
+{
+	/* The card: inside the margins, the picture inside it. */
+	ui_rect card = about_card_rect();
+	ui_rect avatar = about_avatar_rect();
+	assert(card.x == ABOUT_MARGIN && card.y == ABOUT_MARGIN);
+	assert(card.x * 2 + card.w == SCREEN_TOP_W);
+	assert(avatar.x > card.x && avatar.y > card.y);
+	assert(avatar.x + avatar.w < card.x + card.w);
+	assert(avatar.y + avatar.h < card.y + card.h);
+	assert(about_card_text_x() > avatar.x + avatar.w);
+	assert(about_card_text_x() + about_card_text_w() < card.x + card.w);
+
+	/* The credits: under the card, evenly spaced, in two columns that
+	 * end at the right margin. */
+	assert(about_row_cy(0) - ABOUT_ROW_PITCH / 2 >= card.y + card.h + SP_2);
+	for (int i = 1; i < ABOUT_ROWS; i++)
+		assert(about_row_cy(i) - about_row_cy(i - 1) == ABOUT_ROW_PITCH);
+	assert(about_value_x() > about_label_x());
+	assert(about_value_x() + about_value_w() ==
+	       SCREEN_TOP_W - ABOUT_MARGIN);
+
+	/* The rule under the last row, and room for three lines of notice
+	 * (t_meta, 14 px) above the bottom edge. */
+	ui_rect rule = about_rule_rect();
+	assert(rule.y > about_row_cy(ABOUT_ROWS - 1) + ABOUT_ROW_PITCH / 2 - 1);
+	assert(about_notice_y() > rule.y);
+	assert(about_notice_y() + 3 * 14 <= SCREEN_H);
+	assert(about_notice_w() == card.w);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -2964,6 +2999,7 @@ int main(void)
 	test_recent_searches();
 	test_art_cache();
 	test_text_compose();
+	test_about_layout();
 	test_spinner();
 	test_top_mode();
 	test_list_drag();

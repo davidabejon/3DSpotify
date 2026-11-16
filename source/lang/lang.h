@@ -91,6 +91,16 @@ typedef enum {
 	STR_SETTINGS_LANGUAGE_FMT,
 	STR_SETTINGS_RECONNECT,
 	STR_SETTINGS_PAIR,
+	/* The top screen of Settings: the account, the credits, the licence
+	 * (top_about.h). Names stay as they are, outside the tables. */
+	STR_ABOUT_USER_FMT,
+	STR_ABOUT_PLAN_PREMIUM,
+	STR_ABOUT_PLAN_FREE,
+	STR_ABOUT_DEVELOPER,
+	STR_ABOUT_BASED_ON,
+	STR_ABOUT_QR,
+	STR_ABOUT_LICENSE,
+	STR_ABOUT_DISCLAIMER,
 
 	/* Session start-up. */
 	STR_LOGIN_CONNECTING,

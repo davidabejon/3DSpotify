@@ -55,7 +55,8 @@ typedef struct {
 	char host[128];
 	char library_token[1024];
 	/* The canonical username, which the playlist paths name. Not a secret,
-	 * but personal: never logged nor drawn. */
+	 * but personal: never logged, and drawn only on the Settings top
+	 * screen, the user's own (top_about.h). */
 	char username[128];
 	char oauth_token[1280];
 	char refresh_token[512];
@@ -134,6 +135,11 @@ static artwork_state cover_art;
  * so going back to the same detail costs no download. */
 static artwork_state detail_art;
 static char detail_art_url[80];
+/* The account signed in and its picture, for the Settings top screen
+ * (account_start). */
+static about_account account;
+static artwork_state account_art;
+static char account_art_url[80];
 /* The last confirmed query, for the home view's repeat button. */
 static char home_query[SEARCH_QUERY_SIZE];
 /* Who owns the screens: the login view for the session start-up, pairing
@@ -185,6 +191,8 @@ static void wifi_hold(bool hold)
 
 static void frame(void);
 static void switch_tab(app_tab tab);
+static void account_start(const spotify_session *session);
+static void account_poll(void);
 
 static void secure_clear(void *data, size_t len)
 {
@@ -1253,6 +1261,7 @@ static void frame(void)
 	static int drawn_screen = -1;
 	artwork_poll(&cover_art);
 	artwork_poll(&detail_art);
+	artwork_poll(&account_art);
 	power_poll();
 	if (screens_dark) {
 		/* Nobody can see them: drawing would only cost battery. The
@@ -1775,6 +1784,7 @@ static tabs_exit run_tabs(spotify_session *session)
 	/* The service's text may be in any script from here on; the fonts
 	 * have had the whole sign-in to load. */
 	ui_font_wait();
+	account_start(session);
 	tabbar_reset(TAB_HOME);
 	/* In the background: the home tab shows its skeleton meanwhile. */
 	home_feed_start(session->host, session->library_token, session->username);
@@ -1790,6 +1800,7 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		queue_feed_tick(session);
+		account_poll();
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token,
 		             session->username);
@@ -1942,6 +1953,174 @@ static tabs_exit run_tabs(spotify_session *session)
 	}
 }
 
+/* --- Account ------------------------------------------------------------- */
+
+/* The account signed in, for the Settings top screen (top_about.h): the
+ * username from the session; the name and the picture from spclient's
+ * profile view; the plan and the country from the Web API's /v1/me, which
+ * is rate-limited hard and often says no. Fetched once per session in the
+ * background and kept in the config ("profile", "profile_art") so it shows
+ * at once on the next start, and stays when a request fails. */
+#define PROFILE_SEP '\x1f'
+
+typedef struct {
+	char host[128];
+	char library_token[1024];
+	char username[128];
+	char oauth_token[1280];    /* empty: no /v1/me */
+	sp_profile profile;
+	int result;
+	volatile bool done;
+} profile_job;
+static profile_job profile;
+static Thread profile_thread;
+
+static void profile_worker(void *arg)
+{
+	profile_job *job = arg;
+	char error[96];
+	sp_profile view, me;
+	bool got_view = sp_user_profile_view(job->host, job->library_token,
+	                                     job->username, &view, error,
+	                                     sizeof(error)) == 0;
+	bool got_me = job->oauth_token[0] &&
+	              sp_user_profile(job->oauth_token, &me, error,
+	                              sizeof(error), NULL) == 0;
+	/* The profile view first for what both have. */
+	sp_profile *out = &job->profile;
+	if (got_me)
+		*out = me;
+	if (got_view) {
+		if (view.display_name[0])
+			memcpy(out->display_name, view.display_name,
+			       sizeof(out->display_name));
+		if (view.art[0])
+			memcpy(out->art, view.art, sizeof(out->art));
+	}
+	job->result = got_view || got_me ? 0 : -1;
+	secure_clear(job->library_token, sizeof(job->library_token));
+	secure_clear(job->oauth_token, sizeof(job->oauth_token));
+	__sync_synchronize();
+	job->done = true;
+}
+
+/* "name<SEP>product<SEP>country" back into the account. */
+static void account_load_cached(void)
+{
+	char value[192];
+	if (!cfg_get("profile", value, sizeof(value)))
+		return;
+	char *fields[3] = { value, NULL, NULL };
+	for (int i = 1; i < 3; i++) {
+		char *sep = fields[i - 1] ? strchr(fields[i - 1], PROFILE_SEP)
+		                          : NULL;
+		if (sep) {
+			*sep = '\0';
+			fields[i] = sep + 1;
+		}
+	}
+	/* Written by account_poll from fields of these sizes. */
+	snprintf(account.display_name, sizeof(account.display_name), "%.*s",
+	         (int)sizeof(account.display_name) - 1, fields[0]);
+	snprintf(account.product, sizeof(account.product), "%s",
+	         fields[1] ? fields[1] : "");
+	snprintf(account.country, sizeof(account.country), "%s",
+	         fields[2] ? fields[2] : "");
+}
+
+static void account_set_art(const char *url)
+{
+	if (strcmp(url, account_art_url) == 0)
+		return;
+	snprintf(account_art_url, sizeof(account_art_url), "%s", url);
+	artwork_request(&account_art, account_art_url);
+}
+
+/* With the tabs: what the config kept, then /v1/me in the background when
+ * the session's token is still good. */
+static void account_start(const spotify_session *session)
+{
+	unsigned serial = account.serial;
+	memset(&account, 0, sizeof(account));
+	account.serial = serial + 1;
+	snprintf(account.username, sizeof(account.username), "%s",
+	         session->username);
+	account_load_cached();
+	char art[80];
+	account_set_art(cfg_load_profile_art(art, sizeof(art)) ? art : "");
+	top_set_account(&account, &account_art);
+
+	if (profile_thread || !session->username[0])
+		return;
+	memset(&profile, 0, sizeof(profile));
+	snprintf(profile.host, sizeof(profile.host), "%s", session->host);
+	snprintf(profile.library_token, sizeof(profile.library_token), "%s",
+	         session->library_token);
+	snprintf(profile.username, sizeof(profile.username), "%s",
+	         session->username);
+	/* /v1/me only with a token that is still good: renewing it is the
+	 * player's business. */
+	if (session->oauth_token[0] &&
+	    session->oauth_expires_at > time(NULL) + 60)
+		snprintf(profile.oauth_token, sizeof(profile.oauth_token), "%s",
+		         session->oauth_token);
+	profile_thread = threadCreate(profile_worker, &profile, 16 * 1024,
+	                              background_priority(), -2, false);
+	if (!profile_thread)
+		secure_clear(&profile, sizeof(profile));
+}
+
+static void account_join(void)
+{
+	threadJoin(profile_thread, U64_MAX);
+	threadFree(profile_thread);
+	profile_thread = NULL;
+}
+
+/* Once per frame: takes a finished profile in, and keeps it. */
+static void account_poll(void)
+{
+	if (!profile_thread || !profile.done)
+		return;
+	__sync_synchronize();
+	account_join();
+	if (profile.result != 0)
+		return;   /* the cached answer stays */
+	/* Only what came: a field the requests did not bring (/v1/me said
+	 * no) keeps the value kept from before. */
+	const sp_profile *p = &profile.profile;
+	if (p->display_name[0])
+		snprintf(account.display_name, sizeof(account.display_name), "%s",
+		         p->display_name);
+	if (p->product[0])
+		snprintf(account.product, sizeof(account.product), "%s",
+		         p->product);
+	if (p->country[0])
+		snprintf(account.country, sizeof(account.country), "%s",
+		         p->country);
+	account.serial++;
+	char value[192];
+	snprintf(value, sizeof(value), "%s%c%s%c%s", account.display_name,
+	         PROFILE_SEP, account.product, PROFILE_SEP, account.country);
+	cfg_set_async("profile", value);
+	if (p->art[0]) {
+		cfg_set_async("profile_art", p->art);
+		account_set_art(p->art);
+	}
+}
+
+/* Leaving the tabs: the next session may be another account. */
+static void account_stop(void)
+{
+	if (profile_thread)
+		account_join();
+	secure_clear(&profile, sizeof(profile));
+	unsigned serial = account.serial;
+	secure_clear(&account, sizeof(account));
+	account.serial = serial + 1;
+	account_set_art("");
+}
+
 /* Leaving the tabs: no audio, search, details or thumbnails survive the
  * session. */
 static void stop_tabs(void)
@@ -1954,6 +2133,7 @@ static void stop_tabs(void)
 	details_stop();
 	queue_feed_stop();
 	home_feed_stop();
+	account_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();
@@ -2530,6 +2710,7 @@ done:
 	stop_tabs();
 	artwork_close(&cover_art);
 	artwork_close(&detail_art);
+	artwork_close(&account_art);
 	artwork_forget_kept();
 	secure_clear(&session, sizeof(session));
 	secure_clear(&search, sizeof(search));

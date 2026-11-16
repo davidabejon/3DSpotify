@@ -5,6 +5,7 @@
 #include "art_url.h"
 #include "draw.h"
 #include "http3ds.h"
+#include "icons.h"
 #include "image_util.h"
 #include "thumbs.h"
 #include "ui.h"
@@ -301,14 +302,21 @@ bool artwork_dirty(const artwork_state *artwork)
 
 void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow)
 {
+	artwork_draw_or(artwork, box, shadow, ICON_NOTE);
+}
+
+void artwork_draw_or(artwork_state *artwork, ui_rect box, int shadow,
+                     int icon)
+{
 	artwork->dirty = false;
 	if (shadow > 0)
 		ui_fill(ui_rect_offset(box, shadow, shadow), COL_SOMBRA);
 	C2D_Image image = { &artwork->tex, &artwork->subtex };
 	/* Until the cover comes, its thumbnail scaled up. */
 	artwork->drawn_preview = preview(artwork, &image);
-	ui_art(box, artwork->has_texture || artwork->drawn_preview ? &image
-	                                                           : NULL);
+	ui_art_or(box, artwork->has_texture || artwork->drawn_preview ? &image
+	                                                              : NULL,
+	          icon);
 }
 
 void artwork_invalidate(artwork_state *artwork)

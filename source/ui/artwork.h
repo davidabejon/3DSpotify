@@ -74,6 +74,10 @@ bool artwork_dirty(const artwork_state *artwork);
  * arrives (ui_art). Clears the dirty flag: only check artwork_dirty while
  * something draws the cover with it. */
 void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow);
+/* The same with another icon (icons.h) where the image goes until it
+ * comes: the account's picture has a person instead of a note. */
+void artwork_draw_or(artwork_state *artwork, ui_rect box, int shadow,
+                     int icon);
 /* Forces a repaint, for when something else (an applet such as the software
  * keyboard) may have drawn over the top screen. */
 void artwork_invalidate(artwork_state *artwork);

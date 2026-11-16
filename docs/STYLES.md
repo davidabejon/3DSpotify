@@ -90,7 +90,10 @@ Todas las combinaciones de la tabla tienen un contraste ≥ 4.5:1, también en e
   (`romfs/gfx/logo.png`) se dibuja con su propio canal alfa, y el spinner de descarga de la
   pantalla superior va sobre un velo gris `#404040` al ~70 % de opacidad (`SCRIM_*` en
   `theme.h`), 8 px más grande que el spinner por cada lado. En las pantallas de arranque
-  (§7.2) el spinner va sin velo, porque no hay nada debajo que tapar.
+  (§7.2) el spinner va sin velo, porque no hay nada debajo que tapar. La pantalla superior
+  de Ajustes (§7.8) oscurece el fondo y el logotipo con un velo `sombra` al 80 % de opacidad
+  (`ABOUT_VEIL_*` en `theme.h`); el resultado queda más oscuro que `capa`, así que el texto
+  sobre él sigue las combinaciones de `capa` (§2.6).
 - `texto` no se usa como relleno, salvo en el código QR (§5.13): un QR necesita módulos
   oscuros sobre fondo claro para que lo lea una cámara, y es la única superficie blanca de la
   aplicación.
@@ -832,7 +835,38 @@ Error:
   primero a 16 px de la barra de pestañas. Foco con la cruceta (§6.2) y toque (§6.4).
 - Idioma: el botón muestra el idioma actual y lo cambia al pulsarlo, sin burbuja.
 - Volver a conectar y emparejar detienen la reproducción y vuelven a la pantalla de sesión.
-- Superior: título «Ajustes» arriba a la izquierda y el nombre de la app centrado.
+- Superior: el logotipo en su sitio, oscurecido junto con el fondo por el velo de §2.7, y
+  encima, con márgenes de 16 px (`about_layout.h`):
+
+```
+ SUPERIOR
+ ┌──────────────────────────────────────┐
+ │ ┌──────────────────────────────────┐ │ 16..80
+ │ │ [foto] Nombre de la cuenta       │ │ panel `capa`, foto 48×48
+ │ │        Premium - ES              │ │
+ │ │        Usuario: nombre_usuario   │ │
+ │ └──────────────────────────────────┘ │
+ │  Desarrollo   David Abejón           │ 96..176, filas de 20 px
+ │  Basado en    SpotiBacan (ohquebacan)│
+ │  Códigos QR   QR Code generator, ... │
+ │  Licencia     Apache License 2.0     │
+ │ ──────────────────────────────────── │ 180, regla `capa_luz`
+ │ Proyecto no oficial, sin relación    │ 188.., aviso de marca
+ │ con Spotify AB...                    │
+ └──────────────────────────────────────┘
+```
+
+  - Cuenta: panel `capa` (§5.1) con la foto de perfil a 48×48 (el icono de persona mientras
+    no llega) y, centradas en su altura, hasta tres líneas: el nombre visible (`t_cabeza` ·
+    `texto`; sin él, el nombre de usuario), el plan y el país (`t_cuerpo` · `texto_2`) y
+    «Usuario: …» (`t_meta` · `texto_2`) cuando el nombre visible es otro. El nombre y la foto
+    vienen del perfil público de spclient (`user-profile-view`); el plan y el país, de
+    `/v1/me`, que suele rechazar por límite de peticiones. Se piden una vez por sesión y se
+    guardan en la configuración para mostrarse al instante la próxima vez.
+  - Créditos: etiqueta en `t_meta` · `clorofila` y valor en `t_cuerpo` · `texto`, recortado
+    con «...». El autor y lo que nombra `NOTICE`; los nombres propios no se traducen.
+  - Aviso de marca de `NOTICE` en `t_meta` · `texto_2`, en varias líneas.
+  - Se muestra en Ajustes siempre, suene música o no; el spinner de descarga va encima.
 - B vuelve a «Inicio».
 
 ### 7.9 Detalles: navegación común

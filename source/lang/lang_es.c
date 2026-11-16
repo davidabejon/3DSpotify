@@ -65,6 +65,16 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",
 	[STR_SETTINGS_RECONNECT] = "Volver a conectar",
 	[STR_SETTINGS_PAIR] = "Emparejar otra cuenta",
+	[STR_ABOUT_USER_FMT] = "Usuario: %s",
+	[STR_ABOUT_PLAN_PREMIUM] = "Premium",
+	[STR_ABOUT_PLAN_FREE] = "Gratuita",
+	[STR_ABOUT_DEVELOPER] = "Desarrollo",
+	[STR_ABOUT_BASED_ON] = "Basado en",
+	[STR_ABOUT_QR] = "Codigos QR",
+	[STR_ABOUT_LICENSE] = "Licencia",
+	[STR_ABOUT_DISCLAIMER] = "Proyecto no oficial, sin relacion con Spotify "
+	                         "AB ni respaldado por ella. Spotify es una marca "
+	                         "de Spotify AB.",
 
 	/* Inicio de sesion. */
 	[STR_LOGIN_CONNECTING] = "Renovando credenciales y conectando...",

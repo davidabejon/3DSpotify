@@ -45,12 +45,18 @@
 #define COL_BTN_X      THEME_RGB(0x3F, 0xA2, 0xFF)
 #define COL_BTN_Y      THEME_RGB(0x39, 0xD9, 0x7A)
 
-/* La única transparencia (excepción de §2.7): el velo gris tras el spinner
+/* La primera transparencia (excepción de §2.7): el velo gris tras el spinner
  * de descarga, que deja ver ligeramente lo de detrás. No es un COL_: los
  * colores del tema siguen siendo opacos. */
 #define SCRIM_RGB   THEME_RGB(0x40, 0x40, 0x40)
 #define SCRIM_ALPHA 0xB0u
 #define SCRIM_COLOR (((uint32_t)SCRIM_RGB & 0x00FFFFFFu) | (SCRIM_ALPHA << 24))
+
+/* La segunda: el velo `sombra` al 80 % sobre el fondo y el logo de la
+ * pantalla superior de Ajustes (§7.8). Deja el fondo más oscuro que `capa`,
+ * así que encima valen las combinaciones de texto de `capa` (§2.6). */
+#define ABOUT_VEIL_ALPHA 0xCCu
+#define ABOUT_VEIL_COLOR (((uint32_t)COL_SOMBRA & 0x00FFFFFFu) | (ABOUT_VEIL_ALPHA << 24))
 
 /* Espaciado y forma (px) */
 enum {

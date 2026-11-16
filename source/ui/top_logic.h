@@ -1,6 +1,7 @@
 /* What the top screen shows with the tabs (feature_plan.md, phase 0): the
  * logo while no music plays, else the "now playing" card, or the big
- * cover on the Playing tab. Pure C with no 3DS headers, tested in
+ * cover on the Playing tab; on Settings, always the account and the
+ * credits. Pure C with no 3DS headers, tested in
  * tests/native_logic_test.c. */
 #ifndef TOP_LOGIC_H
 #define TOP_LOGIC_H
@@ -15,7 +16,10 @@ typedef enum {
 	TOP_NOW_CARD,
 	TOP_ART_BIG,
 	/* The detail on top of the active tab: its card (plan 3.5). */
-	TOP_DETAIL
+	TOP_DETAIL,
+	/* Settings: the account, the credits and the licence over the
+	 * darkened logo (top_about.h, STYLES.md 7.8). */
+	TOP_ABOUT
 } top_mode;
 
 /* Music counts as playing while loading, playing (paused too) and once
@@ -35,6 +39,8 @@ static inline top_mode top_mode_for(app_tab tab, player_phase phase,
 {
 	if (detail_on)
 		return TOP_DETAIL;
+	if (tab == TAB_SETTINGS)
+		return TOP_ABOUT;
 	if (!top_music_on(phase))
 		return TOP_LOGO;
 	return tab == TAB_PLAYER ? TOP_ART_BIG : TOP_NOW_CARD;

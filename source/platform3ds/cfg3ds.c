@@ -11,7 +11,9 @@
 /* The app uses one data directory regardless of how it was launched. */
 #define APP_DATA_DIR "sdmc:/3ds/3DSpotify/"
 #define APP_CONFIG_PATH APP_DATA_DIR CFG_NAME
-#define CFG_MAX_KEYS 8
+/* The refresh token and its scope, the language, the shuffle, the volume,
+ * the recent searches, the profile and its picture, with room to grow. */
+#define CFG_MAX_KEYS 16
 #define CFG_VAL_MAX 512
 
 static char path[320];
@@ -102,8 +104,10 @@ static bool set_unlocked(const char *key, const char *value)
 	if (!key || !value || !value[0])
 		return false;
 
-	/* Collect the existing pairs, replacing the one being set. */
-	char keys[CFG_MAX_KEYS][32], vals[CFG_MAX_KEYS][CFG_VAL_MAX];
+	/* Collect the existing pairs, replacing the one being set. Static,
+	 * under file_lock: 8 KB is too much for the stack of every thread
+	 * that may write. */
+	static char keys[CFG_MAX_KEYS][32], vals[CFG_MAX_KEYS][CFG_VAL_MAX];
 	int n = 0;
 	FILE *f = fopen(cfg_path(), "r");
 	if (f) {
@@ -293,7 +297,7 @@ void cfg_set_async(const char *key, const char *value)
 		/* Callers are the main thread: no race to start it. */
 		LightEvent_Init(&writer_wake, RESET_ONESHOT);
 		writer_stop = false;
-		/* set_unlocked keeps the whole file on its stack. */
+		/* Room for set_unlocked's line buffer and stdio. */
 		writer = threadCreate(writer_main, NULL, 16 * 1024,
 		                      writer_priority(), -2, false);
 	}
