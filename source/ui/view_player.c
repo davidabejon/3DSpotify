@@ -2,6 +2,7 @@
 
 #include "draw.h"
 #include "icons.h"
+#include "list_logic.h"
 #include "player_logic.h"
 #include "press_logic.h"
 #include "theme.h"
@@ -29,7 +30,7 @@ static const u32 glyph_colors[GLYPH_COUNT] = { COL_BTN_A, COL_BTN_B };
 static C2D_TextBuf static_buf, track_buf, time_buf, scratch_buf;
 
 static C2D_Text idle_text, stage_text, finished_text, volume_label;
-static C2D_Text failed_title, failed_body;
+static C2D_Text failed_title, failed_body, seek_wait_text;
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_pause, hint_play, hint_retry, hint_back;
 static C2D_Text title_text, artist_text, album_text, queue_text;
@@ -57,6 +58,9 @@ static touch_track touch = { -1 };
 static player_action pending = PLAYER_ACTION_NONE;
 static const press_state *pending_press;
 static int loader_frames;
+/* The bubble (5.9) after touching the progress bar before the whole track
+ * has downloaded: frames shown, or -1. */
+static int bubble_frames = -1;
 /* The stylus on a bar: dragging the progress bar's handle (the track moves
  * when it lifts), or the volume (it follows at once); or still down on a
  * bar that went away (a new track), spent until it lifts. */
@@ -77,6 +81,7 @@ typedef struct {
 	bool link[PLAYER_LINK_COUNT];
 	bool glyph[GLYPH_COUNT];
 	int loader_step;
+	bool bubble;
 } player_look;
 static player_look drawn;
 static bool drawn_valid;
@@ -119,6 +124,7 @@ void view_player_enter(void)
 	pending = PLAYER_ACTION_NONE;
 	pending_press = NULL;
 	drag = DRAG_NONE;
+	bubble_frames = -1;
 	drawn_valid = false;
 }
 
@@ -174,6 +180,9 @@ static void parse_static(void)
 	ui_rect notice = player_notice_rect();
 	parse_fitted(&failed_title, static_buf, tr(STR_PLAYER_FAILED_TITLE),
 	             TXT_CABEZA, notice.w - 2 * SP_3 - ICON_S - SP_1);
+	parse_fitted(&seek_wait_text, static_buf, tr(STR_PLAYER_SEEK_WAIT),
+	             TXT_CUERPO,
+	             SCREEN_BOTTOM_W - 2 * SP_2 - 2 * SP_3 - ICON_S - SP_1);
 	parse(&failed_body, static_buf,
 	      info.error[0] ? info.error : tr(STR_PLAYER_INTERRUPTED));
 	for (int i = 0; i < GLYPH_COUNT; i++)
@@ -307,6 +316,7 @@ static player_look current_look(void)
 		.volume = info.volume_pct,
 		.loader_step = info.phase == PLAYER_PHASE_LOADING
 		               ? loader_frames / LOADER_STEP : 0,
+		.bubble = bubble_frames >= 0,
 	};
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		look.control[i] = press_down(&press_control[i]);
@@ -324,7 +334,8 @@ static bool same_look(const player_look *a, const player_look *b)
 	    a->stage != b->stage || a->paused != b->paused ||
 	    a->elapsed != b->elapsed || a->duration != b->duration ||
 	    a->download != b->download || a->volume != b->volume ||
-	    a->seek != b->seek || a->loader_step != b->loader_step)
+	    a->seek != b->seek || a->loader_step != b->loader_step ||
+	    a->bubble != b->bubble)
 		return false;
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		if (a->control[i] != b->control[i])
@@ -349,6 +360,9 @@ static void tick(void)
 		press_tick(&press_glyph[i]);
 	if (info.phase == PLAYER_PHASE_LOADING)
 		loader_frames++;
+	/* 5.9: shown BUBBLE_SHOW frames, gone without a transition. */
+	if (bubble_frames >= 0 && ++bubble_frames >= BUBBLE_SHOW)
+		bubble_frames = -1;
 }
 
 /* --- Input ------------------------------------------------------------ */
@@ -480,16 +494,22 @@ static player_action handle_bars(u32 down, u32 held, bool *owned)
 			return PLAYER_ACTION_NONE;
 		touchPosition pos;
 		hidTouchRead(&pos);
-		if (info.seekable &&
-		    ui_rect_contains(player_seek_zone(volume_label_w), pos.px,
-		                     pos.py))
+		bool on_seek = ui_rect_contains(player_seek_zone(volume_label_w),
+		                                pos.px, pos.py);
+		if (on_seek && info.seekable) {
 			drag = DRAG_SEEK;
-		else if (has_controls() &&
+		} else if (on_seek && info.phase == PLAYER_PHASE_PLAYING) {
+			/* Still downloading: the track cannot move yet. The press
+			 * is spent and a bubble says to wait for 100%. */
+			drag = DRAG_SPENT;
+			bubble_frames = 0;
+		} else if (has_controls() &&
 		         ui_rect_contains(player_volume_zone(volume_label_w),
-		                          pos.px, pos.py))
+		                          pos.px, pos.py)) {
 			drag = DRAG_VOLUME;
-		else
+		} else {
 			return PLAYER_ACTION_NONE;
+		}
 		drag_value = -1;
 	}
 	*owned = true;
@@ -745,6 +765,11 @@ void view_player_draw_bottom(void)
 		break;
 	}
 	draw_hints(&look);
+	if (look.bubble) {
+		C2D_Image icon = icon_image(ICON_ERROR);
+		ui_bubble(list_bubble_rect(ui_bubble_content_width(&seek_wait_text)),
+		          &icon, &seek_wait_text);
+	}
 
 	drawn = look;
 	drawn_valid = true;
