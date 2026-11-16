@@ -191,6 +191,7 @@ void artwork_request(artwork_state *artwork, const char *url)
 	if (!url)
 		url = "";
 	snprintf(artwork->want_url, sizeof(artwork->want_url), "%s", url);
+	artwork->preview_url[0] = '\0';
 	if (artwork->has_texture && url[0] &&
 	    strcmp(artwork->shown_url, url) == 0) {
 		/* Already showing it: only a download for another cover, if
@@ -286,10 +287,20 @@ void artwork_poll(artwork_state *artwork)
 	artwork->dirty = true;
 }
 
-/* Without the cover, its thumbnail when the pool has it (thumbs_find). */
+void artwork_set_preview(artwork_state *artwork, const char *url)
+{
+	snprintf(artwork->preview_url, sizeof(artwork->preview_url), "%s",
+	         url ? url : "");
+	artwork->dirty = true;
+}
+
+/* Without the cover, its thumbnail when the pool has it (thumbs_find):
+ * the cover's own URL's, else the smaller copy's. */
 static bool preview(const artwork_state *artwork, C2D_Image *out)
 {
-	return !artwork->has_texture && thumbs_find(artwork->want_url, out);
+	return !artwork->has_texture &&
+	       (thumbs_find(artwork->want_url, out) ||
+	        thumbs_find(artwork->preview_url, out));
 }
 
 bool artwork_dirty(const artwork_state *artwork)

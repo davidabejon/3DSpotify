@@ -642,6 +642,7 @@ static void player_play(spotify_session *session, int pos)
 	player.phase = PLAYER_PHASE_LOADING;
 	player.stage = STR_PLAYER_ART_LOADING;
 	artwork_request(&cover_art, playback_queue[index].art_large);
+	artwork_set_preview(&cover_art, playback_queue[index].art_small);
 }
 
 /* Starts the track's preparation thread. Not while a skipped track's is
@@ -1251,6 +1252,8 @@ static const detail_doc *top_detail_sync(void)
 	if (doc && strcmp(doc->art, detail_art_url) != 0) {
 		snprintf(detail_art_url, sizeof(detail_art_url), "%s", doc->art);
 		artwork_request(&detail_art, detail_art_url);
+		/* The list's thumbnail of it, scaled up, until it comes. */
+		artwork_set_preview(&detail_art, doc->art_small);
 	}
 	return doc;
 }

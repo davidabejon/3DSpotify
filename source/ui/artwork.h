@@ -49,6 +49,9 @@ typedef struct {
 	 * thumbnail shows instead (thumbs_find). Whether it was drawn, for
 	 * artwork_dirty. */
 	char want_url[128];
+	/* Another URL for the same picture, smaller (artwork_set_preview):
+	 * its thumbnail stands in too. */
+	char preview_url[128];
 	/* The cover the texture holds, while has_texture. */
 	char shown_url[128];
 	bool drawn_preview;
@@ -64,6 +67,10 @@ void artwork_request(artwork_state *artwork, const char *url);
 bool artwork_pending(const artwork_state *artwork);
 /* Uploads a finished download. Call once per frame on the main thread. */
 void artwork_poll(artwork_state *artwork);
+/* After artwork_request: `url` is the same picture, small (a track's
+ * art_small), whose thumbnail, if the pool has it, shows until the cover
+ * arrives. artwork_request forgets it. */
+void artwork_set_preview(artwork_state *artwork, const char *url);
 /* True when the cover needs a frame: it changed, or its thumbnail came or
  * went. */
 bool artwork_dirty(const artwork_state *artwork);

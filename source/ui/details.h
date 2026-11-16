@@ -52,6 +52,9 @@ typedef struct {
 	char title[128];              /* track, album, artist or playlist */
 	char subtitle[128];           /* the artist of a track or album */
 	char art[80];                 /* cover or portrait, large */
+	/* The same picture, small: the list's thumbnail of it, shown scaled
+	 * up until `art` arrives (artwork_set_preview). May be empty. */
+	char art_small[80];
 	char label[64];
 	int  year, album_type, total_tracks;
 	/* DETAIL_TRACK: a copy of the list it came from; the track shown is

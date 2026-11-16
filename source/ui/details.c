@@ -194,6 +194,7 @@ static void apply(detail_doc *d)
 		snprintf(d->title, sizeof(d->title), "%s", a->name);
 		snprintf(d->subtitle, sizeof(d->subtitle), "%s", a->artist);
 		snprintf(d->art, sizeof(d->art), "%s", a->art_large);
+		snprintf(d->art_small, sizeof(d->art_small), "%s", a->art_small);
 		snprintf(d->label, sizeof(d->label), "%s", a->label);
 		d->year = a->year;
 		d->album_type = a->type;
@@ -213,6 +214,7 @@ static void apply(detail_doc *d)
 		const sp_artist *a = &job.artist;
 		snprintf(d->title, sizeof(d->title), "%s", a->name);
 		snprintf(d->art, sizeof(d->art), "%s", a->art_large);
+		snprintf(d->art_small, sizeof(d->art_small), "%s", a->art_small);
 		d->total_tracks = a->track_count;
 	}
 	d->count = job.count;
@@ -371,6 +373,7 @@ void details_open_track(app_tab tab, const sp_track *list, int count,
 	snprintf(d->title, sizeof(d->title), "%s", t->name);
 	snprintf(d->subtitle, sizeof(d->subtitle), "%s", t->artist);
 	snprintf(d->art, sizeof(d->art), "%s", t->art_large);
+	snprintf(d->art_small, sizeof(d->art_small), "%s", t->art_small);
 	d->year = t->year;
 }
 
