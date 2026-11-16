@@ -47,6 +47,10 @@ bool thumbs_poll(void);
 
 /* The thumbnail of track `index`, when it is ready. */
 bool thumbs_image(int index, C2D_Image *out);
+/* A ready thumbnail of `url`, whichever client the pool holds it for: the
+ * top screen shows it, scaled up, while the full cover loads. Valid for
+ * the frame; main thread only. */
+bool thumbs_find(const char *url, C2D_Image *out);
 
 /* --- Clients ------------------------------------------------------------
  *

@@ -266,7 +266,8 @@ class BuildTests(unittest.TestCase):
         # Every new string in both languages; Spanish without accents.
         keys = ("STR_HOME_RECENT", "STR_HOME_YOUR_PLAYLISTS",
                 "STR_HOME_SHOW_MORE", "STR_HOME_EMPTY",
-                "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE")
+                "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE",
+                "STR_LIKED_SONGS", "STR_RESUME_FMT")
         for name in ("lang_en.c", "lang_es.c"):
             table = (lang_dir / name).read_text(encoding="utf-8")
             for key in keys:
@@ -275,6 +276,16 @@ class BuildTests(unittest.TestCase):
                 if name == "lang_es.c":
                     self.assertIsNone(re.search(r"[áéíóúñÁÉÍÓÚÑ]",
                                                 match.group(1)), key)
+        # The focused tile previews on the top screen through the detail
+        # card, and Liked Songs leads the tiles with its heart.
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        sync = app[app.index("static const detail_doc *top_detail_sync("):]
+        self.assertIn("view_home_preview()", sync[:sync.index("\n}\n")])
+        self.assertIn("SP_LIKED_URI", feed)
+        self.assertIn("ICON_HEART", (ui_dir / "tile_grid.c").read_text(
+            encoding="utf-8"))
+        self.assertIn('"HEART"', (ui_dir / "gen_icons.py").read_text(
+            encoding="utf-8"))
         self.assertNotIn("STR_HOME_LAST_SEARCH",
                          (lang_dir / "lang.h").read_text(encoding="utf-8"))
         # The style guide and both READMEs describe it.
@@ -411,9 +422,9 @@ class BuildTests(unittest.TestCase):
         self.assertIn("view_results_cancelling()", loop)
         self.assertIn("(down & KEY_B)", loop)
         self.assertIn("if (down & KEY_START)", loop)
-        # The list follows the queue the player moves through, and errors
+        # A result stands alone: a radio from it is the queue, and errors
         # can be retried.
-        self.assertIn("view_results_focus(index)", app)
+        self.assertIn("queue_play_radio(session, &search.tracks[index]);", app)
         self.assertIn("case RESULTS_ACTION_RETRY:", app)
         self.assertIn("search_error_advice(search.error)", app)
 
@@ -454,7 +465,7 @@ class BuildTests(unittest.TestCase):
         play = app[app.index("static void play_from_results("):
                    app.index("static void switch_tab(app_tab tab)\n{")]
         self.assertLess(play.index("view_results_allow_thumbs(false);"),
-                        play.index("player_play(session, index);"))
+                        play.index("queue_play_radio(session, "))
         loop = app[app.index("static tabs_exit run_tabs("):
                    app.index("static void stop_tabs(")]
         # Paused while the track prepares, not for the whole download.
@@ -526,7 +537,7 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("STR_KEYS_SELECTION_", source)
         play = app[app.index("static void play_from_results("):
                    app.index("static void switch_tab(app_tab tab)\n{")]
-        self.assertIn("player_play(session, index);", play)
+        self.assertIn("queue_play_radio(session, ", play)
         self.assertIn("switch_tab(TAB_PLAYER);", play)
         self.assertNotIn("hidKeysDown", play)
         # Dragging (6.9) and the scroll indicator (5.11).
@@ -605,8 +616,20 @@ class BuildTests(unittest.TestCase):
         play = app[app.index("static void play_from_detail("):
                    app.index("static void open_result_detail(")]
         self.assertLess(play.index("view_results_allow_thumbs(false);"),
-                        play.index("player_play(session, doc->selected);"))
-        self.assertIn("queue_from_results = false;", play)
+                        play.index("queue_play_list(session, doc);"))
+        # A track detail opened from a single track starts a radio.
+        self.assertIn("if (doc->kind == DETAIL_TRACK && doc->single)\n"
+                      "\t\t\tqueue_play_radio(session, pick);", play)
+        # The queue's loads run beside the player and stop with the
+        # session, before the TLS abort is lifted.
+        loop = app[app.index("static tabs_exit run_tabs("):
+                   app.index("static void stop_tabs(")]
+        self.assertLess(loop.index("player_pump();"),
+                        loop.index("queue_feed_tick(session);"))
+        stop = app[app.index("static void stop_tabs(void)"):
+                   app.index("/* --- Session start-up")]
+        self.assertLess(stop.index("queue_feed_stop();"),
+                        stop.index("tls_set_abort(false);"))
         # Albums and artists: the track's buttons open them on the same
         # tab, X on their rows opens a track detail with the list, and a
         # failed load can be retried.
@@ -747,12 +770,17 @@ class BuildTests(unittest.TestCase):
         )
         skip = app[app.index("static void player_skip("):
                    app.index("static void player_hold(")]
-        self.assertIn("playback_queue_step(player.index, playback_queue_count",
-                      skip)
-        logic = (build.ROOT / "ui" / "player_logic.h").read_text(
+        self.assertIn("queue_step(queue_pos, playback_queue_count", skip)
+        logic = (build.ROOT / "ui" / "queue_logic.h").read_text(
             encoding="utf-8"
         )
         self.assertIn("next >= 0 && next < count", logic)
+        # A finished track hands over to the next one by itself; a failed
+        # one does not.
+        pump = app[app.index("static void player_pump(void)"):
+                   app.index("static void player_toggle(")]
+        self.assertIn("player.phase == PLAYER_PHASE_FINISHED", pump)
+        self.assertNotIn("PLAYER_PHASE_FAILED", pump)
         cleanup = app[app.index("static void player_release(void)"):
                       app.index("static void player_fail(")]
         # The download is stopped (or abandoned) before the decoder and the
@@ -1413,6 +1441,38 @@ class BuildTests(unittest.TestCase):
                     tree = build.mbedtls_tree(True)
         self.assertEqual((tree / "include" / "mbedtls" / "ssl.h").read_bytes(),
                          b"test")
+
+    def test_bars_seek_and_set_volume_by_touch(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        view = (build.ROOT / "ui" / "view_player.c").read_text(
+            encoding="utf-8")
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8")
+        # The view turns a drag into actions; main acts on them.
+        self.assertIn("return PLAYER_ACTION_SEEK;", view)
+        self.assertIn("return PLAYER_ACTION_VOLUME_SET;", view)
+        self.assertIn("player_seek(view_player_value());", app)
+        # Only with the whole file downloaded.
+        self.assertIn("dl.stream.dl_done &&", app)
+        seek_fn = app[app.index("static void player_seek("):
+                      app.index("/* One step of download")]
+        self.assertIn("!dl.stream.dl_done", seek_fn)
+        # A seek drops the queued audio, flushes the decoder and sends the
+        # download where it is needed.
+        seek = app[app.index("static void seek_to_byte("):
+                   app.index("static size_t seek_guess(")]
+        self.assertIn("ndspChnWaveBufClear(0);", seek)
+        self.assertIn("stb_vorbis_flush_pushdata(s->decoder);", seek)
+        self.assertIn("track_stream_seek(&dl.stream, at);", seek)
+        # The decoder only reads bytes that are there.
+        pump = app[app.index("static pump_step pump_once(void)"):
+                   app.index("static void player_pump(void)")]
+        self.assertNotIn("dl.stream.downloaded", pump)
+        self.assertIn("track_stream_available(&dl.stream, s->source_pos)",
+                      pump)
+        # The download never writes over a chunk that is already whole.
+        self.assertIn("if (span_blocked(ts)) {", track)
+        self.assertIn("stream_next_missing(ts->chunk_done", track)
 
 
 if __name__ == "__main__":

@@ -175,6 +175,14 @@ Si la cuenta no tiene historial, la etiqueta dice **«Tus playlists»** y la car
 propio orden. El DJ de Spotify no aparece: es una sesión en vivo de otro servicio, sin lista
 de canciones que este cliente pueda reproducir.
 
+- La primera tesela es siempre **Canciones que te gustan** (un corazón donde iría la
+  portada), de la más reciente a la más antigua, cargadas de 50 en 50 como una playlist.
+- Con una tesela resaltada, la pantalla superior muestra una vista previa: portada,
+  nombre, número de canciones y lo último que sonó en ella. La portada se carga cuando el
+  resaltado se queda quieto un momento.
+- Las playlists se abren siempre por su primera canción; lo último que sonó solo se
+  muestra en la vista previa (a menudo ni siquiera está en la playlist: la reproducción
+  automática sigue después del final).
 - Muévete entre teselas con la cruceta; bajando desde la última fila llegas a **«Mostrar
   más»**, que lista hasta 24 playlists en una rejilla con desplazamiento. **B** vuelve a las
   seis.
@@ -213,7 +221,7 @@ Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** mues
 
 **Gestos táctiles:**
 - **Tocar una fila:** selecciona la canción; la fila se resalta.
-- **Tocar nuevamente:** reproduce la canción al momento con el resto de resultados como cola.
+- **Tocar nuevamente:** reproduce la canción al momento, seguida de una radio de canciones parecidas.
 - **Arrastrar verticalmente:** desplaza la lista; las filas pueden quedar cortadas por la barra de pestañas y la barra de botones.
 - **Arrastrar más de 8 píxeles desde donde tocaste:** el arrastre se confirma; el toque de la fila se cancela.
 
@@ -221,11 +229,10 @@ Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** mues
 - Antes de la primera búsqueda, la pestaña ofrece el botón **«Buscar canciones»**.
 - Si la búsqueda falla, pulsa **A** (o toca el botón de la pantalla) para reintentar.
 - Pulsa **B** para cancelar una búsqueda pendiente cuando termine la petición de red activa.
-- Mientras suena la cola de estos resultados, la fila resaltada sigue a la canción que suena.
 
 ### Reproducción
 
-La canción elegida se reproduce localmente con el resto de resultados como cola, y sigue sonando aunque cambies de pestaña.
+La canción elegida se reproduce localmente y sigue sonando aunque cambies de pestaña. Al terminar, empieza sola la siguiente de la cola.
 - La **pantalla superior** muestra la carátula en grande (con el marcador de la nota hasta que llega).
 - La **pantalla inferior** muestra el título, el artista, el álbum y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
 - Toca el **título**, el **artista** o el **álbum** para abrir su detalle ([Detalles](#detalles)). Funcionan mientras la pista carga, suena o ha terminado; al pulsarlos, el texto pasa a color lima y se subraya.
@@ -234,10 +241,23 @@ La canción elegida se reproduce localmente con el resto de resultados como cola
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda; con la pista terminada, la vuelve a empezar; con un error, reintenta
 - Izquierda/derecha, o los botones de la pantalla — cambia de pista
 - Arriba/abajo — ajusta el volumen local
+- **Tocar la barra de volumen** — fija el volumen; arrastra para ajustarlo
+- **Arrastrar la barra de progreso** — el tirador y el tiempo siguen al dedo; la pista salta
+  ahí al levantar el lápiz. Solo con la canción entera descargada (la capa de descarga de la
+  barra llena).
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Búsqueda sin cortar la música
 - **START** — detiene y sale
 
-La cola sigue el orden de los resultados y no envuelve en sus extremos: en ellos, el botón anterior o siguiente aparece deshabilitado. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
+**La cola** depende de dónde eliges la canción:
+- **Una canción suelta** (un resultado de búsqueda, o su detalle): la canción y 25
+  recomendaciones de canciones parecidas, que llegan en segundo plano cuando ya suena.
+  Cuando quedan 2, llegan 25 más, sin repetir, así que la radio no se acaba.
+- **Un álbum, artista o playlist:** la lista desde la canción elegida, en orden o en
+  aleatorio (<span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+  en la lista, ver [Detalles](#detalles)). Una playlist sigue cargando las páginas que su
+  detalle aún no había cargado, hasta 500 canciones. Al acabar la lista, se para.
+
+La cola no envuelve en sus extremos: en ellos, el botón anterior o siguiente aparece deshabilitado. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
 
 ### Detalles
 
@@ -245,14 +265,20 @@ Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su 
 
 - **Canción:** botones **Reproducir**, **Artista: …** y **Album: …** (arriba/abajo y
   **A**, o tocando). Reproducir empieza la canción con la lista de la que salió como
-  cola.
+  cola; si es una canción de los resultados de búsqueda, o de la radio que suena, una
+  radio a partir de ella.
 - **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares, con
   miniaturas. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
   siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
   «Cargando…»), hasta 500. Los episodios y archivos locales se omiten; la pantalla
   superior indica cuántas de cuántas hay cargadas.
   **A** (o tocar la fila resaltada) reproduce desde esa canción con la
-  lista como cola; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> abre el detalle de la canción.
+  lista como cola; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> abre el detalle de la canción;
+  <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+  activa o desactiva el aleatorio. Es un solo ajuste para todas las listas y se recuerda
+  entre sesiones; la barra de botones lo muestra («Aleatorio» o «En orden»). En aleatorio,
+  la canción elegida suena primero y el resto le sigue en orden aleatorio. Cambiarlo
+  mientras suena una lista reordena la cola al momento, sin cortar la canción.
 - **B** vuelve un nivel atrás; sin detalles abiertos, hace lo de siempre en esa
   pestaña. **L/R** cambian de pestaña y conservan los detalles de cada una donde los
   dejaste.

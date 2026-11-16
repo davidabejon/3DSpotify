@@ -7,6 +7,7 @@
 #include "tabbar.h"
 #include "theme.h"
 #include "track_list.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -39,6 +40,11 @@ static results_mode mode = MODE_IDLE;
 static track_list list;
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
+/* Nothing searched yet: the recent searches, and the focus among the
+ * search button (0) and them (1 + their index). */
+static recent_list recent;
+static int idle_focus;
+static int recent_choice;
 
 /* Parsed text. `stale`: content or language changed. */
 static C2D_TextBuf static_buf, scratch_buf;
@@ -51,12 +57,15 @@ static C2D_Text button_text;        /* empty: new search; error: retry */
 static C2D_Text notice_title_text;
 static C2D_Text notice_body_text;
 static C2D_Text bubble_text;
+static C2D_Text recent_label_text;
+static C2D_Text recent_text[RECENT_MAX];
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_play, hint_detail, hint_back, hint_search, hint_cancel,
                 hint_retry;
 
 /* Interaction (STYLES.md 6). `touch` is the button's, outside the list. */
 static press_state press_button;
+static press_state press_recent[RECENT_MAX];
 static press_state press_glyph[GLYPH_COUNT];
 static touch_track touch = { -1 };
 static int bubble_frames = -1;
@@ -68,6 +77,8 @@ typedef struct {
 	results_mode mode;
 	track_list_look list;
 	bool button;
+	int idle_focus;
+	bool recent[RECENT_MAX];
 	bool glyph[GLYPH_COUNT];
 	bool bubble;
 	int loader_step;
@@ -105,6 +116,8 @@ static void reset_interaction(void)
 {
 	track_list_reset_input(&list);
 	press_reset(&press_button);
+	for (int i = 0; i < RECENT_MAX; i++)
+		press_reset(&press_recent[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_reset(&press_glyph[i]);
 	touch.target = -1;
@@ -128,7 +141,24 @@ void view_results_idle(void)
 	mode = MODE_IDLE;
 	track_list_set(&list, NULL, 0, 0);
 	cancelling = false;
+	idle_focus = 0;
 	reset_interaction();
+}
+
+void view_results_set_recent(const recent_list *r)
+{
+	recent = *r;
+	if (recent.count < 0 || recent.count > RECENT_MAX)
+		recent.count = 0;
+	if (idle_focus > recent.count)
+		idle_focus = recent.count;
+	stale = true;
+}
+
+const char *view_results_recent_query(void)
+{
+	return recent_choice >= 0 && recent_choice < recent.count
+	       ? recent.items[recent_choice] : "";
 }
 
 void view_results_enter(void)
@@ -175,17 +205,11 @@ int view_results_selected(void)
 	return list.selected;
 }
 
-void view_results_focus(int index)
-{
-	if (mode == MODE_LIST && index >= 0 && index < list.count)
-		track_list_focus(&list, index);
-}
-
 /* --- Text -------------------------------------------------------------- */
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 
@@ -212,6 +236,12 @@ static void parse_static(void)
 	             TXT_CABEZA, notice.w - 2 * SP_3 - ICON_S - SP_1);
 	parse(&notice_body_text, static_buf, tr(advice));
 	parse(&bubble_text, static_buf, tr(STR_LANG_NAME));
+	parse(&recent_label_text, static_buf, tr(STR_RESULTS_RECENT));
+	for (int i = 0; i < recent.count; i++) {
+		ui_rect row = list_recent_rect(i);
+		parse_fitted(&recent_text[i], static_buf, recent.items[i],
+		             TXT_CUERPO, row.w - 3 * SP_2 - ICON_S);
+	}
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		parse(&letter_text[i], static_buf, glyph_letters[i]);
 	parse(&hint_play, static_buf, tr(STR_HINT_PLAY));
@@ -240,11 +270,14 @@ static results_look current_look(void)
 		.mode = mode,
 		.list = track_list_get_look(&list),
 		.button = press_down(&press_button),
+		.idle_focus = idle_focus,
 		.bubble = bubble_frames >= 0,
 		.loader_step = mode == MODE_SEARCHING
 		               ? loader_frames / LOADER_STEP : 0,
 		.cancelling = cancelling,
 	};
+	for (int i = 0; i < RECENT_MAX; i++)
+		look.recent[i] = press_down(&press_recent[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		look.glyph[i] = press_down(&press_glyph[i]);
 	return look;
@@ -253,10 +286,13 @@ static results_look current_look(void)
 static bool same_look(const results_look *a, const results_look *b)
 {
 	if (a->mode != b->mode || !track_list_same_look(&a->list, &b->list) ||
-	    a->button != b->button ||
+	    a->button != b->button || a->idle_focus != b->idle_focus ||
 	    a->bubble != b->bubble || a->loader_step != b->loader_step ||
 	    a->cancelling != b->cancelling)
 		return false;
+	for (int i = 0; i < RECENT_MAX; i++)
+		if (a->recent[i] != b->recent[i])
+			return false;
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		if (a->glyph[i] != b->glyph[i])
 			return false;
@@ -267,6 +303,8 @@ static void tick(void)
 {
 	track_list_tick(&list);
 	press_tick(&press_button);
+	for (int i = 0; i < RECENT_MAX; i++)
+		press_tick(&press_recent[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_tick(&press_glyph[i]);
 	if (bubble_frames >= 0 && ++bubble_frames >= BUBBLE_SHOW)
@@ -294,10 +332,25 @@ static results_action button_action(void)
 	                          : RESULTS_ACTION_NEW_SEARCH;
 }
 
+/* Nothing searched yet, with searches to suggest. */
+static bool has_recent(void)
+{
+	return mode == MODE_IDLE && recent.count > 0;
+}
+
 static ui_rect button_rect(void)
 {
-	return list_action_rect(ui_text_width(&button_text, TXT_CUERPO),
-	                        mode == MODE_EMPTY || mode == MODE_IDLE);
+	float width = ui_text_width(&button_text, TXT_CUERPO);
+	if (has_recent())
+		return list_idle_button_rect(width);
+	return list_action_rect(width, mode == MODE_EMPTY || mode == MODE_IDLE);
+}
+
+/* What B does: leave the results for the screen before them, or, from
+ * that screen, leave the tab. */
+static results_action back_action(void)
+{
+	return mode == MODE_IDLE ? RESULTS_ACTION_BACK : RESULTS_ACTION_CLOSE;
 }
 
 static void release_keys(u32 up)
@@ -305,8 +358,11 @@ static void release_keys(u32 up)
 	if (up & KEY_A) {
 		press_end(&press_glyph[GLYPH_A]);
 		track_list_release(&list);
-		if (touch.target < 0)
+		if (touch.target < 0) {
 			press_end(&press_button);
+			for (int i = 0; i < RECENT_MAX; i++)
+				press_end(&press_recent[i]);
+		}
 	}
 	if (up & KEY_B)
 		press_end(&press_glyph[GLYPH_B]);
@@ -334,22 +390,34 @@ static bool handle_touch(u32 down, u32 held, u32 up)
 		hidTouchRead(&pos);
 		if (has_button() && ui_rect_contains(button_rect(), pos.px, pos.py))
 			hit = CONTROL_BUTTON;
+		for (int i = 0; has_recent() && i < recent.count; i++)
+			if (ui_rect_contains(list_recent_rect(i), pos.px, pos.py))
+				hit = i;
 	}
 	int control;
 	touch_event event = touch_track_update(&touch, (down & KEY_TOUCH) != 0,
 	                                       (held & KEY_TOUCH) != 0,
 	                                       (up & KEY_TOUCH) != 0, hit,
 	                                       &control);
+	press_state *press = control >= 0 && control < RECENT_MAX
+	                     ? &press_recent[control] : &press_button;
 	switch (event) {
 	case TOUCH_PRESS:
-		press_begin(&press_button);
+		press_begin(press);
 		break;
 	case TOUCH_CANCEL:
-		press_cancel(&press_button);
+		press_cancel(press);
 		break;
 	case TOUCH_ACTIVATE:
-		press_end(&press_button);
-		queue(button_action(), &press_button);
+		press_end(press);
+		if (press == &press_button) {
+			idle_focus = 0;
+			queue(button_action(), press);
+		} else {
+			idle_focus = control + 1;
+			recent_choice = control;
+			queue(RESULTS_ACTION_RECENT, press);
+		}
 		break;
 	case TOUCH_NONE:
 		break;
@@ -410,18 +478,28 @@ results_action view_results_update(u32 down)
 
 	if (mode == MODE_LIST)
 		track_list_navigate(&list, down);
+	if (has_recent()) {
+		if ((down & KEY_UP) && idle_focus > 0)
+			idle_focus--;
+		else if ((down & KEY_DOWN) && idle_focus < recent.count)
+			idle_focus++;
+	}
 
 	if (down & KEY_A) {
 		if (mode == MODE_LIST) {
 			press_key(GLYPH_A, RESULTS_ACTION_OPEN,
 			          track_list_focused_press(&list));
+		} else if (has_recent() && idle_focus > 0) {
+			recent_choice = idle_focus - 1;
+			press_key(GLYPH_A, RESULTS_ACTION_RECENT,
+			          &press_recent[recent_choice]);
 		} else {
 			press_key(GLYPH_A, button_action(), &press_button);
 		}
 	} else if ((down & KEY_X) && mode == MODE_LIST) {
 		press_key(GLYPH_X, RESULTS_ACTION_DETAIL, NULL);
 	} else if (down & KEY_B) {
-		press_key(GLYPH_B, RESULTS_ACTION_BACK, NULL);
+		press_key(GLYPH_B, back_action(), NULL);
 	} else if (down & KEY_Y) {
 		press_key(GLYPH_Y, RESULTS_ACTION_NEW_SEARCH, NULL);
 	} else if (down & KEY_SELECT) {
@@ -484,6 +562,25 @@ static void draw_bar(const results_look *look)
 	ui_button_bar(list_hints_rect(), hints, n);
 }
 
+/* The recent searches under the button: a label, then one row each with
+ * the search icon, the focused one in the list's focused style. */
+static void draw_recent(const results_look *look)
+{
+	ui_text(&recent_label_text, SP_2 + SP_1, list_recent_label_cy(),
+	        TXT_META, COL_TEXTO_2);
+	C2D_Image icon = icon_image(ICON_SEARCH);
+	for (int i = 0; i < recent.count; i++) {
+		u32 ink, meta_ink;
+		ui_rect row = ui_item_frame(list_recent_rect(i),
+		                            look->idle_focus == i + 1,
+		                            look->recent[i], &ink, &meta_ink);
+		int cy = row.y + row.h / 2;
+		ui_icon(&icon, row.x + SP_2, cy - ICON_S / 2, meta_ink);
+		ui_text(&recent_text[i], row.x + 2 * SP_2 + ICON_S, cy, TXT_CUERPO,
+		        ink);
+	}
+}
+
 void view_results_draw_bottom(void)
 {
 	ensure_parsed();
@@ -498,6 +595,11 @@ void view_results_draw_bottom(void)
 		track_list_draw(&list, &look.list);
 		break;
 	case MODE_IDLE:
+		if (has_recent()) {
+			draw_recent(&look);
+			break;
+		}
+		/* fall through */
 	case MODE_EMPTY: {
 		/* A single message: centred (3.3). */
 		ui_rect notice = list_notice_rect();
@@ -514,7 +616,10 @@ void view_results_draw_bottom(void)
 	}
 
 	if (has_button()) {
-		ui_control_look button = { .pressed = look.button, .focused = true };
+		ui_control_look button = {
+			.pressed = look.button,
+			.focused = !has_recent() || look.idle_focus == 0
+		};
 		ui_button(button_rect(), UI_BUTTON_PRIMARY, button, &button_text,
 		          NULL);
 	}

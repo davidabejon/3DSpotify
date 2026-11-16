@@ -4,6 +4,7 @@
 #include "image_util.h"
 #include "lang.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -121,7 +122,7 @@ static void draw_fallback(int cx, int cy)
 		return;
 	if (!parsed || parsed_lang != lang_get()) {
 		C2D_TextBufClear(text_buf);
-		C2D_TextParse(&name_text, text_buf, tr(STR_APP_NAME));
+		ui_parse(&name_text, text_buf, tr(STR_APP_NAME));
 		C2D_TextOptimize(&name_text);
 		parsed_lang = lang_get();
 		parsed = true;

@@ -168,6 +168,12 @@ first, then the rest of your playlist folder. If the account has no play history
 reads **"Your playlists"** and the folder keeps its own order. Spotify's DJ is left out: it
 is a live session of another service, with no track list this client can play.
 
+- The first tile is always **Liked Songs** (a heart where the cover goes), newest first,
+  loaded 50 at a time like a playlist.
+- With a tile highlighted, the top screen previews it: cover, name, number of tracks and
+  the last song played in it. The cover loads once the highlight rests for a moment.
+- Playlists always open at their first song; the last song played is only shown on the
+  preview (often it is not even in the playlist: autoplay goes on past the end).
 - Move between tiles with the D-pad; down from the last row reaches **"Show more"**, which
   lists up to 24 playlists in a scrolling grid. **B** goes back to the six.
 - Tap a tile to highlight it; tap it again (or press **A**) to open the playlist
@@ -205,7 +211,7 @@ Results show four songs at a time. The **bottom screen** shows the list with thu
 
 **Touch gestures:**
 - **Tap a row:** selects the song; the row highlights.
-- **Tap again:** plays immediately with the remaining results as the queue.
+- **Tap again:** plays it immediately, followed by a radio of similar songs.
 - **Drag vertically:** scrolls the list; rows can be cut off by the tab bar and the button bar.
 - **Drag beyond 8 pixels from the starting point:** commits to scrolling; the row tap is cancelled.
 
@@ -213,11 +219,10 @@ Results show four songs at a time. The **bottom screen** shows the list with thu
 - Before the first search, the tab offers a **"Search songs"** button.
 - If the search fails, press **A** (or tap the on-screen button) to retry.
 - Press **B** to cancel a pending search after the current network request finishes.
-- While the queue from these results plays, the highlighted row follows the playing track.
 
 ### Playing
 
-The chosen track plays locally with the rest of the results as the queue, and keeps playing when you switch tabs.
+The chosen track plays locally and keeps playing when you switch tabs. When it ends, the next one in the queue starts by itself.
 - The **top screen** shows the album artwork large (a note placeholder until it arrives).
 - The **bottom screen** shows the title, artist, album and place in the queue ("3 of 24"), the previous, play/pause and next buttons, the time, the progress bar (with the download ahead of it) and the volume bar.
 - Tap the **title**, the **artist** or the **album** to open its detail ([Details](#details)). They work while the track loads, plays or has finished; the text turns lime with an underline while pressed.
@@ -226,10 +231,23 @@ The chosen track plays locally with the rest of the results as the queue, and ke
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pauses/resumes; once the track has finished, plays it again; after an error, retries
 - Left/right, or the on-screen buttons — changes track
 - Up/down — adjusts local volume
+- **Touch the volume bar** — sets the volume; drag to adjust it
+- **Drag the progress bar** — the handle and the time follow; the track jumps there when you
+  lift the stylus. Only once the whole track is downloaded (the download layer of the bar is
+  full).
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to the Search tab without stopping the music
 - **START** — stops and exits
 
-The queue follows search-result order and does not wrap at either end: there, the previous or next button shows as disabled. Complete playback, artwork,
+**The queue** depends on where you picked the song:
+- **A single song** (a search result, or its detail): the song and 25 recommendations of
+  similar songs, which arrive in the background once it plays. When 2 are left, 25 more
+  come, without repeats, so the radio never runs out.
+- **An album, artist or playlist:** the list from the chosen song, in order or shuffled
+  (<span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+  in the list, see [Details](#details)). A playlist keeps loading the pages its detail had
+  not loaded yet, up to 500 songs. Playback stops at the end of the list.
+
+The queue does not wrap at either end: there, the previous or next button shows as disabled. Complete playback, artwork,
 and controls still need validation on real hardware. The probes remain available as separate targets.
 
 ### Details
@@ -237,14 +255,20 @@ and controls still need validation on real hardware. The probes remain available
 From a song you can open its detail, and from there its artist and album:
 
 - **Song:** **Play**, **Artist: …** and **Album: …** buttons (up/down and **A**, or
-  tap). Play starts the song with the list it came from as the queue.
+  tap). Play starts the song with the list it came from as the queue; for a song from
+  the search results, or from the radio playing, a radio from it.
 - **Album:** its tracks, numbered. **Artist:** their popular tracks, with thumbnails.
   **Playlist:** its tracks, with thumbnails, loaded 50 at a time: the next page comes by
   itself as you near the end of the list (a "Loading…" bubble shows meanwhile), up to 500.
   Episodes and local files are left out; the top screen says how many of how many are
   loaded.
   **A** (or tapping the highlighted row) plays from that song with the list as the
-  queue; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> opens the song's detail.
+  queue; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> opens the song's detail;
+  <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+  switches shuffle on or off. Shuffle is one setting for every list and is remembered
+  between sessions; the button bar shows it ("Shuffle" or "In order"). Shuffled, the
+  chosen song plays first and the rest follow in random order. Switching it while a list
+  plays reorders the queue at once, without cutting the song.
 - **B** goes back one level; with no detail left, it does what it always does on that
   tab. **L/R** change tab and keep each tab's details where you left them.
 - Album, artist and playlist details load in the background: **B** cancels, and if

@@ -6,8 +6,8 @@
  * STR_HINT_ entries label one action each in the button bar (docs/STYLES.md
  * 5.6), next to the button's glyph; the limit is the width in pixels.
  * Capitals only start a sentence (STYLES.md 3.3).
- * The tables stay ASCII (no accents in Spanish) until that restriction is
- * lifted on purpose; citro2d itself could draw them.
+ * The tables are UTF-8, accents and all: ui_parse (ui_font.h) draws any
+ * character the console's fonts have. No control characters.
  *
  * This module has no 3DS dependencies so the host tests can link it.
  */
@@ -43,6 +43,8 @@ typedef enum {
 	STR_HOME_FAILED_TITLE,
 	STR_HINT_OPEN,
 	STR_PLAYLIST_TYPE,
+	STR_LIKED_SONGS,
+	STR_RESUME_FMT,
 
 	/* Results view. */
 	STR_RESULTS_SEARCHING,
@@ -59,6 +61,12 @@ typedef enum {
 
 	/* Detail views (docs/plan_vistas_detalle.md). */
 	STR_HINT_DETAIL,
+	/* Y in a list: the order its queue plays in, as it is now, and the
+	 * bubble when it changes. */
+	STR_HINT_SHUFFLE_ON,
+	STR_HINT_SHUFFLE_OFF,
+	STR_SHUFFLE_ON,
+	STR_SHUFFLE_OFF,
 	STR_DETAIL_PLAY,
 	STR_DETAIL_ARTIST_FMT,
 	STR_DETAIL_ALBUM_FMT,
@@ -83,6 +91,16 @@ typedef enum {
 	STR_SETTINGS_LANGUAGE_FMT,
 	STR_SETTINGS_RECONNECT,
 	STR_SETTINGS_PAIR,
+	/* The top screen of Settings: the account, the credits, the licence
+	 * (top_about.h). Names stay as they are, outside the tables. */
+	STR_ABOUT_USER_FMT,
+	STR_ABOUT_PLAN_PREMIUM,
+	STR_ABOUT_PLAN_FREE,
+	STR_ABOUT_DEVELOPER,
+	STR_ABOUT_BASED_ON,
+	STR_ABOUT_QR,
+	STR_ABOUT_LICENSE,
+	STR_ABOUT_DISCLAIMER,
 
 	/* Session start-up. */
 	STR_LOGIN_CONNECTING,
@@ -145,6 +163,7 @@ typedef enum {
 	STR_ERR_DETAIL_THREAD,
 	STR_RESULTS_EMPTY,
 	STR_RESULTS_IDLE,
+	STR_RESULTS_RECENT,
 
 	/* Playback. */
 	STR_PLAYER_ART_LOADING,

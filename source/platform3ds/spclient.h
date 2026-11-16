@@ -208,7 +208,20 @@ int  sp_rootlist_s(http_session *sess, const char *token, const char *username,
  * left out. Returns how many URIs were kept, or -1. */
 int  sp_recent_playlists_s(http_session *sess, const char *token,
                            const char *username, char uris[][SP_URI_MAX],
-                           int max, char *err, size_t errlen);
+                           char (*last)[SP_URI_MAX], int max,
+                           char *err, size_t errlen);
+
+/* Liked Songs as URIs, newest first, from context-resolve over a session:
+ * the whole collection in one JSON page (probe_meta step 16; the
+ * collection service pages, but mixes saved albums in and keeps no
+ * recency order). Up to `max` track URIs are kept; `total` (may be NULL)
+ * gets how many the answer held. Returns how many were kept, or -1. */
+int  sp_liked_s(http_session *sess, const char *token, const char *username,
+                char (*uris)[SP_URI_MAX], int max, int *total,
+                char *err, size_t errlen);
+
+/* The URI the home tab and the details use for Liked Songs. */
+#define SP_LIKED_URI "spotify:collection:tracks"
 
 /* One playlist's header and `max_tracks` items from item `from` (at most
  * SP_PLAYLIST_PAGE; 0 asks for the header alone, a few hundred bytes). The
@@ -245,15 +258,31 @@ int  sp_storage_resolve(const char *host, const char *token,
 const sp_file *sp_pick_file(const sp_track *t);
 const char *sp_format_name(int format);
 
-/* The user's profile image URL, from the Web API's /v1/me (the one service
- * that lives on api.spotify.com rather than spclient). Only i.scdn.co URLs
- * are accepted: the hero art buffer is 80 chars and the CA bundle only
- * covers Spotify's own CDN, so a lookaside avatar is reported as "none"
- * rather than half-supported. Returns 0, or -1 when the account has no
- * usable image. On HTTP 429, `retry_after` (when given) receives the
- * server's Retry-After seconds so the caller waits on its clock. */
-int  sp_user_image(const char *token, char *url, size_t urllen,
-                   char *err, size_t errlen, int *retry_after);
+/* The signed-in account as the Web API's /v1/me describes it (the one
+ * service that lives on api.spotify.com rather than spclient). Any field
+ * may be empty. `art` is only ever an i.scdn.co URL: the CA bundle covers
+ * Spotify's own CDN alone, so another host counts as no picture. */
+typedef struct {
+	char display_name[128];
+	char product[16];     /* "premium", "free", "open"... */
+	char country[8];      /* ISO 3166-1 alpha-2 */
+	char art[80];
+} sp_profile;
+
+/* The account's public profile from spclient's user-profile-view, with
+ * the same token as the rest of spclient: the name and the picture, never
+ * the plan or the country. Far less rate-limited than /v1/me. Returns 0,
+ * or -1 with `err` set. */
+int  sp_user_profile_view(const char *host, const char *token,
+                          const char *username, sp_profile *out, char *err,
+                          size_t errlen);
+
+/* Fills `out` from /v1/me. Returns 0, or -1 with `err` set. On HTTP 429,
+ * `retry_after` (when given) receives the server's Retry-After seconds:
+ * the shared client id is rate-limited hard there, so callers keep the
+ * last answer rather than ask again soon. */
+int  sp_user_profile(const char *token, sp_profile *out, char *err,
+                     size_t errlen, int *retry_after);
 
 /* Adds or removes a track in the user's library ("Me gusta"): PUT/DELETE
  * /v1/me/tracks?ids=<id>. Needs the user-library-modify scope, which tokens

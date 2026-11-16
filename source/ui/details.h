@@ -52,6 +52,9 @@ typedef struct {
 	char title[128];              /* track, album, artist or playlist */
 	char subtitle[128];           /* the artist of a track or album */
 	char art[80];                 /* cover or portrait, large */
+	/* The same picture, small: the list's thumbnail of it, shown scaled
+	 * up until `art` arrives (artwork_set_preview). May be empty. */
+	char art_small[80];
 	char label[64];
 	int  year, album_type, total_tracks;
 	/* DETAIL_TRACK: a copy of the list it came from; the track shown is
@@ -61,6 +64,10 @@ typedef struct {
 	 * the document is in use. */
 	sp_track *tracks;
 	int  count, capacity;
+	/* DETAIL_TRACK: opened from a single track rather than from a list (a
+	 * search result, or the radio playing): "Play" starts a radio from it
+	 * instead of queueing the list. */
+	bool single;
 	sp_track inline_tracks[DETAIL_MAX_TRACKS];
 	sp_track *owned;
 	/* DETAIL_PLAYLIST paging: the first item not read yet; whether items
@@ -69,6 +76,8 @@ typedef struct {
 	int  next_from;
 	bool more, loading_more;
 	uint64_t retry_at;
+	/* A line for the card: where it was left ("title - artist"), or "". */
+	char resume[128];
 	/* The view's state, so going back finds the list as it was left. */
 	int  selected, first;
 	char error[192];
@@ -84,13 +93,15 @@ bool details_active(app_tab tab);
 detail_doc *details_top(app_tab tab);
 
 /* Opens a track detail on `tab`'s stack from list[index]. The list is
- * copied (at most DETAIL_MAX_TRACKS, keeping `index` inside). */
+ * copied (at most DETAIL_MAX_TRACKS, keeping `index` inside). `single`:
+ * the track stands alone, and the list is only where it was found. */
 void details_open_track(app_tab tab, const sp_track *list, int count,
-                        int index);
+                        int index, bool single);
 /* Opens an album, artist or playlist by URI, in DETAIL_LOADING;
- * details_poll starts the load. Ignored for an empty URI. A playlist
- * shows its first DETAIL_MAX_TRACKS tracks, episodes and local files left
- * out; total_tracks counts every item it holds. */
+ * details_poll starts the load. Ignored for an empty URI. A playlist loads
+ * page by page (details_follow), episodes and local files left out;
+ * total_tracks counts every item it holds. SP_LIKED_URI opens Liked Songs
+ * the same way. A playlist opens at its first track. */
 void details_open_album(app_tab tab, const char *uri);
 void details_open_artist(app_tab tab, const char *uri);
 void details_open_playlist(app_tab tab, const char *uri);
@@ -110,8 +121,10 @@ void details_clear(app_tab tab);
 /* Once per frame, next to search_poll: reaps a finished load into its
  * document and starts the next one waiting, `active` tab first. The
  * credentials are copied into the worker's job, which clears them when it
- * is reaped. True when a document on top of a stack changed. */
-bool details_poll(app_tab active, const char *host, const char *token);
+ * is reaped. True when a document on top of a stack changed. `username`
+ * names the account's Liked Songs. */
+bool details_poll(app_tab active, const char *host, const char *token,
+                  const char *username);
 
 /* Leaving the tabs: stops the load and waits for it (call with the TLS
  * abort on, before thumbs_wait), then empties both stacks. */

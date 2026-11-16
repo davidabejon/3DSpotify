@@ -107,8 +107,17 @@ void sp_parse_playlist(const uint8_t *body, size_t len, const char *uri,
 /* The /recently-played/v3 JSON: {"playContexts":[{"uri":"spotify:...",
  * "lastPlayedTime":..., "lastPlayedTrackUri":...}, ...]}. Keeps the
  * spotify:playlist: contexts in the order sent (most recent first),
- * dropping repeats. Returns how many, at most `max`. */
+ * dropping repeats. `last` (may be NULL) gets each one's lastPlayedTrackUri,
+ * or an empty string. Returns how many, at most `max`. */
 int  sp_parse_recent_playlists(const char *json, size_t len,
-                               char uris[][SP_URI_MAX], int max);
+                               char uris[][SP_URI_MAX],
+                               char (*last)[SP_URI_MAX], int max);
+
+/* A context-resolve answer for the collection: {"pages":[{"tracks":[{"uri":
+ * "spotify:track:...","metadata":{...}}, ...]}], ...}, newest first. Keeps
+ * the track URIs in order, at most `max`; `total` (may be NULL) counts them
+ * all. */
+int  sp_parse_liked(const char *json, size_t len, char (*uris)[SP_URI_MAX],
+                    int max, int *total);
 
 #endif

@@ -1,5 +1,6 @@
 #include "view_home.h"
 
+#include "art_cache.h"
 #include "draw.h"
 #include "home_feed.h"
 #include "home_logic.h"
@@ -9,6 +10,7 @@
 #include "press_logic.h"
 #include "theme.h"
 #include "tile_grid.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -71,6 +73,13 @@ static const press_state *pending_press;
  * press to be seen like the actions. */
 static void (*pending_step)(void);
 static char selected_uri[SP_URI_MAX];
+
+/* The top screen's card for the focused tile: which item it is about, and
+ * how long the focus has rested there. A document of its own, only its
+ * header used; its serial changes with the item, so the card re-parses. */
+static detail_doc preview;
+static int preview_index = -1;
+static int preview_still;
 
 typedef struct {
 	home_mode mode;
@@ -163,6 +172,8 @@ static void sync(void)
 	tile_grid_set(&more, items, item_count, 0);
 	focus = HOME_FOCUS_TILES;
 	six.has_focus = true;
+	/* Another list: the card follows from scratch. */
+	preview_index = -1;
 	reset_interaction();
 }
 
@@ -177,11 +188,59 @@ const char *view_home_selected_uri(void)
 	return selected_uri;
 }
 
+/* The tile with the focus, or -1: on the six or "Show more", not on the
+ * button and not while loading. */
+static int focused_item(void)
+{
+	if (mode == MODE_MORE)
+		return more.count > 0 ? more.selected : -1;
+	if (mode == MODE_SIX && focus == HOME_FOCUS_TILES)
+		return six.count > 0 ? six.selected : -1;
+	return -1;
+}
+
+/* Follows the focus once per frame. */
+static void follow_preview(void)
+{
+	int index = focused_item();
+	if (index != preview_index) {
+		preview_index = index;
+		preview_still = 0;
+		if (index >= 0 && index < item_count) {
+			const sp_playlist_ref *r = &items[index];
+			unsigned serial = preview.serial + 1;
+			memset(&preview, 0, sizeof(preview));
+			preview.serial = serial;
+			preview.kind = DETAIL_PLAYLIST;
+			preview.state = DETAIL_READY;
+			snprintf(preview.uri, sizeof(preview.uri), "%s", r->uri);
+			snprintf(preview.title, sizeof(preview.title), "%s", r->name);
+			/* The length the folder reports, as "N tracks". */
+			preview.count = preview.total_tracks = r->length;
+			snprintf(preview.resume, sizeof(preview.resume), "%s",
+			         home_feed_resume_text(index));
+			/* Already here: no download to hold back. */
+			if (art_cache_has(r->art))
+				snprintf(preview.art, sizeof(preview.art), "%s", r->art);
+		}
+		return;
+	}
+	if (index >= 0 && index < item_count &&
+	    ++preview_still == HOME_PREVIEW_DELAY)
+		snprintf(preview.art, sizeof(preview.art), "%s", items[index].art);
+}
+
+const detail_doc *view_home_preview(void)
+{
+	return preview_index >= 0 && preview_index < item_count ? &preview
+	                                                       : NULL;
+}
+
 /* --- Text -------------------------------------------------------------- */
 
 static void parse(C2D_Text *text, const char *string)
 {
-	C2D_TextParse(text, text_buf, string);
+	ui_parse(text, text_buf, string);
 	C2D_TextOptimize(text);
 }
 
@@ -443,6 +502,7 @@ home_action view_home_update(u32 down)
 	if (grid)
 		tile_grid_thumbs_frame(grid);
 
+	follow_preview();
 	if (pending != HOME_ACTION_NONE || pending_step) {
 		if (!press_shown(pending_press))
 			return HOME_ACTION_NONE;

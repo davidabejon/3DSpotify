@@ -1,0 +1,230 @@
+/* Text as the fonts can draw it (ui_font.h): accents written apart from
+ * their letter, as some titles come (a decomposed "e" + U+0301), are put
+ * back into the one character the fonts have ("é"), and so are Korean
+ * syllables written as separate jamo. Marks that compose with nothing are
+ * dropped rather than drawn as a box. Pure C with no 3DS headers, tested
+ * in tests/native_logic_test.c. */
+#ifndef TEXT_COMPOSE_H
+#define TEXT_COMPOSE_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+/* Decodes one UTF-8 sequence at `s` into `*cp`; returns its length, 1 with
+ * U+FFFD for a malformed one, 0 at the end of the string. */
+static inline size_t text_utf8_decode(const char *s, uint32_t *cp)
+{
+	const unsigned char *p = (const unsigned char *)s;
+	if (!p[0]) {
+		*cp = 0;
+		return 0;
+	}
+	if (p[0] < 0x80) {
+		*cp = p[0];
+		return 1;
+	}
+	size_t len = p[0] >= 0xF0 && p[0] < 0xF5 ? 4
+	           : p[0] >= 0xE0 ? 3
+	           : p[0] >= 0xC2 && p[0] < 0xE0 ? 2 : 0;
+	uint32_t value = len == 4 ? p[0] & 0x07u : len == 3 ? p[0] & 0x0Fu
+	                                                    : p[0] & 0x1Fu;
+	for (size_t i = 1; i < len; i++) {
+		if ((p[i] & 0xC0) != 0x80)
+			len = 0;
+		else
+			value = (value << 6) | (p[i] & 0x3Fu);
+		if (!len)
+			break;
+	}
+	/* Overlong forms, surrogates and values past U+10FFFF. */
+	if (len == 0 || (len == 3 && value < 0x800) ||
+	    (len == 4 && (value < 0x10000 || value > 0x10FFFF)) ||
+	    (value >= 0xD800 && value <= 0xDFFF)) {
+		*cp = 0xFFFD;
+		return 1;
+	}
+	*cp = value;
+	return len;
+}
+
+/* Encodes `cp` into `out` (room for 4 bytes); returns the length. */
+static inline size_t text_utf8_encode(uint32_t cp, char *out)
+{
+	unsigned char *p = (unsigned char *)out;
+	if (cp < 0x80) {
+		p[0] = (unsigned char)cp;
+		return 1;
+	}
+	if (cp < 0x800) {
+		p[0] = (unsigned char)(0xC0 | (cp >> 6));
+		p[1] = (unsigned char)(0x80 | (cp & 0x3F));
+		return 2;
+	}
+	if (cp < 0x10000) {
+		p[0] = (unsigned char)(0xE0 | (cp >> 12));
+		p[1] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
+		p[2] = (unsigned char)(0x80 | (cp & 0x3F));
+		return 3;
+	}
+	p[0] = (unsigned char)(0xF0 | (cp >> 18));
+	p[1] = (unsigned char)(0x80 | ((cp >> 12) & 0x3F));
+	p[2] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
+	p[3] = (unsigned char)(0x80 | (cp & 0x3F));
+	return 4;
+}
+
+/* An ASCII letter and a combining mark that Unicode composes into one
+ * Latin character (Latin-1 Supplement and Latin Extended-A/B), generated
+ * from Python's unicodedata. */
+typedef struct {
+	char base;
+	uint16_t mark;
+	uint16_t composed;
+} text_pair;
+
+static const text_pair TEXT_LATIN_PAIRS[] = {
+	{ 'A', 0x300, 0x00C0 }, { 'E', 0x300, 0x00C8 }, { 'I', 0x300, 0x00CC },
+	{ 'N', 0x300, 0x01F8 }, { 'O', 0x300, 0x00D2 }, { 'U', 0x300, 0x00D9 },
+	{ 'a', 0x300, 0x00E0 }, { 'e', 0x300, 0x00E8 }, { 'i', 0x300, 0x00EC },
+	{ 'n', 0x300, 0x01F9 }, { 'o', 0x300, 0x00F2 }, { 'u', 0x300, 0x00F9 },
+	{ 'A', 0x301, 0x00C1 }, { 'C', 0x301, 0x0106 }, { 'E', 0x301, 0x00C9 },
+	{ 'G', 0x301, 0x01F4 }, { 'I', 0x301, 0x00CD }, { 'L', 0x301, 0x0139 },
+	{ 'N', 0x301, 0x0143 }, { 'O', 0x301, 0x00D3 }, { 'R', 0x301, 0x0154 },
+	{ 'S', 0x301, 0x015A }, { 'U', 0x301, 0x00DA }, { 'Y', 0x301, 0x00DD },
+	{ 'Z', 0x301, 0x0179 }, { 'a', 0x301, 0x00E1 }, { 'c', 0x301, 0x0107 },
+	{ 'e', 0x301, 0x00E9 }, { 'g', 0x301, 0x01F5 }, { 'i', 0x301, 0x00ED },
+	{ 'l', 0x301, 0x013A }, { 'n', 0x301, 0x0144 }, { 'o', 0x301, 0x00F3 },
+	{ 'r', 0x301, 0x0155 }, { 's', 0x301, 0x015B }, { 'u', 0x301, 0x00FA },
+	{ 'y', 0x301, 0x00FD }, { 'z', 0x301, 0x017A }, { 'A', 0x302, 0x00C2 },
+	{ 'C', 0x302, 0x0108 }, { 'E', 0x302, 0x00CA }, { 'G', 0x302, 0x011C },
+	{ 'H', 0x302, 0x0124 }, { 'I', 0x302, 0x00CE }, { 'J', 0x302, 0x0134 },
+	{ 'O', 0x302, 0x00D4 }, { 'S', 0x302, 0x015C }, { 'U', 0x302, 0x00DB },
+	{ 'W', 0x302, 0x0174 }, { 'Y', 0x302, 0x0176 }, { 'a', 0x302, 0x00E2 },
+	{ 'c', 0x302, 0x0109 }, { 'e', 0x302, 0x00EA }, { 'g', 0x302, 0x011D },
+	{ 'h', 0x302, 0x0125 }, { 'i', 0x302, 0x00EE }, { 'j', 0x302, 0x0135 },
+	{ 'o', 0x302, 0x00F4 }, { 's', 0x302, 0x015D }, { 'u', 0x302, 0x00FB },
+	{ 'w', 0x302, 0x0175 }, { 'y', 0x302, 0x0177 }, { 'A', 0x303, 0x00C3 },
+	{ 'I', 0x303, 0x0128 }, { 'N', 0x303, 0x00D1 }, { 'O', 0x303, 0x00D5 },
+	{ 'U', 0x303, 0x0168 }, { 'a', 0x303, 0x00E3 }, { 'i', 0x303, 0x0129 },
+	{ 'n', 0x303, 0x00F1 }, { 'o', 0x303, 0x00F5 }, { 'u', 0x303, 0x0169 },
+	{ 'A', 0x304, 0x0100 }, { 'E', 0x304, 0x0112 }, { 'I', 0x304, 0x012A },
+	{ 'O', 0x304, 0x014C }, { 'U', 0x304, 0x016A }, { 'Y', 0x304, 0x0232 },
+	{ 'a', 0x304, 0x0101 }, { 'e', 0x304, 0x0113 }, { 'i', 0x304, 0x012B },
+	{ 'o', 0x304, 0x014D }, { 'u', 0x304, 0x016B }, { 'y', 0x304, 0x0233 },
+	{ 'A', 0x306, 0x0102 }, { 'E', 0x306, 0x0114 }, { 'G', 0x306, 0x011E },
+	{ 'I', 0x306, 0x012C }, { 'O', 0x306, 0x014E }, { 'U', 0x306, 0x016C },
+	{ 'a', 0x306, 0x0103 }, { 'e', 0x306, 0x0115 }, { 'g', 0x306, 0x011F },
+	{ 'i', 0x306, 0x012D }, { 'o', 0x306, 0x014F }, { 'u', 0x306, 0x016D },
+	{ 'A', 0x307, 0x0226 }, { 'C', 0x307, 0x010A }, { 'E', 0x307, 0x0116 },
+	{ 'G', 0x307, 0x0120 }, { 'I', 0x307, 0x0130 }, { 'O', 0x307, 0x022E },
+	{ 'Z', 0x307, 0x017B }, { 'a', 0x307, 0x0227 }, { 'c', 0x307, 0x010B },
+	{ 'e', 0x307, 0x0117 }, { 'g', 0x307, 0x0121 }, { 'o', 0x307, 0x022F },
+	{ 'z', 0x307, 0x017C }, { 'A', 0x308, 0x00C4 }, { 'E', 0x308, 0x00CB },
+	{ 'I', 0x308, 0x00CF }, { 'O', 0x308, 0x00D6 }, { 'U', 0x308, 0x00DC },
+	{ 'Y', 0x308, 0x0178 }, { 'a', 0x308, 0x00E4 }, { 'e', 0x308, 0x00EB },
+	{ 'i', 0x308, 0x00EF }, { 'o', 0x308, 0x00F6 }, { 'u', 0x308, 0x00FC },
+	{ 'y', 0x308, 0x00FF }, { 'A', 0x30A, 0x00C5 }, { 'U', 0x30A, 0x016E },
+	{ 'a', 0x30A, 0x00E5 }, { 'u', 0x30A, 0x016F }, { 'O', 0x30B, 0x0150 },
+	{ 'U', 0x30B, 0x0170 }, { 'o', 0x30B, 0x0151 }, { 'u', 0x30B, 0x0171 },
+	{ 'A', 0x30C, 0x01CD }, { 'C', 0x30C, 0x010C }, { 'D', 0x30C, 0x010E },
+	{ 'E', 0x30C, 0x011A }, { 'G', 0x30C, 0x01E6 }, { 'H', 0x30C, 0x021E },
+	{ 'I', 0x30C, 0x01CF }, { 'K', 0x30C, 0x01E8 }, { 'L', 0x30C, 0x013D },
+	{ 'N', 0x30C, 0x0147 }, { 'O', 0x30C, 0x01D1 }, { 'R', 0x30C, 0x0158 },
+	{ 'S', 0x30C, 0x0160 }, { 'T', 0x30C, 0x0164 }, { 'U', 0x30C, 0x01D3 },
+	{ 'Z', 0x30C, 0x017D }, { 'a', 0x30C, 0x01CE }, { 'c', 0x30C, 0x010D },
+	{ 'd', 0x30C, 0x010F }, { 'e', 0x30C, 0x011B }, { 'g', 0x30C, 0x01E7 },
+	{ 'h', 0x30C, 0x021F }, { 'i', 0x30C, 0x01D0 }, { 'j', 0x30C, 0x01F0 },
+	{ 'k', 0x30C, 0x01E9 }, { 'l', 0x30C, 0x013E }, { 'n', 0x30C, 0x0148 },
+	{ 'o', 0x30C, 0x01D2 }, { 'r', 0x30C, 0x0159 }, { 's', 0x30C, 0x0161 },
+	{ 't', 0x30C, 0x0165 }, { 'u', 0x30C, 0x01D4 }, { 'z', 0x30C, 0x017E },
+	{ 'A', 0x30F, 0x0200 }, { 'E', 0x30F, 0x0204 }, { 'I', 0x30F, 0x0208 },
+	{ 'O', 0x30F, 0x020C }, { 'R', 0x30F, 0x0210 }, { 'U', 0x30F, 0x0214 },
+	{ 'a', 0x30F, 0x0201 }, { 'e', 0x30F, 0x0205 }, { 'i', 0x30F, 0x0209 },
+	{ 'o', 0x30F, 0x020D }, { 'r', 0x30F, 0x0211 }, { 'u', 0x30F, 0x0215 },
+	{ 'A', 0x311, 0x0202 }, { 'E', 0x311, 0x0206 }, { 'I', 0x311, 0x020A },
+	{ 'O', 0x311, 0x020E }, { 'R', 0x311, 0x0212 }, { 'U', 0x311, 0x0216 },
+	{ 'a', 0x311, 0x0203 }, { 'e', 0x311, 0x0207 }, { 'i', 0x311, 0x020B },
+	{ 'o', 0x311, 0x020F }, { 'r', 0x311, 0x0213 }, { 'u', 0x311, 0x0217 },
+	{ 'O', 0x31B, 0x01A0 }, { 'U', 0x31B, 0x01AF }, { 'o', 0x31B, 0x01A1 },
+	{ 'u', 0x31B, 0x01B0 }, { 'S', 0x326, 0x0218 }, { 'T', 0x326, 0x021A },
+	{ 's', 0x326, 0x0219 }, { 't', 0x326, 0x021B }, { 'C', 0x327, 0x00C7 },
+	{ 'E', 0x327, 0x0228 }, { 'G', 0x327, 0x0122 }, { 'K', 0x327, 0x0136 },
+	{ 'L', 0x327, 0x013B }, { 'N', 0x327, 0x0145 }, { 'R', 0x327, 0x0156 },
+	{ 'S', 0x327, 0x015E }, { 'T', 0x327, 0x0162 }, { 'c', 0x327, 0x00E7 },
+	{ 'e', 0x327, 0x0229 }, { 'g', 0x327, 0x0123 }, { 'k', 0x327, 0x0137 },
+	{ 'l', 0x327, 0x013C }, { 'n', 0x327, 0x0146 }, { 'r', 0x327, 0x0157 },
+	{ 's', 0x327, 0x015F }, { 't', 0x327, 0x0163 }, { 'A', 0x328, 0x0104 },
+	{ 'E', 0x328, 0x0118 }, { 'I', 0x328, 0x012E }, { 'O', 0x328, 0x01EA },
+	{ 'U', 0x328, 0x0172 }, { 'a', 0x328, 0x0105 }, { 'e', 0x328, 0x0119 },
+	{ 'i', 0x328, 0x012F }, { 'o', 0x328, 0x01EB }, { 'u', 0x328, 0x0173 },
+};
+
+/* Marks drawn over a letter (Combining Diacritical Marks), and the
+ * variation selectors, which only pick a glyph style: neither is drawn on
+ * its own. */
+static inline int text_is_mark(uint32_t cp)
+{
+	return (cp >= 0x300 && cp <= 0x36F) || (cp >= 0xFE00 && cp <= 0xFE0F);
+}
+
+/* `first` followed by `second` as one character, or 0 when they do not
+ * compose. */
+static inline uint32_t text_compose_pair(uint32_t first, uint32_t second)
+{
+	/* Hangul: leading consonant + vowel, then + trailing consonant. */
+	if (first >= 0x1100 && first <= 0x1112 &&
+	    second >= 0x1161 && second <= 0x1175)
+		return 0xAC00 + ((first - 0x1100) * 21 + (second - 0x1161)) * 28;
+	if (first >= 0xAC00 && first <= 0xD7A3 && (first - 0xAC00) % 28 == 0 &&
+	    second >= 0x11A8 && second <= 0x11C2)
+		return first + (second - 0x11A7);
+	if (first >= 0x80 || second < 0x300 || second > 0x36F)
+		return 0;
+	for (size_t i = 0; i < sizeof(TEXT_LATIN_PAIRS) /
+	                       sizeof(TEXT_LATIN_PAIRS[0]); i++)
+		if (TEXT_LATIN_PAIRS[i].mark == second &&
+		    (unsigned char)TEXT_LATIN_PAIRS[i].base == first)
+			return TEXT_LATIN_PAIRS[i].composed;
+	return 0;
+}
+
+/* `in` composed into `out` (always terminated, cut on a character
+ * boundary when it does not fit). Returns the length written. */
+static inline size_t text_compose(const char *in, char *out, size_t outlen)
+{
+	if (outlen == 0)
+		return 0;
+	size_t n = 0;
+	uint32_t pending = 0;
+	int has_pending = 0;
+	for (;;) {
+		uint32_t cp;
+		size_t len = text_utf8_decode(in, &cp);
+		in += len;
+		if (len && has_pending) {
+			uint32_t both = text_compose_pair(pending, cp);
+			if (both) {
+				pending = both;
+				continue;
+			}
+		}
+		if (len && text_is_mark(cp))
+			continue;
+		if (has_pending) {
+			char bytes[4];
+			size_t blen = text_utf8_encode(pending, bytes);
+			if (n + blen + 1 > outlen)
+				break;
+			for (size_t i = 0; i < blen; i++)
+				out[n++] = bytes[i];
+		}
+		if (!len)
+			break;
+		pending = cp;
+		has_pending = 1;
+	}
+	out[n] = '\0';
+	return n;
+}
+
+#endif

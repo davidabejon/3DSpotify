@@ -1,7 +1,7 @@
 /* The top screen with the tabs (feature_plan.md): the logo while no music
  * plays, else the "now playing" card (top_now.h), or the big cover on the
- * Playing tab; and the card of a detail (top_detail.h) whenever the active
- * tab shows one. top_logic.h decides which. While a track's download is
+ * Playing tab; the account and the credits on Settings (top_about.h); and
+ * the card of a detail (top_detail.h) whenever the active tab shows one. top_logic.h decides which. While a track's download is
  * still at 0%, a spinner (spinner_logic.h) turns at the centre of the
  * screen, over any of them and on any tab. Before the session (start-up,
  * pairing, errors) the top screen is view_login.h's.
@@ -14,6 +14,7 @@
 
 #include "artwork.h"
 #include "details.h"
+#include "top_about.h"
 #include "tabs_logic.h"
 #include "view_player.h"
 
@@ -32,6 +33,10 @@ void top_set(const player_info *info);
 /* Once per frame with the tabs: the detail on top of the active tab, or
  * NULL, and the image its card shows (never the playing track's). */
 void top_set_detail(const detail_doc *doc, artwork_state *art);
+
+/* The account for Settings (top_about.h) and its picture; both stay the
+ * caller's and must outlive the tabs. */
+void top_set_account(const about_account *account, artwork_state *art);
 
 bool top_dirty(app_tab tab, const artwork_state *art);
 

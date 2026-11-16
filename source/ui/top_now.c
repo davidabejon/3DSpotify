@@ -5,6 +5,7 @@
 #include "now_layout.h"
 #include "player_logic.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -91,7 +92,7 @@ void top_now_invalidate(void)
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 
@@ -199,7 +200,7 @@ static void draw_bar(const now_look *look)
 	            player_permille(look->download, 100),
 	            player_progress_permille(finished, look->elapsed,
 	                                     look->duration),
-	            true);
+	            UI_HANDLE_REST);
 }
 
 /* `roll` < 0: a text that fits; otherwise how far it has rolled. */

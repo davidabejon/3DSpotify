@@ -90,7 +90,10 @@ Todas las combinaciones de la tabla tienen un contraste ≥ 4.5:1, también en e
   (`romfs/gfx/logo.png`) se dibuja con su propio canal alfa, y el spinner de descarga de la
   pantalla superior va sobre un velo gris `#404040` al ~70 % de opacidad (`SCRIM_*` en
   `theme.h`), 8 px más grande que el spinner por cada lado. En las pantallas de arranque
-  (§7.2) el spinner va sin velo, porque no hay nada debajo que tapar.
+  (§7.2) el spinner va sin velo, porque no hay nada debajo que tapar. La pantalla superior
+  de Ajustes (§7.8) oscurece el fondo y el logotipo con un velo `sombra` al 80 % de opacidad
+  (`ABOUT_VEIL_*` en `theme.h`); el resultado queda más oscuro que `capa`, así que el texto
+  sobre él sigue las combinaciones de `capa` (§2.6).
 - `texto` no se usa como relleno, salvo en el código QR (§5.13): un QR necesita módulos
   oscuros sobre fondo claro para que lo lea una cámara, y es la única superficie blanca de la
   aplicación.
@@ -231,12 +234,26 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
 - Descarga: relleno `musgo` por delante del progreso.
 - Progreso: relleno `clorofila`.
 - Tirador: rectángulo 6×14 px `texto` con contorno 1 px `tinta`, centrado en el extremo del
-  progreso.
-- Actualizar como máximo una vez por segundo.
+  progreso. Arrastrado con el táctil: relleno `lima` (estado pulsado, §6.3).
+- Actualizar como máximo una vez por segundo, salvo mientras se arrastra: entonces sigue al
+  dedo.
 
 ### 5.5 Barra de volumen
 
 Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador.
+
+### 5.5.1 Barras táctiles
+
+- En el reproductor, las dos barras se arrastran con el táctil. Su zona táctil es más grande
+  que la barra: todo el ancho (la del volumen, desde la barra, sin la etiqueta «Vol.») y
+  desde bajo los tiempos hasta la barra de botones, partida a medio camino entre las dos.
+- Tocar dentro de la zona agarra la barra hasta levantar el lápiz, aunque se salga de ella;
+  fuera de los extremos cuenta como el extremo.
+- Volumen: sigue al dedo en el mismo frame (§6.7).
+- Progreso: el tirador y el tiempo transcurrido siguen al dedo; la pista salta a ese punto al
+  levantar el lápiz, no antes. Solo con la pista entera descargada (la capa de descarga
+  llena) y mientras suena o está en pausa (no cargando ni terminada); antes, tocar la barra no
+  hace nada. Si cambia la pista durante el arrastre, el arrastre se pierde.
 
 ### 5.6 Barra de botones
 
@@ -283,8 +300,8 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Iconos sobre `clorofila`, `coral`, `ambar`: `tinta`. Sobre `capa`, `capa_alta` y fondo:
   `texto`.
 - Conjunto: reproducir, pausa, anterior, siguiente, volumen, buscar, cuenta, Wi-Fi, error,
-  aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador) y ajustes
-  (engranaje).
+  aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador), ajustes
+  (engranaje) y aleatorio (dos flechas cruzadas).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 - El logotipo no es un icono: se carga en tiempo de ejecución desde `romfs:/gfx/logo.png`
   (directorio `romfs/` del repositorio, empaquetado en el `.3dsx` y el `.cia`). PNG RGBA de
@@ -662,9 +679,9 @@ Error:
 - Táctil: tocar una fila la pone en foco; tocar la fila en foco la reproduce; arrastrar
   desplaza la lista (§6.9).
 - Indicador de desplazamiento (§5.11) a la derecha, cuando hay más de 4 resultados.
-- A, o tocar la fila en foco, pasa a la pestaña «Reproducción» con esa canción y el resto de
-  resultados como cola. No hay pantalla intermedia de canción seleccionada. Mientras suena esa
-  cola, la fila en foco sigue a la pista que suena.
+- A, o tocar la fila en foco, pasa a la pestaña «Reproducción» con esa canción. No hay
+  pantalla intermedia de canción seleccionada. Una canción suelta no trae lista: la cola es
+  ella y una radio a partir de ella (§7.5).
 - X abre el detalle de la canción en foco (§7.10): es un camino adicional, A sigue sin
   pantalla intermedia. Barra de botones: `[A] Reproducir [X] Detalle [Y] Buscar [B] Volver`.
 - Lanzar una búsqueda nueva cierra los detalles abiertos en «Búsqueda».
@@ -712,14 +729,33 @@ Error:
   álbum, ese enlace no responde. «3 de 24» no forma parte del enlace.
 - Los iconos de los controles son de 16 px mientras no exista el juego de 24 px (§5.10).
 - Anterior y siguiente se deshabilitan (§6.1) en los extremos de la cola.
+- La cola depende de dónde se eligió la canción:
+  - Canción suelta (un resultado de búsqueda, o su detalle): ella y 25 recomendaciones de
+    canciones parecidas, que llegan en segundo plano cuando la canción ya suena. Cuando
+    quedan 2 por sonar se piden 25 más a partir de la última, sin repetir ninguna: la radio
+    no se acaba. «1 de 1» crece al llegar cada tanda.
+  - Álbum, artista o playlist: la lista, desde la elegida, en su orden o en aleatorio
+    (§7.11). De una playlist se cargan en segundo plano las páginas que su detalle aún no
+    había cargado, hasta 500 pistas, aunque se cierre el detalle. Al acabar la lista, se
+    para.
+  - Nada se pide a la red mientras una pista se prepara (§9).
 - Mientras carga (carátula, clave de audio, conexión): indicador de carga (§5.7) y el paso
   actual en `t_cuerpo` · `texto` en lugar de los controles; aún no suena nada.
-- Pista terminada: el botón central muestra «reproducir» y vuelve a empezarla; la barra de
-  progreso queda llena y «Pista terminada» sustituye a los tiempos.
+- Al terminar una pista empieza sola la siguiente de la cola. Solo al final de la cola queda
+  «Pista terminada»: el botón central muestra «reproducir» y vuelve a empezarla; la barra de
+  progreso queda llena y «Pista terminada» sustituye a los tiempos. Una pista con error no
+  salta a la siguiente.
 - Error: aviso de error (§5.8) con el detalle; A reintenta.
 - Sin nada en reproducción: mensaje centrado «Todavía no suena nada».
 - El audio sigue sonando en cualquier pestaña. B vuelve a «Búsqueda» sin cortarlo; con un
   detalle abierto, B lo cierra primero.
+- Saltar con la barra de progreso (§5.5.1): el audio ya en cola se descarta y la pista sigue
+  desde el punto elegido, pausada si lo estaba. La posición en bytes es una estimación
+  (Vorbis tiene tasa variable): el tiempo se corrige con la posición real en cuanto el
+  decodificador la encuentra, y si cae a más de 2 s del punto pedido se corrige una vez.
+- Solo se salta con la pista entera descargada: saltar a una parte aún sin descargar dejaba
+  la pista en silencio en la consola. La descarga por bloques (`stream_chunks.h`) sigue
+  preparada para ello.
 - El teclado (`swkbd`) bloquea el hilo principal: la pista se pausa mientras está abierto y
   sigue al cerrarlo.
 
@@ -756,7 +792,14 @@ Error:
 - «Mostrar más» es la misma pestaña en otro modo, no un nivel de detalle: 5 filas de
   teselas entre las barras, con indicador de desplazamiento. B vuelve a la rejilla de 6 con
   el foco en «Mostrar más».
+- La primera tesela es siempre «Canciones que te gustan», con el icono del corazón
+  (§5.10) donde iría la portada. Se abre como una playlist más, por páginas (§7.11); la
+  lista entera llega en una petición (`context-resolve`, de la más reciente a la más
+  antigua) y los nombres se piden de 50 en 50.
 - La cruceta pasa de la última fila de teselas al botón «Mostrar más» y vuelve.
+- Toda playlist se abre con el foco en su primera canción. «Lo ultimo» de la vista previa
+  es solo informativo: esa canción a menudo ni siquiera está en la playlist (la
+  reproducción automática sigue después del final).
 - A, o tocar la tesela en foco, abre el detalle de la playlist en la pila de «Inicio»
   (§7.9). Tocar una tesela fuera de foco la pone en foco.
 - Y abre el teclado de búsqueda desde cualquier modo.
@@ -766,7 +809,11 @@ Error:
   tienes playlists» y botón primario «Buscar canciones».
 - La burbuja de idioma (SELECT) tapa «Mostrar más» durante 60 frames: es transitoria y no
   es un control (§5.9).
-- Superior: logotipo o la ficha de lo que suena; con un detalle abierto, su ficha (§7.12).
+- Superior: con una tesela en foco, su ficha (§7.12) como vista previa: portada, nombre,
+  «N canciones» y «Lo ultimo: <canción - artista>» si la hay. La portada se pide cuando
+  el foco lleva 18 frames (300 ms) quieto, para no descargar al recorrer la rejilla. Con
+  el foco en «Mostrar más» o mientras carga, logotipo o la ficha de lo que suena; con un
+  detalle abierto, su ficha.
   Volver a conectar y emparejar están en «Ajustes».
 
 ### 7.8 Ajustes
@@ -788,7 +835,38 @@ Error:
   primero a 16 px de la barra de pestañas. Foco con la cruceta (§6.2) y toque (§6.4).
 - Idioma: el botón muestra el idioma actual y lo cambia al pulsarlo, sin burbuja.
 - Volver a conectar y emparejar detienen la reproducción y vuelven a la pantalla de sesión.
-- Superior: título «Ajustes» arriba a la izquierda y el nombre de la app centrado.
+- Superior: el logotipo en su sitio, oscurecido junto con el fondo por el velo de §2.7, y
+  encima, con márgenes de 16 px (`about_layout.h`):
+
+```
+ SUPERIOR
+ ┌──────────────────────────────────────┐
+ │ ┌──────────────────────────────────┐ │ 16..80
+ │ │ [foto] Nombre de la cuenta       │ │ panel `capa`, foto 48×48
+ │ │        Premium - ES              │ │
+ │ │        Usuario: nombre_usuario   │ │
+ │ └──────────────────────────────────┘ │
+ │  Desarrollo   David Abejón           │ 96..176, filas de 20 px
+ │  Basado en    SpotiBacan (ohquebacan)│
+ │  Códigos QR   QR Code generator, ... │
+ │  Licencia     Apache License 2.0     │
+ │ ──────────────────────────────────── │ 180, regla `capa_luz`
+ │ Proyecto no oficial, sin relación    │ 188.., aviso de marca
+ │ con Spotify AB...                    │
+ └──────────────────────────────────────┘
+```
+
+  - Cuenta: panel `capa` (§5.1) con la foto de perfil a 48×48 (el icono de persona mientras
+    no llega) y, centradas en su altura, hasta tres líneas: el nombre visible (`t_cabeza` ·
+    `texto`; sin él, el nombre de usuario), el plan y el país (`t_cuerpo` · `texto_2`) y
+    «Usuario: …» (`t_meta` · `texto_2`) cuando el nombre visible es otro. El nombre y la foto
+    vienen del perfil público de spclient (`user-profile-view`); el plan y el país, de
+    `/v1/me`, que suele rechazar por límite de peticiones. Se piden una vez por sesión y se
+    guardan en la configuración para mostrarse al instante la próxima vez.
+  - Créditos: etiqueta en `t_meta` · `clorofila` y valor en `t_cuerpo` · `texto`, recortado
+    con «...». El autor y lo que nombra `NOTICE`; los nombres propios no se traducen.
+  - Aviso de marca de `NOTICE` en `t_meta` · `texto_2`, en varias líneas.
+  - Se muestra en Ajustes siempre, suene música o no; el spinner de descarga va encima.
 - B vuelve a «Inicio».
 
 ### 7.9 Detalles: navegación común
@@ -821,7 +899,9 @@ Error:
 ```
 
 - Misma geometría que Ajustes (§7.8). El foco empieza en «Reproducir».
-- «Reproducir» reproduce la canción con la lista de la que salió como cola.
+- «Reproducir» reproduce la canción con la lista de la que salió como cola. Si salió de
+  una canción suelta (un resultado de búsqueda, o la radio que suena), empieza una radio a
+  partir de ella (§7.5).
 - «Artista» y «Álbum» abren su detalle en la misma pestaña; se deshabilitan (§6.1) si la
   pista no trae ese URI. El nombre se recorta con `...`: completo en la ficha de arriba.
 - No necesita red: los datos ya están en memoria.
@@ -836,7 +916,14 @@ Error:
   espera «Cargando...» (§5.9) mientras llega; la lista sigue respondiendo. Hasta 500 pistas.
   Los episodios y archivos locales se omiten.
 - A, o tocar la fila en foco, reproduce desde ella con la lista como cola; X abre el detalle
-  de canción. Barra: `[A] Reproducir [X] Detalle [B] Volver`.
+  de canción. Barra: `[A] Reproducir [X] Detalle [Y] Aleatorio [B] Volver`.
+- Y alterna el aleatorio. Es un ajuste de la app, el mismo para todas las listas, y se
+  recuerda entre sesiones. La etiqueta de Y dice cómo está ahora («Aleatorio» o «En orden»)
+  y al cambiarlo sale una burbuja (§5.9) con el icono de aleatorio y «Aleatorio activado» o
+  «Aleatorio desactivado».
+- Con aleatorio, la pista elegida suena primero y el resto de la lista le sigue en orden
+  aleatorio; sin él, la lista suena en su orden desde la elegida. Si lo que suena es una
+  lista, cambiarlo la reordena al momento sin cortar la pista.
 - Cargando: filas esqueleto y burbuja de espera «Cargando...» (§5.9). B cancela y cierra.
 - Error: aviso (§5.8) con el detalle y botón primario «Reintentar»; A reintenta.
 - Sin pistas: mensaje centrado «No hay canciones».

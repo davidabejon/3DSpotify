@@ -214,6 +214,16 @@ int track_stream_begin_cached(const char *sp_host, const char *token,
 	                                   metadata, progress, out, err, errlen);
 }
 
+/* Whether the live span, at write_pos, must stop: it is at the end, or at
+ * the start of a chunk that is already whole. */
+static bool span_blocked(const track_stream *ts)
+{
+	if (ts->write_pos >= ts->len)
+		return true;
+	return ts->write_pos % STREAM_CHUNK == 0 &&
+	       ts->chunk_done[ts->write_pos / STREAM_CHUNK];
+}
+
 static bool stream_cb(void *ctx, const char *data, size_t n)
 {
 	track_stream *ts = ctx;
@@ -240,22 +250,40 @@ static bool stream_cb(void *ctx, const char *data, size_t n)
 		memset(ts->data, 0, ts->total);
 		ts->len = ts->total;
 	}
-	if (ts->write_pos + n > ts->len) {
-		if (ts->write_pos >= ts->len)
-			return true;   /* padding past the end: tolerate */
-		n = ts->len - ts->write_pos;
+	/* A chunk at a time: the span stops before one that is already whole,
+	 * which may be on its way to the decoder (the bytes land encrypted and
+	 * are decrypted in place), and at the end of the file. The download
+	 * loop then sends it to the next missing chunk. */
+	while (n > 0) {
+		if (span_blocked(ts)) {
+			ts->relocate = true;
+			return false;
+		}
+		size_t piece = STREAM_CHUNK - ts->write_pos % STREAM_CHUNK;
+		if (piece > ts->len - ts->write_pos)
+			piece = ts->len - ts->write_pos;
+		if (piece > n)
+			piece = n;
+		uint8_t *at = ts->data + ts->write_pos;
+		memcpy(at, data, piece);
+		if (mbedtls_aes_crypt_ctr(ts->aes, piece, &ts->nc_off, ts->nonce,
+		                          ts->stream_block, at, at) != 0) {
+			snprintf(ts->dl_err, sizeof(ts->dl_err), "AES-CTR failed");
+			ts->cb_fatal = true;
+			return false;
+		}
+		ts->write_pos += piece;
+		data += piece;
+		n -= piece;
+		/* The bytes before the marks that publish them. */
+		__sync_synchronize();
+		stream_mark(ts->chunk_done, ts->len, ts->write_pos, &ts->mark_next);
+		ts->downloaded = ts->write_pos;
 	}
-	memcpy(ts->data + ts->write_pos, data, n);
-	if (mbedtls_aes_crypt_ctr(ts->aes, n, &ts->nc_off, ts->nonce,
-	                          ts->stream_block, ts->data + ts->write_pos,
-	                          ts->data + ts->write_pos) != 0) {
-		snprintf(ts->dl_err, sizeof(ts->dl_err), "AES-CTR failed");
-		ts->cb_fatal = true;
+	if (span_blocked(ts)) {
+		ts->relocate = true;
 		return false;
 	}
-	ts->write_pos += n;
-	__sync_synchronize();
-	ts->downloaded = ts->write_pos;
 	return true;
 }
 
@@ -277,6 +305,7 @@ static void stream_rewind(track_stream *ts, size_t at)
 	}
 	ts->nc_off = 0;
 	ts->write_pos = at;
+	ts->mark_next = at / STREAM_CHUNK;
 	__sync_synchronize();
 	ts->downloaded = at;
 }
@@ -378,17 +407,34 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 	int refreshes = 0;
 	while (!ts->dl_done && !ts->cb_fatal && !(stop && *stop)) {
 		if (ts->dl_restart_at >= 0) {
-			size_t at = (size_t)ts->dl_restart_at;
+			size_t at = stream_chunk_floor((size_t)ts->dl_restart_at);
 			ts->dl_restart_at = -1;
+			ts->relocate = false;
 			stream_rewind(ts, at);
 			dl_log(log, "seek to %u", (unsigned)at);
 			failures = 0;
 			continue;
 		}
+		/* The span ran into chunks it already has, or the end: on with the
+		 * first missing one after where the decoder reads. */
+		if (ts->relocate || (ts->len && span_blocked(ts))) {
+			ts->relocate = false;
+			size_t next = stream_next_missing(ts->chunk_done, ts->len,
+			                                  ts->read_hint);
+			if (next >= ts->len) {
+				ts->dl_done = true;
+				continue;
+			}
+			if (next != ts->write_pos) {
+				stream_rewind(ts, next);
+				dl_log(log, "fill from %u", (unsigned)next);
+			}
+		}
 		size_t before = ts->write_pos;
 		bool refused = false;   /* an edge answered, but not with bytes */
 		for (int i = 0; i < ts->storage.count; i++) {
-			if ((stop && *stop) || ts->cb_fatal || ts->dl_restart_at >= 0)
+			if ((stop && *stop) || ts->cb_fatal || ts->dl_restart_at >= 0 ||
+			    ts->relocate)
 				break;
 			int status = 0;
 			size_t from = ts->write_pos;
@@ -406,13 +452,13 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 			if (rc != 0 && status != 0 && status != 206 &&
 			    ts->write_pos == from)
 				refused = true;
-			if (ts->len && ts->write_pos >= ts->len)
-				ts->dl_done = true;
-			if (ts->dl_done || (stop && *stop))
+			if (ts->relocate || (stop && *stop))
 				break;
 		}
-		if (ts->dl_done || ts->cb_fatal || (stop && *stop) ||
-		    ts->dl_restart_at >= 0)
+		/* Moved on by a seek, or by reaching what is there: progress, not
+		 * a failure. */
+		if (ts->cb_fatal || (stop && *stop) || ts->dl_restart_at >= 0 ||
+		    ts->relocate)
 			continue;
 		if (ts->write_pos != before) {
 			failures = 0;
@@ -465,4 +511,36 @@ void track_stream_free(track_stream *ts)
 	memset(ts->token, 0, sizeof(ts->token));
 	memset(ts->nonce, 0, sizeof(ts->nonce));
 	memset(ts->stream_block, 0, sizeof(ts->stream_block));
+}
+
+size_t track_stream_available(const track_stream *ts, size_t pos)
+{
+	if (!ts->data || !ts->len)
+		return pos;
+	size_t live = ts->downloaded;
+	size_t end = stream_available(ts->chunk_done, ts->len, live, pos);
+	/* The marks and the watermark before the bytes they publish. */
+	__sync_synchronize();
+	return end;
+}
+
+void track_stream_hint(track_stream *ts, size_t at)
+{
+	ts->read_hint = at;
+}
+
+void track_stream_seek(track_stream *ts, size_t at)
+{
+	ts->read_hint = at;
+	if (!ts->data || !ts->len || ts->dl_done)
+		return;
+	/* What the decoder needs first: the first missing chunk from `at`.
+	 * Left alone when the live span is about to write it. */
+	size_t need = stream_next_missing(ts->chunk_done, ts->len, at);
+	if (need >= ts->len)
+		return;
+	size_t live = ts->downloaded;
+	if (live >= need && live < need + STREAM_CHUNK)
+		return;
+	ts->dl_restart_at = (long)need;
 }

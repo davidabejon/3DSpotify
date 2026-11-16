@@ -5,6 +5,7 @@
 #include "player_logic.h"
 #include "spinner_logic.h"
 #include "text_fit.h"
+#include "ui_font.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -253,7 +254,7 @@ void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
 	}
 }
 
-void ui_progress(ui_rect r, int download, int progress, bool handle)
+void ui_progress(ui_rect r, int download, int progress, ui_handle handle)
 {
 	ui_rect inside = outlined(r, COL_CAPA_ALTA);
 	if (download >= 0) {
@@ -264,10 +265,10 @@ void ui_progress(ui_rect r, int download, int progress, bool handle)
 	ui_rect played = inside;
 	played.w = player_fill_px(inside.w, progress);
 	ui_fill(played, COL_CLOROFILA);
-	if (handle) {
+	if (handle != UI_HANDLE_NONE) {
 		ui_rect knob = { played.x + played.w - HANDLE_W / 2,
 		                 r.y + r.h / 2 - HANDLE_H / 2, HANDLE_W, HANDLE_H };
-		outlined(knob, COL_TEXTO);
+		outlined(knob, handle == UI_HANDLE_PRESSED ? COL_LIMA : COL_TEXTO);
 	}
 }
 
@@ -320,6 +321,11 @@ void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
 
 void ui_art(ui_rect box, const C2D_Image *image)
 {
+	ui_art_or(box, image, ICON_NOTE);
+}
+
+void ui_art_or(ui_rect box, const C2D_Image *image, int icon)
+{
 	ui_rect inside = outlined(box, COL_CAPA_ALTA);
 	if (image && image->tex && image->subtex->width &&
 	    image->subtex->height) {
@@ -335,7 +341,7 @@ void ui_art(ui_rect box, const C2D_Image *image)
 		                scale, scale);
 		return;
 	}
-	C2D_Image note = icon_image(ICON_NOTE);
+	C2D_Image note = icon_image((icon_id)icon);
 	ui_icon(&note, box.x + (box.w - ICON_S) / 2,
 	        box.y + (box.h - ICON_S) / 2, COL_TEXTO_2);
 }
@@ -392,7 +398,7 @@ float ui_measure(C2D_TextBuf scratch, const char *string, float scale)
 {
 	C2D_Text text;
 	C2D_TextBufClear(scratch);
-	C2D_TextParse(&text, scratch, string);
+	ui_parse(&text, scratch, string);
 	return ui_text_width(&text, scale);
 }
 
@@ -403,6 +409,6 @@ void ui_parse_fitted(C2D_Text *text, C2D_TextBuf buf, C2D_TextBuf scratch,
 	fit_ctx fit = { scratch, scale };
 	text_fit(string, (float)width, measure_fit, &fit, fitted,
 	         sizeof(fitted));
-	C2D_TextParse(text, buf, fitted);
+	ui_parse(text, buf, fitted);
 	C2D_TextOptimize(text);
 }

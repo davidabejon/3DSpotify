@@ -1,6 +1,7 @@
 /* The results view, the Search tab (docs/STYLES.md 5.3 and 7.4): nothing
  * searched yet, the search in progress, the list of tracks, no results, or
- * the error, all in one view.
+ * the error, all in one view. Nothing searched yet suggests the last
+ * searches (recent_logic.h) under the search button, when there are any.
  *
  * Bottom screen: under the tab bar (tabbar.h, drawn by the caller), 4 rows
  * of ROW_H with the cover thumbnail (thumbs.h; the placeholder of 5.3
@@ -20,6 +21,7 @@
 #define VIEW_RESULTS_H
 
 #include "lang.h"
+#include "recent_logic.h"
 #include "spclient.h"
 
 #include <3ds.h>
@@ -33,8 +35,14 @@ typedef enum {
 	/* X: the detail of view_results_selected(). Playing stays with A,
 	 * with no screen in between (STYLES.md 7.4). */
 	RESULTS_ACTION_DETAIL,
-	/* B: back to the Home tab. */
+	/* B with nothing searched yet: back to the Home tab. */
 	RESULTS_ACTION_BACK,
+	/* B on the results, none found or the error: back to the screen
+	 * before them, nothing searched yet (view_results_idle). */
+	RESULTS_ACTION_CLOSE,
+	/* A or a tap on a recent search: run view_results_recent_query()
+	 * again. */
+	RESULTS_ACTION_RECENT,
 	/* Y, or the idle and empty states' button: ask for another query. */
 	RESULTS_ACTION_NEW_SEARCH,
 	/* A, or the error state's button: run the same query again. */
@@ -48,8 +56,14 @@ typedef enum {
 bool view_results_init(void);
 void view_results_exit(void);
 
-/* Nothing searched yet, or the last search was cancelled. */
+/* Nothing searched yet, or the last search was cancelled or left: the
+ * search button focused. */
 void view_results_idle(void);
+
+/* The recent searches to suggest, copied. */
+void view_results_set_recent(const recent_list *recent);
+/* The recent search chosen by the last RESULTS_ACTION_RECENT. */
+const char *view_results_recent_query(void);
 
 /* A search is running. B shows its glyph pressed; cancelling stays with
  * the caller, which calls view_results_cancelling. */
@@ -66,9 +80,6 @@ void view_results_error(str_id advice);
 
 /* The focused track. */
 int view_results_selected(void);
-/* Focuses track `index` on whole rows, as the buttons do (6.6): the
- * player's queue moved to it. */
-void view_results_focus(int index);
 
 /* Switching to the tab: no press or drag carries over. */
 void view_results_enter(void);

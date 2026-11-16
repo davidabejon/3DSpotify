@@ -5,6 +5,7 @@
 #include "player_logic.h"
 #include "press_logic.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -56,6 +57,13 @@ static touch_track touch = { -1 };
 static player_action pending = PLAYER_ACTION_NONE;
 static const press_state *pending_press;
 static int loader_frames;
+/* The stylus on a bar: dragging the progress bar's handle (the track moves
+ * when it lifts), or the volume (it follows at once); or still down on a
+ * bar that went away (a new track), spent until it lifts. */
+typedef enum { DRAG_NONE, DRAG_SEEK, DRAG_VOLUME, DRAG_SPENT } drag_kind;
+static drag_kind drag = DRAG_NONE;
+static int drag_value;     /* thousandths along the bar */
+static int action_value;   /* for view_player_value */
 
 typedef struct {
 	player_phase phase;
@@ -64,6 +72,7 @@ typedef struct {
 	str_id stage;
 	bool paused;
 	unsigned elapsed, duration, download, volume;
+	int seek;               /* the handle dragged, in thousandths, or -1 */
 	bool control[PLAYER_CONTROL_COUNT];
 	bool link[PLAYER_LINK_COUNT];
 	bool glyph[GLYPH_COUNT];
@@ -109,6 +118,7 @@ void view_player_enter(void)
 	touch.target = -1;
 	pending = PLAYER_ACTION_NONE;
 	pending_press = NULL;
+	drag = DRAG_NONE;
 	drawn_valid = false;
 }
 
@@ -116,6 +126,10 @@ void view_player_set(const player_info *next)
 {
 	bool tick = next->elapsed_s != info.elapsed_s ||
 	            next->phase != info.phase || next->serial != info.serial;
+	/* The handle belonged to the track it was dragged on. */
+	if (drag == DRAG_SEEK &&
+	    (!next->seekable || next->serial != info.serial))
+		drag = DRAG_SPENT;
 	info = *next;
 	snprintf(info_error, sizeof(info_error), "%s",
 	         next->error ? next->error : "");
@@ -127,7 +141,7 @@ void view_player_set(const player_info *next)
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 
@@ -195,11 +209,21 @@ static void parse_track(void)
 	             link_text_width(PLAYER_LINK_ALBUM));
 }
 
+/* The time by the progress bar: where the dragged handle would take the
+ * track, else where it is. */
+static unsigned shown_elapsed(void)
+{
+	if (drag == DRAG_SEEK)
+		return (unsigned)((unsigned long long)info.duration_s *
+		                  (unsigned)drag_value / 1000u);
+	return info.elapsed_s;
+}
+
 static void parse_times(void)
 {
 	C2D_TextBufClear(time_buf);
 	char text[16];
-	player_format_time(info.elapsed_s, text, sizeof(text));
+	player_format_time(shown_elapsed(), text, sizeof(text));
 	parse(&elapsed_text, time_buf, text);
 	player_format_time(info.duration_s, text, sizeof(text));
 	parse(&duration_text, time_buf, text);
@@ -221,10 +245,10 @@ static void ensure_parsed(void)
 		parsed_index = info.index;
 		parsed_count = info.count;
 	}
-	if (parsed_elapsed != info.elapsed_s ||
+	if (parsed_elapsed != shown_elapsed() ||
 	    parsed_duration != info.duration_s) {
 		parse_times();
-		parsed_elapsed = info.elapsed_s;
+		parsed_elapsed = shown_elapsed();
 		parsed_duration = info.duration_s;
 	}
 	parsed_lang = lang_get();
@@ -232,6 +256,7 @@ static void ensure_parsed(void)
 
 /* --- State ------------------------------------------------------------ */
 
+/* The controls, and with them the bars, are on screen. */
 static bool has_controls(void)
 {
 	return info.phase == PLAYER_PHASE_PLAYING ||
@@ -275,8 +300,9 @@ static player_look current_look(void)
 		.count = info.count,
 		.stage = info.stage,
 		.paused = info.paused,
-		.elapsed = info.elapsed_s,
+		.elapsed = shown_elapsed(),
 		.duration = info.duration_s,
+		.seek = drag == DRAG_SEEK ? drag_value : -1,
 		.download = download.shown,
 		.volume = info.volume_pct,
 		.loader_step = info.phase == PLAYER_PHASE_LOADING
@@ -298,7 +324,7 @@ static bool same_look(const player_look *a, const player_look *b)
 	    a->stage != b->stage || a->paused != b->paused ||
 	    a->elapsed != b->elapsed || a->duration != b->duration ||
 	    a->download != b->download || a->volume != b->volume ||
-	    a->loader_step != b->loader_step)
+	    a->seek != b->seek || a->loader_step != b->loader_step)
 		return false;
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		if (a->control[i] != b->control[i])
@@ -442,6 +468,57 @@ static player_action handle_touch(u32 down, u32 held, u32 up, bool *owned)
 	return now;
 }
 
+/* The stylus on the bars, before the buttons and links: a press in a bar's
+ * zone (player_logic.h) drags it until the stylus lifts, wherever it goes
+ * meanwhile. Returns the action to run now; sets `*owned` while a drag
+ * has the input. */
+static player_action handle_bars(u32 down, u32 held, bool *owned)
+{
+	*owned = false;
+	if (drag == DRAG_NONE) {
+		if (!(down & KEY_TOUCH) || touch.target >= 0)
+			return PLAYER_ACTION_NONE;
+		touchPosition pos;
+		hidTouchRead(&pos);
+		if (info.seekable &&
+		    ui_rect_contains(player_seek_zone(volume_label_w), pos.px,
+		                     pos.py))
+			drag = DRAG_SEEK;
+		else if (has_controls() &&
+		         ui_rect_contains(player_volume_zone(volume_label_w),
+		                          pos.px, pos.py))
+			drag = DRAG_VOLUME;
+		else
+			return PLAYER_ACTION_NONE;
+		drag_value = -1;
+	}
+	*owned = true;
+	if (!(held & KEY_TOUCH)) {
+		/* Lifted: there is no position this frame, the last one counts. */
+		drag_kind was = drag;
+		drag = DRAG_NONE;
+		if (was == DRAG_SEEK && drag_value >= 0) {
+			action_value = drag_value;
+			return PLAYER_ACTION_SEEK;
+		}
+		return PLAYER_ACTION_NONE;
+	}
+	if (drag == DRAG_SPENT)
+		return PLAYER_ACTION_NONE;
+	touchPosition pos;
+	hidTouchRead(&pos);
+	if (drag == DRAG_SEEK) {
+		drag_value = player_bar_permille(player_progress_rect(), pos.px);
+		return PLAYER_ACTION_NONE;
+	}
+	int value = player_bar_permille(player_volume_rect(volume_label_w),
+	                                pos.px);
+	if (value == drag_value)
+		return PLAYER_ACTION_NONE;
+	drag_value = action_value = value;
+	return PLAYER_ACTION_VOLUME_SET;
+}
+
 /* A physical button on a control (6.5): the control shows the press. */
 static player_action press_key(int control, int glyph)
 {
@@ -473,6 +550,9 @@ player_action view_player_update(u32 down)
 	}
 
 	bool owned;
+	player_action bar = handle_bars(down, held, &owned);
+	if (owned)
+		return bar;
 	player_action now = handle_touch(down, held, up, &owned);
 	if (now != PLAYER_ACTION_NONE || owned || pending != PLAYER_ACTION_NONE)
 		return now;
@@ -504,6 +584,11 @@ player_action view_player_update(u32 down)
 	if (down & KEY_SELECT)
 		return PLAYER_ACTION_LANGUAGE;
 	return PLAYER_ACTION_NONE;
+}
+
+int view_player_value(void)
+{
+	return action_value;
 }
 
 bool view_player_dirty(void)
@@ -583,15 +668,20 @@ static void draw_bars(const player_look *look)
 		ui_text(&duration_text, SCREEN_BOTTOM_W - SP_2 - w, cy, TXT_META,
 		        COL_TEXTO_2);
 	}
-	int progress = player_progress_permille(
-		look->phase == PLAYER_PHASE_FINISHED, look->elapsed, look->duration);
+	int progress = look->seek >= 0
+	               ? look->seek
+	               : player_progress_permille(
+	                     look->phase == PLAYER_PHASE_FINISHED, look->elapsed,
+	                     look->duration);
 	ui_progress(player_progress_rect(),
-	            player_permille(look->download, 100), progress, true);
+	            player_permille(look->download, 100), progress,
+	            look->seek >= 0 ? UI_HANDLE_PRESSED : UI_HANDLE_REST);
 
 	ui_rect volume = player_volume_rect(volume_label_w);
 	ui_text(&volume_label, SP_2, volume.y + volume.h / 2, TXT_META,
 	        COL_TEXTO_2);
-	ui_progress(volume, -1, player_permille(look->volume, 100), false);
+	ui_progress(volume, -1, player_permille(look->volume, 100),
+	            UI_HANDLE_NONE);
 }
 
 static void draw_hints(const player_look *look)

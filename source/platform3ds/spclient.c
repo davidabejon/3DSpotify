@@ -217,7 +217,8 @@ int sp_rootlist_s(http_session *sess, const char *token, const char *username,
 
 int sp_recent_playlists_s(http_session *sess, const char *token,
                           const char *username, char uris[][SP_URI_MAX],
-                          int max, char *err, size_t errlen)
+                          char (*last)[SP_URI_MAX], int max,
+                          char *err, size_t errlen)
 {
 	/* The desktop client's own request. limit=50 counts every kind of
 	 * context, so the playlists among them are fewer. */
@@ -237,7 +238,31 @@ int sp_recent_playlists_s(http_session *sess, const char *token,
 		http_reply_free(&r);
 		return -1;
 	}
-	int n = sp_parse_recent_playlists(r.body, r.len, uris, max);
+	int n = sp_parse_recent_playlists(r.body, r.len, uris, last, max);
+	http_reply_free(&r);
+	return n;
+}
+
+int sp_liked_s(http_session *sess, const char *token, const char *username,
+               char (*uris)[SP_URI_MAX], int max, int *total,
+               char *err, size_t errlen)
+{
+	char user[192], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/context-resolve/v1/spotify:user:%s:collection", user);
+	http_reply r;
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "liked: %s", r.err);
+		return -1;
+	}
+	if (r.status != 200) {
+		snprintf(err, errlen, "liked returned HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	int n = sp_parse_liked(r.body, r.len, uris, max, total);
 	http_reply_free(&r);
 	return n;
 }
@@ -549,32 +574,67 @@ int sp_storage_resolve(const char *host, const char *token,
 	return out->count;
 }
 
-int sp_user_image(const char *token, char *url, size_t urllen,
-                  char *err, size_t errlen, int *retry_after)
+int sp_user_profile_view(const char *host, const char *token,
+                         const char *username, sp_profile *out, char *err,
+                         size_t errlen)
 {
+	char user[160], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/user-profile-view/v3/profile/%s"
+	         "?playlist_limit=0&artist_limit=0&episode_limit=0", user);
+
 	http_reply r;
 	memset(&r, 0, sizeof(r));
-	if (retry_after)
-		*retry_after = 0;
-	if (http_get("api.spotify.com", "/v1/me", token, &r) != 0) {
-		snprintf(err, errlen, "perfil: %s", r.err);
+	memset(out, 0, sizeof(*out));
+	if (http_get(host, path, token, &r) != 0) {
+		snprintf(err, errlen, "profile view: %s", r.err);
 		http_reply_free(&r);
 		return -1;
 	}
-	if (r.status != 200) {
-		snprintf(err, errlen, "perfil: HTTP %d", r.status);
+	if (r.status != 200 || !r.body) {
+		snprintf(err, errlen, "profile view: HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	/* With every list limited to 0 nothing nests a "name" of its own. */
+	json_str(r.body, "name", out->display_name, sizeof(out->display_name));
+	char art[96];
+	if (json_str(r.body, "image_url", art, sizeof(art)) &&
+	    strncmp(art, "https://i.scdn.co/image/", 24) == 0 &&
+	    strlen(art) < sizeof(out->art))
+		snprintf(out->art, sizeof(out->art), "%s", art);
+	http_reply_free(&r);
+	return 0;
+}
+
+int sp_user_profile(const char *token, sp_profile *out, char *err,
+                    size_t errlen, int *retry_after)
+{
+	http_reply r;
+	memset(&r, 0, sizeof(r));
+	memset(out, 0, sizeof(*out));
+	if (retry_after)
+		*retry_after = 0;
+	if (http_get("api.spotify.com", "/v1/me", token, &r) != 0) {
+		snprintf(err, errlen, "profile: %s", r.err);
+		http_reply_free(&r);
+		return -1;
+	}
+	if (r.status != 200 || !r.body) {
+		snprintf(err, errlen, "profile: HTTP %d", r.status);
 		if (r.status == 429 && retry_after)
 			*retry_after = r.retry_after;
 		http_reply_free(&r);
 		return -1;
 	}
 
-	/* images is an array of {height, width, url}, largest first; the hero
-	 * art is 128px, so any of them downscales fine. */
+	/* The first picture on Spotify's CDN. json_str searches at any depth,
+	 * which is safe for the keys below: the picture objects only carry
+	 * url, width and height. */
 	size_t cursor = 0;
 	const char *obj;
 	size_t objlen;
-	url[0] = '\0';
 	while (json_array_next(r.body, "images", &cursor, &obj, &objlen)) {
 		char buf[512], cand[96];
 		if (objlen >= sizeof(buf))
@@ -584,16 +644,16 @@ int sp_user_image(const char *token, char *url, size_t urllen,
 		if (!json_str(buf, "url", cand, sizeof(cand)))
 			continue;
 		if (strncmp(cand, "https://i.scdn.co/image/", 24) != 0 ||
-		    strlen(cand) >= urllen)
+		    strlen(cand) >= sizeof(out->art))
 			continue;   /* see the header: only the Spotify CDN is in scope */
-		snprintf(url, urllen, "%s", cand);
+		snprintf(out->art, sizeof(out->art), "%s", cand);
 		break;
 	}
+	json_str(r.body, "display_name", out->display_name,
+	         sizeof(out->display_name));
+	json_str(r.body, "product", out->product, sizeof(out->product));
+	json_str(r.body, "country", out->country, sizeof(out->country));
 	http_reply_free(&r);
-	if (!url[0]) {
-		snprintf(err, errlen, "la cuenta no tiene foto usable");
-		return -1;
-	}
 	return 0;
 }
 

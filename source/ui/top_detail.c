@@ -7,6 +7,7 @@
 #include "now_layout.h"
 #include "theme.h"
 #include "top_now.h"
+#include "ui_font.h"
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -66,7 +67,7 @@ void top_detail_invalidate(void)
  * instead of being cut. */
 static void set_text(C2D_Text *text, const char *string, float scale)
 {
-	C2D_TextParse(text, text_buf, string);
+	ui_parse(text, text_buf, string);
 	C2D_TextOptimize(text);
 	text_w[text - texts] = ui_px_ceil(ui_text_width(text, scale));
 }
@@ -152,10 +153,14 @@ static void parse_album(const detail_doc *d)
  * user id (probe_meta step 15), nothing a person would recognise. */
 static void parse_playlist(const detail_doc *d)
 {
-	set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNTITLED),
+	bool liked = strcmp(d->uri, SP_LIKED_URI) == 0;
+	set_text(&texts[0], liked ? tr(STR_LIKED_SONGS)
+	                    : d->title[0] ? d->title : tr(STR_UNTITLED),
 	         TXT_TITULO);
 	add_line(tr(STR_PLAYLIST_TYPE));
-	char line[64];
+	char line[192];
+	/* The home tab's preview may not know the length (Liked Songs): no
+	 * line then rather than "0 tracks". */
 	if (d->total_tracks > d->count)
 		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_CUT_FMT), d->count,
 		         d->total_tracks);
@@ -163,7 +168,12 @@ static void parse_playlist(const detail_doc *d)
 		snprintf(line, sizeof(line), "%s", tr(STR_ALBUM_TRACK_ONE));
 	else
 		snprintf(line, sizeof(line), tr(STR_ALBUM_TRACKS_FMT), d->count);
-	add_line(line);
+	if (d->count > 0 || d->total_tracks > 0)
+		add_line(line);
+	if (d->resume[0]) {
+		snprintf(line, sizeof(line), tr(STR_RESUME_FMT), d->resume);
+		add_line(line);
+	}
 }
 
 static void parse(const detail_doc *d)

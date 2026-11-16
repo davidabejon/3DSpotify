@@ -1,4 +1,4 @@
-/* The player's queue steps and the layout of the Playing tab
+/* The player's phases and the layout of the Playing tab
  * (docs/STYLES.md 5.4, 5.5 and 7.5). Pure C with no 3DS headers, tested
  * in tests/native_logic_test.c. Whole pixels throughout.
  *
@@ -35,18 +35,6 @@ typedef enum {
 	PLAYER_PHASE_FINISHED,
 	PLAYER_PHASE_FAILED
 } player_phase;
-
-/* The track `direction` (-1 or +1) steps from `index` in a queue of
- * `count`, or -1: the queue does not wrap. */
-static inline int playback_queue_step(int index, int count, int direction)
-{
-	if (count <= 0 || index < 0 || index >= count ||
-	    (direction != -1 && direction != 1))
-		return -1;
-
-	int next = index + direction;
-	return next >= 0 && next < count ? next : -1;
-}
 
 /* --- Layout of the Playing tab --------------------------------------- */
 
@@ -154,6 +142,45 @@ static inline ui_rect player_volume_rect(int label_w)
 	ui_rect r = { x, progress.y + progress.h + SP_3 + 1,
 	              SCREEN_BOTTOM_W - SP_2 - x, VOLUME_H };
 	return r;
+}
+
+/* Where the stylus takes the bars: wider and taller than they are drawn,
+ * the whole width, split halfway between them. The progress bar's zone
+ * starts under the times; the volume's ends at the button bar. */
+static inline int player_bars_split(int label_w)
+{
+	ui_rect progress = player_progress_rect();
+	ui_rect volume = player_volume_rect(label_w);
+	return (progress.y + progress.h + volume.y) / 2;
+}
+
+static inline ui_rect player_seek_zone(int label_w)
+{
+	ui_rect progress = player_progress_rect();
+	int top = progress.y - SP_2;
+	ui_rect r = { 0, top, SCREEN_BOTTOM_W,
+	              player_bars_split(label_w) - top };
+	return r;
+}
+
+static inline ui_rect player_volume_zone(int label_w)
+{
+	ui_rect volume = player_volume_rect(label_w);
+	int top = player_bars_split(label_w);
+	ui_rect r = { volume.x - SP_2, top, SCREEN_BOTTOM_W - (volume.x - SP_2),
+	              SCREEN_H - BAR_H - top };
+	return r;
+}
+
+/* The share of bar `bar` at x, in thousandths, clamped: past either end
+ * is that end. */
+static inline int player_bar_permille(ui_rect bar, int x)
+{
+	if (bar.w <= 0 || x <= bar.x)
+		return 0;
+	if (x >= bar.x + bar.w)
+		return 1000;
+	return (x - bar.x) * 1000 / bar.w;
 }
 
 /* The notice of a failed track, under the tab bar. */

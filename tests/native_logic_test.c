@@ -1,3 +1,5 @@
+#include "about_layout.h"
+#include "art_cache_logic.h"
 #include "art_url.h"
 #include "detail_logic.h"
 #include "detail_nav.h"
@@ -15,13 +17,17 @@
 #include "now_layout.h"
 #include "player_logic.h"
 #include "qrcodegen.h"
+#include "queue_logic.h"
+#include "recent_logic.h"
 #include "power_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
 #include "spinner_logic.h"
+#include "stream_chunks.h"
 #include "spotify_id.h"
 #include "settings_logic.h"
 #include "tabs_logic.h"
+#include "text_compose.h"
 #include "text_fit.h"
 #include "thumb_queue.h"
 #include "theme.h"
@@ -623,18 +629,38 @@ static void test_meta_parse_recent(void)
 	    "\"lastPlayedTime\":1794500000000},"
 	    "{\"uri\":\"spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD\"}"
 	    "]}";
-	char uris[4][SP_URI_MAX];
-	int n = sp_parse_recent_playlists(JSON, strlen(JSON), uris, 4);
+	char uris[4][SP_URI_MAX], last[4][SP_URI_MAX];
+	int n = sp_parse_recent_playlists(JSON, strlen(JSON), uris, last, 4);
 	assert(n == 3);
+	/* Each playlist's last track, from its own object only. */
+	assert(strcmp(last[0], "spotify:track:6EGkbPJrb88STcdfMu1j1y") == 0);
+	assert(!last[1][0] && !last[2][0]);
 	assert(strcmp(uris[0], "spotify:playlist:37i9dQZF1EYkqdzj48dyYq") == 0);
 	assert(strcmp(uris[1], "spotify:playlist:5pi5MhptTMnmV8L8Q6cJv1") == 0);
 	assert(strcmp(uris[2], "spotify:playlist:4kdfYi4mA3WKP0fqpvY3bD") == 0);
-	assert(sp_parse_recent_playlists(JSON, strlen(JSON), uris, 1) == 1);
+	assert(sp_parse_recent_playlists(JSON, strlen(JSON), uris, NULL, 1) == 1);
 	/* Cut short: a value that ends before its quote is dropped, one that
 	 * closed before the cut is kept. */
-	assert(sp_parse_recent_playlists(JSON, 60, uris, 4) == 0);
-	assert(sp_parse_recent_playlists(JSON, 70, uris, 4) == 1);
-	assert(sp_parse_recent_playlists("{}", 2, uris, 4) == 0);
+	assert(sp_parse_recent_playlists(JSON, 60, uris, NULL, 4) == 0);
+	assert(sp_parse_recent_playlists(JSON, 70, uris, NULL, 4) == 1);
+	assert(sp_parse_recent_playlists("{}", 2, uris, NULL, 4) == 0);
+
+	/* Liked Songs, trimmed from the real answer (probe_meta step 16). */
+	static const char LIKED[] =
+	    "{\"metadata\":{\"context_owner\":\"spotify:user:abc\"},"
+	    "\"pages\":[{\"tracks\":["
+	    "{\"uri\":\"spotify:track:1BLOVHYYlH4JUHQGcpt75R\","
+	    "\"metadata\":{\"added_at\":\"1790203910000\"}},"
+	    "{\"uri\":\"spotify:track:2to8o6eQqWD4wBjMIvizGW\"},"
+	    "{\"uri\":\"spotify:track:3Y4rUyw7XBCK6hGHCOt6rp\"}]}],"
+	    "\"uri\":\"spotify:user:abc:collection\"}";
+	char liked[2][SP_URI_MAX];
+	int total = 0;
+	assert(sp_parse_liked(LIKED, strlen(LIKED), liked, 2, &total) == 2);
+	assert(total == 3);
+	assert(strcmp(liked[0], "spotify:track:1BLOVHYYlH4JUHQGcpt75R") == 0);
+	assert(strcmp(liked[1], "spotify:track:2to8o6eQqWD4wBjMIvizGW") == 0);
+	assert(sp_parse_liked("{}", 2, liked, 2, &total) == 0 && total == 0);
 }
 
 static void set_ref(sp_playlist_ref *r, const char *uri, const char *name)
@@ -939,14 +965,107 @@ static void test_meta_parse_batch(void)
 
 static void test_queue_boundaries(void)
 {
-	assert(playback_queue_step(0, 3, -1) == -1);
-	assert(playback_queue_step(0, 3, 1) == 1);
-	assert(playback_queue_step(1, 3, -1) == 0);
-	assert(playback_queue_step(1, 3, 1) == 2);
-	assert(playback_queue_step(2, 3, 1) == -1);
-	assert(playback_queue_step(0, 0, 1) == -1);
-	assert(playback_queue_step(3, 3, -1) == -1);
-	assert(playback_queue_step(1, 3, 0) == -1);
+	assert(queue_step(0, 3, -1) == -1);
+	assert(queue_step(0, 3, 1) == 1);
+	assert(queue_step(1, 3, -1) == 0);
+	assert(queue_step(1, 3, 1) == 2);
+	assert(queue_step(2, 3, 1) == -1);
+	assert(queue_step(0, 0, 1) == -1);
+	assert(queue_step(3, 3, -1) == -1);
+	assert(queue_step(1, 3, 0) == -1);
+
+	assert(!queue_wants_more(-1, 3));
+	assert(!queue_wants_more(0, 4));
+	assert(queue_wants_more(0, 3));
+	assert(queue_wants_more(5, 6));
+}
+
+/* Every index of 0..count-1 exactly once. */
+static bool queue_is_permutation(const int *order, int count)
+{
+	bool seen[64] = {0};
+	assert(count <= 64);
+	for (int i = 0; i < count; i++) {
+		if (order[i] < 0 || order[i] >= count || seen[order[i]])
+			return false;
+		seen[order[i]] = true;
+	}
+	return true;
+}
+
+static void test_queue_order(void)
+{
+	int order[64];
+	uint32_t rng = 12345;
+
+	/* In order: the list from the chosen track, the earlier ones behind. */
+	assert(queue_order_start(order, 5, 2, false, &rng) == 2);
+	for (int i = 0; i < 5; i++)
+		assert(order[i] == i);
+	assert(queue_order_start(order, 5, 5, false, &rng) == -1);
+	assert(queue_order_start(order, 0, 0, true, &rng) == -1);
+
+	/* Shuffled: the chosen track first, every track once, and not the
+	 * list's order every time. */
+	bool moved = false;
+	for (int round = 0; round < 20; round++) {
+		assert(queue_order_start(order, 40, 7, true, &rng) == 0);
+		assert(order[0] == 7);
+		assert(queue_is_permutation(order, 40));
+		for (int i = 1; i < 40 && !moved; i++)
+			moved = order[i] != (i == 7 ? 0 : i);
+	}
+	assert(moved);
+	/* A single track, and the first one, shuffle fine. */
+	assert(queue_order_start(order, 1, 0, true, &rng) == 0 && order[0] == 0);
+	assert(queue_order_start(order, 3, 0, true, &rng) == 0 && order[0] == 0);
+	assert(queue_is_permutation(order, 3));
+
+	/* Switched off while position 4 plays: the list's order again, from
+	 * that same track. */
+	queue_order_start(order, 10, 3, true, &rng);
+	int track = order[4];
+	int pos = queue_order_reshuffle(order, 10, 4, false, &rng);
+	assert(pos == track && order[pos] == track);
+	for (int i = 0; i < 10; i++)
+		assert(order[i] == i);
+	/* Switched on: that track first, the rest after it. */
+	pos = queue_order_reshuffle(order, 10, pos, true, &rng);
+	assert(pos == 0 && order[0] == track);
+	assert(queue_is_permutation(order, 10));
+
+	/* Appended in order: after the rest. */
+	queue_order_start(order, 3, 1, false, &rng);
+	assert(queue_order_append(order, 3, 2, 1, false, &rng) == 5);
+	for (int i = 0; i < 5; i++)
+		assert(order[i] == i);
+	/* Appended shuffled: what already played keeps its place. */
+	queue_order_start(order, 6, 4, true, &rng);
+	int played[3] = { order[0], order[1], order[2] };
+	assert(queue_order_append(order, 6, 20, 2, true, &rng) == 26);
+	assert(queue_is_permutation(order, 26));
+	for (int i = 0; i < 3; i++)
+		assert(order[i] == played[i]);
+}
+
+static void test_queue_drop_known(void)
+{
+	static sp_track queue[2], fresh[5];
+	memset(queue, 0, sizeof(queue));
+	memset(fresh, 0, sizeof(fresh));
+	strcpy(queue[0].uri, "spotify:track:a");
+	strcpy(queue[1].uri, "spotify:track:b");
+	strcpy(fresh[0].uri, "spotify:track:a");   /* the seed back */
+	strcpy(fresh[1].uri, "spotify:track:c");
+	strcpy(fresh[2].uri, "spotify:track:c");   /* twice in one batch */
+	/* fresh[3]: no URI */
+	strcpy(fresh[4].uri, "spotify:track:d");
+	strcpy(fresh[4].name, "D");
+	assert(queue_drop_known(queue, 2, fresh, 5) == 2);
+	assert(strcmp(fresh[0].uri, "spotify:track:c") == 0);
+	assert(strcmp(fresh[1].uri, "spotify:track:d") == 0);
+	assert(strcmp(fresh[1].name, "D") == 0);
+	assert(queue_drop_known(queue, 2, fresh, 0) == 0);
 }
 
 /* The conversion specifiers of a printf format, flags and widths included,
@@ -984,11 +1103,14 @@ static void test_language_tables(void)
 			       strcmp(text, "Album") == 0 ||
 			       strcmp(text, "Album: %s") == 0 ||
 			       strcmp(text, "EP") == 0 ||
+			       strcmp(text, "Premium") == 0 ||
 			       strcmp(text, "3DSpotify") == 0);
-			/* The tables stay ASCII until lifted on purpose (lang.h). */
-			for (const char *p = text; *p; p++)
-				assert((unsigned char)*p >= 0x20 &&
-				       (unsigned char)*p < 0x7f);
+			/* Valid UTF-8 with no control characters (lang.h). */
+			uint32_t cp;
+			size_t len;
+			for (const char *p = text;
+			     (len = text_utf8_decode(p, &cp)) > 0; p += len)
+				assert(cp >= 0x20 && cp != 0x7f && cp != 0xFFFD);
 			char expected[64], actual[64];
 			format_signature(lang_text(LANG_EN, (str_id)id), expected,
 			                 sizeof(expected));
@@ -2065,6 +2187,77 @@ static void test_player_layout(void)
 	assert(player_fill_px(300, 0) == 0 && player_fill_px(300, -5) == 0);
 	assert(player_fill_px(300, 1000) == 300 && player_fill_px(300, 2000) == 300);
 	assert(player_fill_px(0, 500) == 0);
+
+	/* The bars' touch zones: each holds its bar, they meet without
+	 * overlapping, below the controls and above the button bar. */
+	ui_rect seek = player_seek_zone(40);
+	ui_rect vol = player_volume_zone(40);
+	assert(ui_rect_contains(seek, progress.x, progress.y));
+	assert(ui_rect_contains(seek, progress.x + progress.w - 1,
+	                        progress.y + progress.h - 1));
+	assert(ui_rect_contains(vol, volume.x, volume.y));
+	assert(ui_rect_contains(vol, volume.x + volume.w - 1,
+	                        volume.y + volume.h - 1));
+	assert(seek.y + seek.h == vol.y);
+	assert(seek.y > play.y + play.h);
+	assert(vol.y + vol.h == player_hints_rect().y);
+	assert(!ui_rect_contains(vol, SP_2, volume.y));   /* the "Vol." label */
+	/* A touch along a bar, its ends clamped. */
+	assert(player_bar_permille(progress, progress.x - 5) == 0);
+	assert(player_bar_permille(progress, progress.x) == 0);
+	assert(player_bar_permille(progress, progress.x + progress.w / 2) == 500);
+	assert(player_bar_permille(progress, progress.x + progress.w) == 1000);
+	assert(player_bar_permille(progress, SCREEN_BOTTOM_W) == 1000);
+	ui_rect empty = { 0, 0, 0, 0 };
+	assert(player_bar_permille(empty, 10) == 0);
+}
+
+static void test_stream_chunks(void)
+{
+	enum { LEN = 3 * STREAM_CHUNK + 100 };   /* 4 chunks, the last short */
+	uint8_t done[4] = {0};
+	assert(stream_chunk_count(LEN) == 4);
+	assert(stream_chunk_count(0) == 0);
+	assert(stream_chunk_floor(STREAM_CHUNK + 5) == STREAM_CHUNK);
+
+	/* Nothing yet: nothing readable; the live span from 0 is. */
+	assert(stream_available(done, LEN, 0, 10) == 10);
+	assert(stream_available(done, LEN, 500, 10) == 500);
+	/* The live span marks what it finishes, the short last chunk too. */
+	size_t next = 0;
+	stream_mark(done, LEN, STREAM_CHUNK - 1, &next);
+	assert(next == 0 && !done[0]);
+	stream_mark(done, LEN, STREAM_CHUNK + 10, &next);
+	assert(next == 1 && done[0] && !done[1]);
+	assert(stream_available(done, LEN, STREAM_CHUNK + 10, 10) ==
+	       STREAM_CHUNK + 10);
+
+	/* A seek to chunk 3: the span moves there and finishes the file. */
+	next = 3;
+	stream_mark(done, LEN, LEN, &next);
+	assert(next == 4 && done[3]);
+	/* From chunk 0 the bytes end where chunk 1 is missing, whatever the
+	 * live span is doing elsewhere. */
+	assert(stream_available(done, LEN, LEN, 10) == STREAM_CHUNK);
+	/* A stale watermark from an older span is not trusted: the live span
+	 * must be in the very next chunk. */
+	assert(stream_available(done, LEN, 3 * STREAM_CHUNK, 10) == STREAM_CHUNK);
+	assert(stream_available(done, LEN, LEN, 3 * STREAM_CHUNK + 5) == LEN);
+	assert(stream_available(done, LEN, 0, LEN) == LEN);
+	/* Inside the hole: nothing. */
+	assert(stream_available(done, LEN, LEN, 2 * STREAM_CHUNK + 1) ==
+	       2 * STREAM_CHUNK + 1);
+
+	/* The next missing chunk from where the decoder reads, past the end
+	 * back to the start. */
+	assert(stream_next_missing(done, LEN, 0) == STREAM_CHUNK);
+	assert(stream_next_missing(done, LEN, 2 * STREAM_CHUNK + 7) ==
+	       2 * STREAM_CHUNK);
+	assert(stream_next_missing(done, LEN, 3 * STREAM_CHUNK) == STREAM_CHUNK);
+	assert(stream_next_missing(done, LEN, LEN + 50) == STREAM_CHUNK);
+	done[1] = done[2] = 1;
+	assert(stream_next_missing(done, LEN, 0) == LEN);
+	assert(stream_next_missing(done, 0, 0) == 0);
 }
 
 static void test_player_shared_helpers(void)
@@ -2278,7 +2471,9 @@ static void test_top_mode(void)
 			/* A detail on the tab takes the top screen, music or not. */
 			assert(top_mode_for((app_tab)tab, phase, true) == TOP_DETAIL);
 			top_mode mode = top_mode_for((app_tab)tab, phase, false);
-			if (!music)
+			if (tab == TAB_SETTINGS)
+				assert(mode == TOP_ABOUT);
+			else if (!music)
 				assert(mode == TOP_LOGO);
 			else if (tab == TAB_PLAYER)
 				assert(mode == TOP_ART_BIG);
@@ -2597,6 +2792,198 @@ static void test_login_notice_and_hints(void)
 	assert(login_hints_fit(glyph, wide, 0, 100, show));
 }
 
+static void test_recent_searches(void)
+{
+	recent_list r = { .count = 0 };
+	char out[RECENT_SERIAL_SIZE];
+
+	/* Blank queries are not remembered. */
+	assert(!recent_push(&r, "   "));
+	assert(!recent_push(&r, ""));
+	assert(r.count == 0);
+	assert(recent_serialize(&r, out, sizeof(out)) && out[0] == '\0');
+
+	/* Newest first; the oldest falls off past RECENT_MAX. */
+	assert(recent_push(&r, "one"));
+	assert(recent_push(&r, " two "));
+	assert(recent_push(&r, "three"));
+	assert(recent_push(&r, "four"));
+	assert(r.count == RECENT_MAX);
+	assert(strcmp(r.items[0], "four") == 0);
+	assert(strcmp(r.items[1], "three") == 0);
+	assert(strcmp(r.items[2], "two") == 0);
+
+	/* A repeat moves up, whatever its case, and shows as typed last. */
+	assert(recent_push(&r, "TWO"));
+	assert(r.count == RECENT_MAX);
+	assert(strcmp(r.items[0], "TWO") == 0);
+	assert(strcmp(r.items[1], "four") == 0);
+	assert(strcmp(r.items[2], "three") == 0);
+	assert(recent_push(&r, "TWO"));
+	assert(strcmp(r.items[0], "TWO") == 0 && r.count == RECENT_MAX);
+
+	/* Control characters could break the config line or the separator. */
+	recent_list c = { .count = 0 };
+	assert(recent_push(&c, "a\x1f" "b\nc"));
+	assert(strcmp(c.items[0], "a b c") == 0);
+
+	/* Round trip through the config value. */
+	assert(recent_serialize(&r, out, sizeof(out)));
+	assert(strcmp(out, "TWO\x1f" "four\x1f" "three") == 0);
+	recent_list back;
+	recent_parse(&back, out);
+	assert(back.count == RECENT_MAX);
+	for (int i = 0; i < RECENT_MAX; i++)
+		assert(strcmp(back.items[i], r.items[i]) == 0);
+	assert(!recent_serialize(&r, out, 6));
+
+	/* A value edited by hand: blanks, repeats and extras are dropped. */
+	recent_parse(&back, "x\x1f\x1fX\x1fy\x1fz");
+	assert(back.count == 1 && strcmp(back.items[0], "x") == 0);
+	recent_parse(&back, NULL);
+	assert(back.count == 0);
+	recent_parse(&back, "solo");
+	assert(back.count == 1 && strcmp(back.items[0], "solo") == 0);
+
+	/* Full-length queries survive the round trip. */
+	recent_list l = { .count = 0 };
+	char longq[RECENT_QUERY_SIZE];
+	for (int i = 0; i < RECENT_MAX; i++) {
+		memset(longq, 'a' + i, sizeof(longq) - 1);
+		longq[sizeof(longq) - 1] = '\0';
+		assert(recent_push(&l, longq));
+	}
+	assert(recent_serialize(&l, out, sizeof(out)));
+	recent_parse(&back, out);
+	assert(back.count == RECENT_MAX);
+	for (int i = 0; i < RECENT_MAX; i++)
+		assert(strcmp(back.items[i], l.items[i]) == 0);
+
+	/* The idle layout: button, label and rows between the bars. */
+	ui_rect button = list_idle_button_rect(100);
+	assert(button.y >= list_top() + SP_1);
+	assert(button.x * 2 + button.w == SCREEN_BOTTOM_W);
+	assert(list_recent_label_cy() > button.y + button.h);
+	ui_rect first = list_recent_rect(0);
+	assert(first.y > list_recent_label_cy());
+	assert(first.h >= TOUCH_MIN);
+	for (int i = 1; i < RECENT_MAX; i++)
+		assert(list_recent_rect(i).y >= list_recent_rect(i - 1).y +
+		       list_recent_rect(i - 1).h);
+	ui_rect last = list_recent_rect(RECENT_MAX - 1);
+	assert(last.y + last.h + SHADOW_OFF + SP_1 <= list_hints_rect().y);
+}
+
+static void test_art_cache(void)
+{
+	/* A free slot first, else the least recently used. */
+	bool used[4] = { true, false, true, true };
+	unsigned stamps[4] = { 5, 0, 2, 9 };
+	assert(art_cache_victim(used, stamps, 4) == 1);
+	/* The oldest in use, for the byte budget, skips the free slot. */
+	assert(art_cache_oldest(used, stamps, 4) == 2);
+	bool none[2] = { false, false };
+	assert(art_cache_oldest(none, stamps, 2) == -1);
+	used[1] = true;
+	stamps[1] = 7;
+	assert(art_cache_victim(used, stamps, 4) == 2);
+	/* Stamps that wrapped round still order by use. */
+	unsigned wrapped[2] = { 0xFFFFFFFEu, 1u };
+	bool both[2] = { true, true };
+	assert(art_cache_victim(both, wrapped, 2) == 0);
+	assert(art_cache_victim(both, wrapped, 0) == -1);
+}
+
+static void test_text_compose(void)
+{
+	char out[64];
+
+	/* Plain text, precomposed accents and other scripts pass unchanged. */
+	assert(text_compose("Hello", out, sizeof(out)) == 5);
+	assert(strcmp(out, "Hello") == 0);
+	text_compose("Canci\xc3\xb3n espa\xc3\xb1ola", out, sizeof(out));
+	assert(strcmp(out, "Canci\xc3\xb3n espa\xc3\xb1ola") == 0);
+	text_compose("\xec\x82\xac\xeb\x9e\x91 \xe7\x88\xb1", out, sizeof(out));
+	assert(strcmp(out, "\xec\x82\xac\xeb\x9e\x91 \xe7\x88\xb1") == 0);
+
+	/* Decomposed accents become the one character: e + U+0301 -> é,
+	 * n + U+0303 -> ñ, U + U+0308 -> Ü. */
+	text_compose("Cafe\xcc\x81 man\xcc\x83" "ana U\xcc\x88", out, sizeof(out));
+	assert(strcmp(out, "Caf\xc3\xa9 ma\xc3\xb1" "ana \xc3\x9c") == 0);
+
+	/* A mark with nothing to compose with is dropped, as are variation
+	 * selectors; a second mark after a composed letter too. */
+	text_compose("x\xcc\x81y", out, sizeof(out));
+	assert(strcmp(out, "xy") == 0);
+	text_compose("\xcc\x81" "a", out, sizeof(out));
+	assert(strcmp(out, "a") == 0);
+	text_compose("e\xcc\x81\xcc\x88", out, sizeof(out));
+	assert(strcmp(out, "\xc3\xa9") == 0);
+	text_compose("\xe2\x9d\xa4\xef\xb8\x8f", out, sizeof(out));
+	assert(strcmp(out, "\xe2\x9d\xa4") == 0);
+
+	/* Korean jamo: U+1112 U+1161 U+11AB -> 한 (U+D55C), and without
+	 * the final consonant U+1112 U+1161 -> 하 (U+D558). */
+	text_compose("\xe1\x84\x92\xe1\x85\xa1\xe1\x86\xab", out, sizeof(out));
+	assert(strcmp(out, "\xed\x95\x9c") == 0);
+	text_compose("\xe1\x84\x92\xe1\x85\xa1", out, sizeof(out));
+	assert(strcmp(out, "\xed\x95\x98") == 0);
+
+	/* Malformed bytes read as U+FFFD, one per byte. */
+	text_compose("a\xff" "b", out, sizeof(out));
+	assert(strcmp(out, "a\xef\xbf\xbd" "b") == 0);
+	text_compose("\xc3", out, sizeof(out));
+	assert(strcmp(out, "\xef\xbf\xbd") == 0);
+
+	/* Cut on a character boundary when it does not fit. */
+	assert(text_compose("ab\xc3\xa9", out, 4) == 2);
+	assert(strcmp(out, "ab") == 0);
+	assert(text_compose("abc", out, 1) == 0 && out[0] == '\0');
+
+	/* The round trip of the UTF-8 helpers. */
+	uint32_t cps[] = { 0x41, 0xE9, 0x20AC, 0xD55C, 0x1F600 };
+	for (size_t i = 0; i < sizeof(cps) / sizeof(cps[0]); i++) {
+		char bytes[5] = {0};
+		size_t n = text_utf8_encode(cps[i], bytes);
+		uint32_t back;
+		assert(text_utf8_decode(bytes, &back) == n && back == cps[i]);
+	}
+	uint32_t cp;
+	assert(text_utf8_decode("\xc0\xaf", &cp) == 1 && cp == 0xFFFD);
+	assert(text_utf8_decode("\xed\xa0\x80", &cp) == 1 && cp == 0xFFFD);
+}
+
+static void test_about_layout(void)
+{
+	/* The card: inside the margins, the picture inside it. */
+	ui_rect card = about_card_rect();
+	ui_rect avatar = about_avatar_rect();
+	assert(card.x == ABOUT_MARGIN && card.y == ABOUT_MARGIN);
+	assert(card.x * 2 + card.w == SCREEN_TOP_W);
+	assert(avatar.x > card.x && avatar.y > card.y);
+	assert(avatar.x + avatar.w < card.x + card.w);
+	assert(avatar.y + avatar.h < card.y + card.h);
+	assert(about_card_text_x() > avatar.x + avatar.w);
+	assert(about_card_text_x() + about_card_text_w() < card.x + card.w);
+
+	/* The credits: under the card, evenly spaced, in two columns that
+	 * end at the right margin. */
+	assert(about_row_cy(0) - ABOUT_ROW_PITCH / 2 >= card.y + card.h + SP_2);
+	for (int i = 1; i < ABOUT_ROWS; i++)
+		assert(about_row_cy(i) - about_row_cy(i - 1) == ABOUT_ROW_PITCH);
+	assert(about_value_x() > about_label_x());
+	assert(about_value_x() + about_value_w() ==
+	       SCREEN_TOP_W - ABOUT_MARGIN);
+
+	/* The rule under the last row, and room for three lines of notice
+	 * (t_meta, 14 px) above the bottom edge. */
+	ui_rect rule = about_rule_rect();
+	assert(rule.y > about_row_cy(ABOUT_ROWS - 1) + ABOUT_ROW_PITCH / 2 - 1);
+	assert(about_notice_y() > rule.y);
+	assert(about_notice_y() + 3 * 14 <= SCREEN_H);
+	assert(about_notice_w() == card.w);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -2607,9 +2994,14 @@ int main(void)
 	test_tabs();
 	test_settings_layout();
 	test_player_layout();
+	test_stream_chunks();
 	test_player_shared_helpers();
 	test_now_layout();
 	test_list_bubbles();
+	test_recent_searches();
+	test_art_cache();
+	test_text_compose();
+	test_about_layout();
 	test_spinner();
 	test_top_mode();
 	test_list_drag();
@@ -2653,6 +3045,8 @@ int main(void)
 	test_download_retry_delay();
 	test_power_policy();
 	test_queue_boundaries();
+	test_queue_order();
+	test_queue_drop_known();
 	test_language_tables();
 	test_language_switching();
 	return 0;

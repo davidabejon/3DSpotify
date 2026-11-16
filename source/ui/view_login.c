@@ -7,6 +7,7 @@
 #include "press_logic.h"
 #include "qrcodegen.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -185,7 +186,7 @@ void view_login_error(str_id next_category, const char *next_detail,
 
 static void parse(C2D_Text *text, const char *string)
 {
-	C2D_TextParse(text, text_buf, string);
+	ui_parse(text, text_buf, string);
 	C2D_TextOptimize(text);
 }
 

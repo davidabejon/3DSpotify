@@ -44,8 +44,14 @@ home_feed_state home_feed_get_state(void);
 /* Bumped on every change of state or content, so a view that was not on
  * screen when it happened still notices. */
 unsigned home_feed_generation(void);
-/* The playlists, valid while READY. */
+/* The playlists, valid while READY. The first is always Liked Songs
+ * (SP_LIKED_URI, no name or cover of its own: the view names it). */
 const sp_playlist_ref *home_feed_items(int *count);
+/* The last track played in playlist `index`'s context, from the history,
+ * as "title - artist" ("" when unknown), for the preview card. It may not
+ * be one of the playlist's own (autoplay continues past the end:
+ * probe_meta step 17), so it is only shown, never focused. */
+const char *home_feed_resume_text(int index);
 /* How many playlists there are in all, which may exceed what is kept. */
 int  home_feed_total(void);
 /* Whether the order comes from the play history ("Recent") or only from

@@ -10,9 +10,11 @@
  * Album and artist: while loading, skeleton rows under a "Loading..."
  * bubble, B cancelling; if it failed, the notice with the reason and a
  * retry button; then the list of tracks (track_list.h) with
- * "[A] Play [X] Detail [B] Back": A, or tapping the focused row, plays the
- * list from that row; X opens that track's detail. An album's rows show
- * their position, an artist's their cover thumbnail.
+ * "[A] Play [X] Detail [Y] Shuffle/In order [B] Back": A, or tapping the
+ * focused row, plays the list from that row; X opens that track's detail;
+ * Y switches the order the lists play in, which the bar shows, and a bubble
+ * confirms. An album's rows show their position, an artist's their cover
+ * thumbnail.
  *
  * Every call takes the document on screen. A different level starts with
  * no press, focus or bubble left over; the same level that finished
@@ -46,7 +48,10 @@ typedef enum {
 	/* B: one level back (while loading, that cancels the load). */
 	DETAIL_ACTION_BACK,
 	/* SELECT: switch the language; the view shows the bubble itself. */
-	DETAIL_ACTION_LANGUAGE
+	DETAIL_ACTION_LANGUAGE,
+	/* A list's Y: switch shuffle on or off, then view_detail_set_shuffle
+	 * with the new state; the view shows the bubble itself. */
+	DETAIL_ACTION_SHUFFLE
 } detail_action;
 
 /* After ui_init and icons_init. */
@@ -60,6 +65,10 @@ void view_detail_enter(void);
 /* Once per frame, after hidScanInput, with that frame's new key presses.
  * START and the tab bar stay with the caller. */
 detail_action view_detail_update(detail_doc *doc, u32 down);
+
+/* Whether lists play shuffled, for Y's label and its bubble: at start-up
+ * and after every DETAIL_ACTION_SHUFFLE. */
+void view_detail_set_shuffle(bool on);
 
 bool view_detail_dirty(const detail_doc *doc);
 

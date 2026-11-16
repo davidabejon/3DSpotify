@@ -20,6 +20,8 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HOME_FAILED_TITLE] = "Could not load your playlists",
 	[STR_HINT_OPEN] = "Open",
 	[STR_PLAYLIST_TYPE] = "Playlist",
+	[STR_LIKED_SONGS] = "Liked Songs",
+	[STR_RESUME_FMT] = "Last played: %s",
 
 	/* Results view. */
 	[STR_RESULTS_SEARCHING] = "Searching...",
@@ -36,6 +38,10 @@ const char *const lang_strings_en[STR_COUNT] = {
 
 	/* Detail views. */
 	[STR_HINT_DETAIL] = "Detail",
+	[STR_HINT_SHUFFLE_ON] = "Shuffle",
+	[STR_HINT_SHUFFLE_OFF] = "In order",
+	[STR_SHUFFLE_ON] = "Shuffle on",
+	[STR_SHUFFLE_OFF] = "Shuffle off",
 	[STR_DETAIL_PLAY] = "Play",
 	[STR_DETAIL_ARTIST_FMT] = "Artist: %s",
 	[STR_DETAIL_ALBUM_FMT] = "Album: %s",
@@ -58,6 +64,16 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",
 	[STR_SETTINGS_RECONNECT] = "Reconnect",
 	[STR_SETTINGS_PAIR] = "Pair another account",
+	[STR_ABOUT_USER_FMT] = "User: %s",
+	[STR_ABOUT_PLAN_PREMIUM] = "Premium",
+	[STR_ABOUT_PLAN_FREE] = "Free",
+	[STR_ABOUT_DEVELOPER] = "Developed by",
+	[STR_ABOUT_BASED_ON] = "Based on",
+	[STR_ABOUT_QR] = "QR codes",
+	[STR_ABOUT_LICENSE] = "License",
+	[STR_ABOUT_DISCLAIMER] = "Unofficial project, not affiliated with or "
+	                         "endorsed by Spotify AB. Spotify is a trademark "
+	                         "of Spotify AB.",
 
 	/* Session start-up. */
 	[STR_LOGIN_CONNECTING] = "Renewing credentials and connecting...",
@@ -119,6 +135,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_ERR_DETAIL_THREAD] = "Could not start the loading task.",
 	[STR_RESULTS_EMPTY] = "No songs found.",
 	[STR_RESULTS_IDLE] = "Nothing searched yet.",
+	[STR_RESULTS_RECENT] = "Recent searches",
 
 	/* Playback. */
 	[STR_PLAYER_ART_LOADING] = "Loading cover art...",

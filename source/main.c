@@ -7,6 +7,7 @@
 #include <3ds/thread.h>
 
 #include "ap3ds.h"
+#include "art_cache.h"
 #include "artwork.h"
 #include "cfg3ds.h"
 #include "details.h"
@@ -19,6 +20,8 @@
 #include "pair3ds.h"
 #include "player_logic.h"
 #include "power_logic.h"
+#include "queue_feed.h"
+#include "queue_logic.h"
 #include "spclient.h"
 #include "tabbar.h"
 #include "thumbs.h"
@@ -26,6 +29,7 @@
 #include "tls3ds.h"
 #include "top.h"
 #include "ui.h"
+#include "ui_font.h"
 #include "view_detail.h"
 #include "view_home.h"
 #include "view_login.h"
@@ -51,7 +55,8 @@ typedef struct {
 	char host[128];
 	char library_token[1024];
 	/* The canonical username, which the playlist paths name. Not a secret,
-	 * but personal: never logged nor drawn. */
+	 * but personal: never logged, and drawn only on the Settings top
+	 * screen, the user's own (top_about.h). */
 	char username[128];
 	char oauth_token[1280];
 	char refresh_token[512];
@@ -93,7 +98,36 @@ static Thread search_thread;
 #define PLAYBACK_QUEUE_MAX DETAIL_PLAYLIST_MAX
 static sp_track playback_queue[PLAYBACK_QUEUE_MAX];
 static int playback_queue_count;
+/* What plays when: playback_queue's indexes in the order they play, and
+ * the position playing (queue_logic.h). The tracks keep their list's
+ * order, so shuffling only rewrites this. */
+static int playback_order[PLAYBACK_QUEUE_MAX];
+static int queue_pos;
+static uint32_t queue_rng;
+/* Lists play shuffled: the setting, kept in the config. It applies to a
+ * queue that came from a list (an album, an artist, a playlist). */
+static bool shuffle_on;
+/* Where the queue came from, which says what it grows with (queue_feed.h):
+ * a list is all there is; a playlist still has pages its detail had not
+ * loaded; a radio, started from a single track, asks for more as it runs
+ * out. */
+typedef enum { QUEUE_LIST, QUEUE_PLAYLIST, QUEUE_RADIO } queue_kind;
+static queue_kind queue_source;
+static char queue_playlist[SP_URI_MAX];   /* QUEUE_PLAYLIST: its URI... */
+static int queue_next_from;               /* ...and the first item not read */
+/* QUEUE_RADIO: the seed is this many tracks before the last; it moves back
+ * while batches bring nothing new. */
+static int queue_seed_back;
+/* Bumped by every new queue, so a load asked for an old one is dropped. */
+static unsigned queue_serial;
+/* After a load failed, or brought nothing, not again before this. */
+static uint64_t queue_retry_at;
+#define QUEUE_RETRY_MS 5000
 static float playback_volume = 0.7f;
+/* The volume, in whole percent, is kept in the config. The bar changes it
+ * every frame while dragged, so it is written once, on leaving, with
+ * whatever it ended at. */
+static int volume_saved_pct = -1;
 static artwork_state cover_art;
 /* The image of the detail card on the top screen, apart from cover_art:
  * the player waits for that one before preparing a track, so a detail
@@ -101,6 +135,11 @@ static artwork_state cover_art;
  * so going back to the same detail costs no download. */
 static artwork_state detail_art;
 static char detail_art_url[80];
+/* The account signed in and its picture, for the Settings top screen
+ * (account_start). */
+static about_account account;
+static artwork_state account_art;
+static char account_art_url[80];
 /* The last confirmed query, for the home view's repeat button. */
 static char home_query[SEARCH_QUERY_SIZE];
 /* Who owns the screens: the login view for the session start-up, pairing
@@ -152,6 +191,8 @@ static void wifi_hold(bool hold)
 
 static void frame(void);
 static void switch_tab(app_tab tab);
+static void account_start(const spotify_session *session);
+static void account_poll(void);
 
 static void secure_clear(void *data, size_t len)
 {
@@ -180,12 +221,71 @@ static void language_init(void)
 	lang_set(system == CFG_LANGUAGE_ES ? LANG_ES : LANG_EN);
 }
 
+/* Shuffle, as it was left. */
+static void shuffle_init(void)
+{
+	char value[4];
+	shuffle_on = cfg_get("shuffle", value, sizeof(value)) &&
+	             strcmp(value, "1") == 0;
+	view_detail_set_shuffle(shuffle_on);
+}
+
+/* The volume, as it was left; the default with none kept or a bad one. */
+static void volume_init(void)
+{
+	char value[8];
+	if (!cfg_get("volume", value, sizeof(value)))
+		return;
+	char *end;
+	long pct = strtol(value, &end, 10);
+	if (end == value || *end || pct < 0 || pct > 100)
+		return;
+	volume_saved_pct = (int)pct;
+	playback_volume = pct / 100.0f;
+}
+
+/* Writes the volume if it changed. Only as the app closes. */
+static void volume_save(void)
+{
+	int pct = (int)(playback_volume * 100.0f + 0.5f);
+	if (pct == volume_saved_pct)
+		return;
+	char value[8];
+	snprintf(value, sizeof(value), "%d", pct);
+	cfg_set_async("volume", value);
+	volume_saved_pct = pct;
+}
+
+/* The last searches, newest first, kept in the config (recent_logic.h). */
+_Static_assert(SEARCH_QUERY_SIZE == RECENT_QUERY_SIZE,
+               "a recent search holds a whole query");
+static recent_list recent_searches;
+
+static void recent_init(void)
+{
+	char value[RECENT_SERIAL_SIZE];
+	recent_parse(&recent_searches,
+	             cfg_get("searches", value, sizeof(value)) ? value : NULL);
+	view_results_set_recent(&recent_searches);
+}
+
+/* `query` on top of the recent searches, on the card at once. */
+static void recent_remember(const char *query)
+{
+	if (!recent_push(&recent_searches, query))
+		return;
+	char value[RECENT_SERIAL_SIZE];
+	if (recent_serialize(&recent_searches, value, sizeof(value)))
+		cfg_set_async("searches", value);
+	view_results_set_recent(&recent_searches);
+}
+
 /* SELECT, or the language button in Settings, switches the language from
  * any screen and remembers the choice. */
 static void switch_language(void)
 {
 	lang_set(lang_next(lang_get()));
-	cfg_set("language", lang_code(lang_get()));
+	cfg_set_async("language", lang_code(lang_get()));
 }
 
 static void download_worker(void *arg)
@@ -316,11 +416,20 @@ typedef struct {
 	stb_vorbis_info info;
 	/* This track's preparation thread has been started. */
 	bool preparing;
+	/* After a seek: the clock shows `seek_frame`, the sample asked for,
+	 * until the decoder finds a page and knows where it really is; the
+	 * frames it decoded since the seek, to work that out; the byte the
+	 * decoder was sent to, and whether that was already corrected once. */
+	bool seek_sync;
+	long long seek_frame;
+	long long seek_decoded;
+	size_t seek_byte;
+	bool seek_refined;
 } player_stream;
 
 typedef struct {
 	player_phase phase;
-	int index;              /* into playback_queue */
+	int index;              /* into playback_queue: playback_order[queue_pos] */
 	unsigned serial;        /* bumped by every player_play */
 	str_id stage;           /* while loading */
 	char error[256];        /* when failed */
@@ -369,9 +478,6 @@ static prepare_job prep;
  * more than one, nor two audio buffers at once. */
 static download_job dl;
 static bool dl_abandoned;
-
-/* The queue came from the results on screen, so the list follows it. */
-static bool queue_from_results;
 
 static void set_playback_volume(float volume)
 {
@@ -519,24 +625,24 @@ static void player_apply_pause(void)
 		ndspChnSetPaused(0, player.paused || player.held);
 }
 
-/* Starts track `index` of playback_queue: the cover first, then
- * player_pump goes on with the audio once it has arrived. */
-static void player_play(spotify_session *session, int index)
+/* Starts the track at position `pos` of the queue's order: the cover
+ * first, then player_pump goes on with the audio once it has arrived. */
+static void player_play(spotify_session *session, int pos)
 {
-	if (index < 0 || index >= playback_queue_count)
+	if (pos < 0 || pos >= playback_queue_count)
 		return;
+	int index = playback_order[pos];
 	player_release();
 	player.session = session;
 	player.serial++;
+	queue_pos = pos;
 	player.index = index;
 	player.paused = false;
 	player.error[0] = '\0';
 	player.phase = PLAYER_PHASE_LOADING;
 	player.stage = STR_PLAYER_ART_LOADING;
 	artwork_request(&cover_art, playback_queue[index].art_large);
-	/* The list comes back focused on the track playing. */
-	if (queue_from_results)
-		view_results_focus(index);
+	artwork_set_preview(&cover_art, playback_queue[index].art_small);
 }
 
 /* Starts the track's preparation thread. Not while a skipped track's is
@@ -669,6 +775,113 @@ static pump_step pump_end(bool success, const char *error)
 	return PUMP_END;
 }
 
+/* Sends the decoder to byte `at` and asks the download for what comes
+ * there (track_stream_seek). The audio queued so far is dropped; the clock
+ * shows `frame` until the decoder finds where it landed. */
+static void seek_to_byte(size_t at, long long frame)
+{
+	player_stream *s = &player.s;
+	ndspChnWaveBufClear(0);
+	for (int i = 0; i < PLAYER_WAVE_BUFFERS; i++) {
+		s->waves[i].status = NDSP_WBUF_DONE;
+		s->wave_submitted[i] = false;
+	}
+	/* From here it scans for the next Ogg page, which tells it the
+	 * sample it is at. */
+	stb_vorbis_flush_pushdata(s->decoder);
+	s->decoded = NULL;
+	s->decoded_samples = s->decoded_offset = 0;
+	s->input_len = 0;
+	s->pcm_frames = 0;
+	s->eof = false;
+	s->final_wave_submitted = false;
+	s->source_pos = at;
+	s->completed_audio_frames = (size_t)frame;
+	s->displayed_played_frames = (size_t)frame;
+	s->seek_sync = true;
+	s->seek_frame = frame;
+	s->seek_decoded = 0;
+	s->seek_byte = at;
+	track_stream_seek(&dl.stream, at);
+}
+
+/* The byte where sample `frame` should be, as if the bit rate were even:
+ * Vorbis is not, so the guess is corrected once the decoder knows where it
+ * landed (seek_settle). */
+static size_t seek_guess(long long frame, long long total_frames)
+{
+	size_t body = dl.stream.len - SPOTIFY_OGG_HEADER;
+	if (total_frames <= 0 || frame <= 0)
+		return SPOTIFY_OGG_HEADER;
+	if (frame >= total_frames)
+		return dl.stream.len;
+	return SPOTIFY_OGG_HEADER +
+	       (size_t)((unsigned long long)body * (unsigned long long)frame /
+	                (unsigned long long)total_frames);
+}
+
+/* A frame of `samples` came out after a seek: once the decoder knows the
+ * sample it ends at, the clock follows the real position. Landed more
+ * than PLAYER_SEEK_SLACK_S off, it seeks once more, from where it landed,
+ * at the file's average rate. */
+#define PLAYER_SEEK_SLACK_S 2
+static void seek_settle(int samples)
+{
+	player_stream *s = &player.s;
+	s->seek_decoded += samples;
+	int offset = stb_vorbis_get_sample_offset(s->decoder);
+	if (offset < 0)
+		return;
+	s->seek_sync = false;
+	long long landed = (long long)offset - s->seek_decoded;
+	if (landed < 0)
+		landed = 0;
+	long long off = landed - s->seek_frame;
+	long long slack = (long long)PLAYER_SEEK_SLACK_S * s->info.sample_rate;
+	const sp_track *track = player_track();
+	long long total = track && track->duration_ms > 0
+	                  ? (long long)track->duration_ms * s->info.sample_rate /
+	                    1000 : 0;
+	if (!s->seek_refined && total > 0 && (off > slack || off < -slack)) {
+		s->seek_refined = true;
+		long long body = (long long)(dl.stream.len - SPOTIFY_OGG_HEADER);
+		long long at = (long long)s->seek_byte - off * body / total;
+		if (at < SPOTIFY_OGG_HEADER)
+			at = SPOTIFY_OGG_HEADER;
+		if (at > (long long)dl.stream.len)
+			at = (long long)dl.stream.len;
+		seek_to_byte((size_t)at, s->seek_frame);
+		return;
+	}
+	/* The clock counts from where the audio after the seek starts. */
+	long long base = (long long)s->completed_audio_frames + off;
+	s->completed_audio_frames = base < 0 ? 0 : (size_t)base;
+	s->displayed_played_frames = s->completed_audio_frames;
+}
+
+/* Moves the track playing to `permille` of its length, paused or not.
+ * Only once the whole file is downloaded: seeking into a part still on
+ * its way left the track silent on the console. */
+static void player_seek(int permille)
+{
+	player_stream *s = &player.s;
+	const sp_track *track = player_track();
+	if (player.phase != PLAYER_PHASE_PLAYING || !s->decoder_open ||
+	    dl_abandoned || !dl.stream.data || !dl.stream.dl_done ||
+	    dl.stream.len <= SPOTIFY_OGG_HEADER || !track ||
+	    track->duration_ms <= 0)
+		return;
+	if (permille < 0)
+		permille = 0;
+	if (permille > 1000)
+		permille = 1000;
+	long long total = (long long)track->duration_ms * s->info.sample_rate /
+	                  1000;
+	long long frame = total * permille / 1000;
+	s->seek_refined = false;
+	seek_to_byte(seek_guess(frame, total), frame);
+}
+
 /* One step of download -> Vorbis -> PCM -> wave buffers. */
 static pump_step pump_once(void)
 {
@@ -682,8 +895,7 @@ static pump_step pump_once(void)
 		}
 	}
 
-	__sync_synchronize();
-	size_t available = dl.stream.downloaded;
+	size_t available = track_stream_available(&dl.stream, s->source_pos);
 	if (dl.stream.data && available > s->source_pos &&
 	    s->input_len < PLAYER_INPUT_CAPACITY) {
 		size_t copy = available - s->source_pos;
@@ -773,6 +985,8 @@ static pump_step pump_once(void)
 				return pump_end(false, tr(STR_ERR_CHANNELS_CHANGED));
 			s->decoded_samples = samples;
 			s->decoded_offset = 0;
+			if (s->seek_sync)
+				seek_settle(samples);
 			return PUMP_AGAIN;
 		}
 		if (used > 0)
@@ -780,12 +994,15 @@ static pump_step pump_once(void)
 		decoder_needs_more = true;
 	}
 
-	__sync_synchronize();
-	available = dl.stream.downloaded;
-	bool no_more_data = dl.done && s->source_pos >= available &&
+	available = track_stream_available(&dl.stream, s->source_pos);
+	/* The end of the file, or a download that stopped before the bytes the
+	 * decoder needs next. */
+	bool at_end = dl.stream.len && s->source_pos >= dl.stream.len;
+	bool stuck = dl.done && !at_end && available <= s->source_pos;
+	bool no_more_data = (at_end || stuck) &&
 	                    (!s->decoder_open || decoder_needs_more);
 	if (no_more_data && !s->eof) {
-		if (dl.stream.dl_failed) {
+		if (stuck || dl.stream.dl_failed) {
 			snprintf(error, sizeof(error), tr(STR_ERR_DOWNLOAD_FAILED_FMT),
 			         dl.stream.dl_err);
 			return pump_end(false, error);
@@ -843,8 +1060,21 @@ static void player_pump(void)
 		}
 		return;
 	}
+	if (player.phase == PLAYER_PHASE_FINISHED) {
+		/* The next track follows on its own. At the end of the queue the
+		 * player waits: a radio's next batch, once it comes, starts it. A
+		 * failed track does not skip: without a connection that would
+		 * run through the whole queue. */
+		int next = queue_step(queue_pos, playback_queue_count, 1);
+		if (next >= 0)
+			player_play(player.session, next);
+		return;
+	}
 	if (player.phase != PLAYER_PHASE_PLAYING)
 		return;
+	/* The download fills the holes after where the decoder reads first. */
+	if (!dl_abandoned)
+		track_stream_hint(&dl.stream, player.s.source_pos);
 	for (int step = 0; step < PLAYER_PUMP_MAX_STEPS; step++)
 		if (pump_once() != PUMP_AGAIN)
 			break;
@@ -859,14 +1089,13 @@ static void player_toggle(void)
 		player_apply_pause();
 	} else if (player.phase == PLAYER_PHASE_FINISHED ||
 	           player.phase == PLAYER_PHASE_FAILED) {
-		player_play(player.session, player.index);
+		player_play(player.session, queue_pos);
 	}
 }
 
 static void player_skip(int direction)
 {
-	int next = playback_queue_step(player.index, playback_queue_count,
-	                               direction);
+	int next = queue_step(queue_pos, playback_queue_count, direction);
 	if (next >= 0)
 		player_play(player.session, next);
 }
@@ -927,8 +1156,12 @@ static player_info player_snapshot(void)
 	const sp_track *track = player_track();
 	/* An abandoned download is the skipped track's, not this one's. */
 	const download_job *job = dl_abandoned ? NULL : &dl;
+	/* What is there from where the decoder reads: after a seek ahead, the
+	 * bar shows how far the audio can go on, not the holes behind. */
+	size_t ahead = job ? track_stream_available(&job->stream,
+	                                            player.s.source_pos) : 0;
 	unsigned percent = job && job->stream.total
-	                   ? (unsigned)(job->stream.downloaded * 100 /
+	                   ? (unsigned)((unsigned long long)ahead * 100 /
 	                                job->stream.total) : 0;
 	if ((job && job->done && job->stream.dl_done) ||
 	    player.phase == PLAYER_PHASE_FINISHED)
@@ -939,7 +1172,7 @@ static player_info player_snapshot(void)
 		.phase = player.phase,
 		.track = track,
 		.serial = player.serial,
-		.index = player.index,
+		.index = queue_pos,
 		.count = playback_queue_count,
 		.stage = player.stage,
 		.paused = player.paused,
@@ -947,6 +1180,10 @@ static player_info player_snapshot(void)
 		.duration_s = duration,
 		.download_pct = percent > 100 ? 100 : percent,
 		.volume_pct = (unsigned)(playback_volume * 100.0f + 0.5f),
+		.seekable = player.phase == PLAYER_PHASE_PLAYING &&
+		            player.s.decoder_open && !dl_abandoned &&
+		            dl.stream.dl_done &&
+		            dl.stream.len > SPOTIFY_OGG_HEADER && duration > 0,
 		.error = player.error,
 	};
 	return info;
@@ -1006,12 +1243,17 @@ static void power_poll(void)
  * shows on its card. */
 static const detail_doc *top_detail_sync(void)
 {
-	const detail_doc *doc = active_view == VIEW_TABS &&
-	                        details_active(active_tab)
-	                        ? details_top(active_tab) : NULL;
+	const detail_doc *doc = NULL;
+	if (active_view == VIEW_TABS && details_active(active_tab))
+		doc = details_top(active_tab);
+	else if (active_view == VIEW_TABS && active_tab == TAB_HOME)
+		/* The focused tile's card: a preview of what A opens. */
+		doc = view_home_preview();
 	if (doc && strcmp(doc->art, detail_art_url) != 0) {
 		snprintf(detail_art_url, sizeof(detail_art_url), "%s", doc->art);
 		artwork_request(&detail_art, detail_art_url);
+		/* The list's thumbnail of it, scaled up, until it comes. */
+		artwork_set_preview(&detail_art, doc->art_small);
 	}
 	return doc;
 }
@@ -1022,6 +1264,7 @@ static void frame(void)
 	static int drawn_screen = -1;
 	artwork_poll(&cover_art);
 	artwork_poll(&detail_art);
+	artwork_poll(&account_art);
 	power_poll();
 	if (screens_dark) {
 		/* Nobody can see them: drawing would only cost battery. The
@@ -1177,12 +1420,10 @@ static void search_start(const spotify_session *session, const char *query)
 	search_stop();
 	memset(&search, 0, sizeof(search));
 	snprintf(search.query, sizeof(search.query), "%s", query);
+	recent_remember(search.query);
 	snprintf(search.host, sizeof(search.host), "%s", session->host);
 	snprintf(search.library_token, sizeof(search.library_token), "%s",
 	         session->library_token);
-	/* The tracks in the list are about to change under the queue's
-	 * copy. */
-	queue_from_results = false;
 	/* Its details came from the results being replaced. */
 	details_clear(TAB_SEARCH);
 	view_results_searching();
@@ -1250,33 +1491,149 @@ static void keyboard_search(const spotify_session *session,
 	switch_tab(TAB_SEARCH);
 }
 
-static void prepare_queue(void)
+/* Makes `count` tracks the queue, a copy, and plays track `index` of it.
+ * A list's queue follows the shuffle setting; a radio's does not. A load
+ * for the queue before is not wanted any more. */
+static void queue_play(spotify_session *session, const sp_track *tracks,
+                       int count, int index, queue_kind source)
 {
-	playback_queue_count = search.count;
-	memcpy(playback_queue, search.tracks,
-	       (size_t)playback_queue_count * sizeof(playback_queue[0]));
+	if (count > PLAYBACK_QUEUE_MAX)
+		count = PLAYBACK_QUEUE_MAX;
+	if (index < 0 || index >= count)
+		return;
+	memcpy(playback_queue, tracks, (size_t)count * sizeof(playback_queue[0]));
+	playback_queue_count = count;
+	queue_source = source;
+	queue_seed_back = 0;
+	queue_serial++;
+	queue_retry_at = 0;
+	queue_feed_cancel();
+	queue_rng ^= (uint32_t)svcGetSystemTick();
+	bool shuffled = source != QUEUE_RADIO && shuffle_on;
+	player_play(session, queue_order_start(playback_order, count, index,
+	                                       shuffled, &queue_rng));
 }
 
-/* Plays the results from `index`, straight from the list: there is no
- * selection screen in between. The rest of the results are the queue, and
- * the list follows it. */
+/* A single track, and a radio from it to follow. */
+static void queue_play_radio(spotify_session *session, const sp_track *track)
+{
+	queue_play(session, track, 1, 0, QUEUE_RADIO);
+}
+
+/* A list's tracks from its focused one; a playlist with pages left goes
+ * on loading them into the queue (queue_feed.h). */
+static void queue_play_list(spotify_session *session, const detail_doc *doc)
+{
+	bool pages = doc->kind == DETAIL_PLAYLIST && doc->more;
+	queue_play(session, doc->tracks, doc->count, doc->selected,
+	           pages ? QUEUE_PLAYLIST : QUEUE_LIST);
+	if (pages) {
+		snprintf(queue_playlist, sizeof(queue_playlist), "%s", doc->uri);
+		queue_next_from = doc->next_from;
+	}
+}
+
+/* What a load brought, onto the end of the queue: in a shuffled list,
+ * among the tracks still to play. */
+static void queue_take(const queue_feed_result *r)
+{
+	int n = r->count;
+	if (queue_source == QUEUE_RADIO)
+		n = queue_drop_known(playback_queue, playback_queue_count, r->tracks,
+		                     n);
+	int room = PLAYBACK_QUEUE_MAX - playback_queue_count;
+	if (n > room)
+		n = room;
+	if (n > 0)
+		memcpy(playback_queue + playback_queue_count, r->tracks,
+		       (size_t)n * sizeof(playback_queue[0]));
+	bool shuffled = queue_source != QUEUE_RADIO && shuffle_on;
+	playback_queue_count = queue_order_append(playback_order,
+	                                          playback_queue_count, n,
+	                                          queue_pos, shuffled, &queue_rng);
+	if (queue_source == QUEUE_PLAYLIST) {
+		/* An empty page means the end, whatever the total said. */
+		queue_next_from += r->items;
+		if (r->items <= 0 || queue_next_from >= r->total)
+			queue_source = QUEUE_LIST;
+	} else if (n == 0) {
+		/* All known already: the next batch from an earlier seed, and not
+		 * at once. */
+		queue_seed_back++;
+		queue_retry_at = osGetTime() + QUEUE_RETRY_MS;
+	} else {
+		queue_seed_back = 0;
+	}
+}
+
+/* Once per frame: takes what a load brought, and starts the next one the
+ * queue needs. Never while a track prepares (STYLES.md 9): a radio's first
+ * batch comes once its seed is playing. */
+static void queue_feed_tick(const spotify_session *session)
+{
+	queue_feed_result r;
+	if (queue_feed_poll(&r) && r.tag == queue_serial) {
+		if (r.count < 0)
+			queue_retry_at = osGetTime() + QUEUE_RETRY_MS;
+		else
+			queue_take(&r);
+	}
+	if (!queue_feed_idle() || player.phase == PLAYER_PHASE_IDLE ||
+	    player_preparing() || osGetTime() < queue_retry_at ||
+	    playback_queue_count >= PLAYBACK_QUEUE_MAX)
+		return;
+	bool started = true;
+	if (queue_source == QUEUE_PLAYLIST) {
+		started = queue_feed_playlist(session->host, session->library_token,
+		                              session->username, queue_playlist,
+		                              queue_next_from, queue_serial);
+	} else if (queue_source == QUEUE_RADIO &&
+	           queue_wants_more(queue_pos, playback_queue_count)) {
+		int seed = playback_queue_count - 1 - queue_seed_back;
+		if (seed < 0)
+			seed = 0;
+		started = queue_feed_radio(session->host, session->library_token,
+		                           playback_queue[seed].uri, queue_serial);
+	}
+	if (!started)
+		queue_retry_at = osGetTime() + QUEUE_RETRY_MS;
+}
+
+/* Y in a list: the setting switches and is kept. A list's queue playing
+ * now follows at once, from the track playing, which goes on. */
+static void toggle_shuffle(void)
+{
+	shuffle_on = !shuffle_on;
+	cfg_set_async("shuffle", shuffle_on ? "1" : "0");
+	view_detail_set_shuffle(shuffle_on);
+	if (queue_source == QUEUE_RADIO || player.phase == PLAYER_PHASE_IDLE)
+		return;
+	queue_rng ^= (uint32_t)svcGetSystemTick();
+	queue_pos = queue_order_reshuffle(playback_order, playback_queue_count,
+	                                  queue_pos, shuffle_on, &queue_rng);
+}
+
+/* Plays result `index`, straight from the list: there is no selection
+ * screen in between. A result stands alone, so a radio from it follows;
+ * the other results are only what else the search found. */
 static void play_from_results(spotify_session *session, int index)
 {
+	if (index < 0 || index >= search.count)
+		return;
 	/* The thumbnails must not compete with the track's preparation
 	 * (STYLES.md 9); they resume, kept, once its download starts. */
 	view_results_allow_thumbs(false);
-	prepare_queue();
-	queue_from_results = true;
-	player_play(session, index);
+	queue_play_radio(session, &search.tracks[index]);
 	switch_tab(TAB_PLAYER);
 }
 
 /* --- Details ----------------------------------------------------------- */
 
-/* Plays the detail on top of `tab` from its focused track, with the whole
- * list it holds as the queue: the results it was opened from, or the album
- * or artist (docs/plan_vistas_detalle.md 4.1). The document is a copy, so
- * the queue is too, whatever the results do afterwards. */
+/* Plays the detail on top of `tab` from its focused track: with the whole
+ * list it holds as the queue (an album, an artist, a playlist, or the list
+ * a track's detail was opened from), or, for a track that stands alone, a
+ * radio from it. The queue is a copy, whatever the document does
+ * afterwards. */
 static void play_from_detail(spotify_session *session, app_tab tab)
 {
 	const detail_doc *doc = details_top(tab);
@@ -1292,12 +1649,10 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		/* As from the results: the thumbnails wait for the preparation
 		 * (STYLES.md 9). */
 		view_results_allow_thumbs(false);
-		playback_queue_count = doc->count < PLAYBACK_QUEUE_MAX
-		                       ? doc->count : PLAYBACK_QUEUE_MAX;
-		memcpy(playback_queue, doc->tracks,
-		       (size_t)playback_queue_count * sizeof(playback_queue[0]));
-		queue_from_results = false;
-		player_play(session, doc->selected);
+		if (doc->kind == DETAIL_TRACK && doc->single)
+			queue_play_radio(session, pick);
+		else
+			queue_play_list(session, doc);
 	}
 	/* The Playing tab shows the player, not a detail left open there; the
 	 * queue is copied, so this may be the document just played. */
@@ -1309,14 +1664,14 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 static void open_result_detail(void)
 {
 	details_open_track(TAB_SEARCH, search.tracks, search.count,
-	                   view_results_selected());
+	                   view_results_selected(), true);
 	switch_tab(TAB_SEARCH);
 }
 
 /* A link of the Playing tab: the detail of the track playing, of its
  * artist or of its album, on that tab's stack. The track detail gets a
  * copy of the queue, which may change afterwards, so "Play" there plays
- * this queue again from this track. */
+ * this queue again from this track; from a radio, a new radio from it. */
 static void open_playing_detail(detail_kind kind)
 {
 	const sp_track *track = player_track();
@@ -1331,7 +1686,7 @@ static void open_playing_detail(detail_kind kind)
 		break;
 	default:
 		details_open_track(TAB_PLAYER, playback_queue, playback_queue_count,
-		                   player.index);
+		                   player.index, queue_source == QUEUE_RADIO);
 		break;
 	}
 	switch_tab(TAB_PLAYER);
@@ -1367,7 +1722,7 @@ static void detail_input(spotify_session *session, u32 down)
 		/* The list comes along, as from the results: "Play" there queues
 		 * this album or artist. */
 		details_open_track(active_tab, doc->tracks, doc->count,
-		                   doc->selected);
+		                   doc->selected, false);
 		switch_tab(active_tab);
 		break;
 	case DETAIL_ACTION_RETRY:
@@ -1380,6 +1735,9 @@ static void detail_input(spotify_session *session, u32 down)
 		break;
 	case DETAIL_ACTION_LANGUAGE:
 		switch_language();
+		break;
+	case DETAIL_ACTION_SHUFFLE:
+		toggle_shuffle();
 		break;
 	default:
 		break;
@@ -1426,6 +1784,10 @@ typedef enum {
 static tabs_exit run_tabs(spotify_session *session)
 {
 	active_view = VIEW_TABS;
+	/* The service's text may be in any script from here on; the fonts
+	 * have had the whole sign-in to load. */
+	ui_font_wait();
+	account_start(session);
 	tabbar_reset(TAB_HOME);
 	/* In the background: the home tab shows its skeleton meanwhile. */
 	home_feed_start(session->host, session->library_token, session->username);
@@ -1440,8 +1802,11 @@ static tabs_exit run_tabs(spotify_session *session)
 
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
+		queue_feed_tick(session);
+		account_poll();
 		search_poll();
-		details_poll(active_tab, session->host, session->library_token);
+		details_poll(active_tab, session->host, session->library_token,
+		             session->username);
 		home_feed_poll();
 		/* Not stopped on leaving the tab: it only fetches the rows on
 		 * screen and the next ones anyway. */
@@ -1499,6 +1864,17 @@ static tabs_exit run_tabs(spotify_session *session)
 			case RESULTS_ACTION_BACK:
 				switch_tab(TAB_HOME);
 				break;
+			case RESULTS_ACTION_CLOSE:
+				/* Back to before the results: the button and the
+				 * recent searches. */
+				view_results_idle();
+				break;
+			case RESULTS_ACTION_RECENT:
+				snprintf(home_query, sizeof(home_query), "%s",
+				         view_results_recent_query());
+				if (home_query[0])
+					search_start(session, home_query);
+				break;
 			case RESULTS_ACTION_NEW_SEARCH:
 				keyboard_search(session, home_query);
 				break;
@@ -1529,6 +1905,12 @@ static tabs_exit run_tabs(spotify_session *session)
 				break;
 			case PLAYER_ACTION_VOLUME_DOWN:
 				set_playback_volume(playback_volume - 0.1f);
+				break;
+			case PLAYER_ACTION_SEEK:
+				player_seek(view_player_value());
+				break;
+			case PLAYER_ACTION_VOLUME_SET:
+				set_playback_volume(view_player_value() / 1000.0f);
 				break;
 			case PLAYER_ACTION_BACK:
 				switch_tab(TAB_SEARCH);
@@ -1574,6 +1956,174 @@ static tabs_exit run_tabs(spotify_session *session)
 	}
 }
 
+/* --- Account ------------------------------------------------------------- */
+
+/* The account signed in, for the Settings top screen (top_about.h): the
+ * username from the session; the name and the picture from spclient's
+ * profile view; the plan and the country from the Web API's /v1/me, which
+ * is rate-limited hard and often says no. Fetched once per session in the
+ * background and kept in the config ("profile", "profile_art") so it shows
+ * at once on the next start, and stays when a request fails. */
+#define PROFILE_SEP '\x1f'
+
+typedef struct {
+	char host[128];
+	char library_token[1024];
+	char username[128];
+	char oauth_token[1280];    /* empty: no /v1/me */
+	sp_profile profile;
+	int result;
+	volatile bool done;
+} profile_job;
+static profile_job profile;
+static Thread profile_thread;
+
+static void profile_worker(void *arg)
+{
+	profile_job *job = arg;
+	char error[96];
+	sp_profile view, me;
+	bool got_view = sp_user_profile_view(job->host, job->library_token,
+	                                     job->username, &view, error,
+	                                     sizeof(error)) == 0;
+	bool got_me = job->oauth_token[0] &&
+	              sp_user_profile(job->oauth_token, &me, error,
+	                              sizeof(error), NULL) == 0;
+	/* The profile view first for what both have. */
+	sp_profile *out = &job->profile;
+	if (got_me)
+		*out = me;
+	if (got_view) {
+		if (view.display_name[0])
+			memcpy(out->display_name, view.display_name,
+			       sizeof(out->display_name));
+		if (view.art[0])
+			memcpy(out->art, view.art, sizeof(out->art));
+	}
+	job->result = got_view || got_me ? 0 : -1;
+	secure_clear(job->library_token, sizeof(job->library_token));
+	secure_clear(job->oauth_token, sizeof(job->oauth_token));
+	__sync_synchronize();
+	job->done = true;
+}
+
+/* "name<SEP>product<SEP>country" back into the account. */
+static void account_load_cached(void)
+{
+	char value[192];
+	if (!cfg_get("profile", value, sizeof(value)))
+		return;
+	char *fields[3] = { value, NULL, NULL };
+	for (int i = 1; i < 3; i++) {
+		char *sep = fields[i - 1] ? strchr(fields[i - 1], PROFILE_SEP)
+		                          : NULL;
+		if (sep) {
+			*sep = '\0';
+			fields[i] = sep + 1;
+		}
+	}
+	/* Written by account_poll from fields of these sizes. */
+	snprintf(account.display_name, sizeof(account.display_name), "%.*s",
+	         (int)sizeof(account.display_name) - 1, fields[0]);
+	snprintf(account.product, sizeof(account.product), "%s",
+	         fields[1] ? fields[1] : "");
+	snprintf(account.country, sizeof(account.country), "%s",
+	         fields[2] ? fields[2] : "");
+}
+
+static void account_set_art(const char *url)
+{
+	if (strcmp(url, account_art_url) == 0)
+		return;
+	snprintf(account_art_url, sizeof(account_art_url), "%s", url);
+	artwork_request(&account_art, account_art_url);
+}
+
+/* With the tabs: what the config kept, then /v1/me in the background when
+ * the session's token is still good. */
+static void account_start(const spotify_session *session)
+{
+	unsigned serial = account.serial;
+	memset(&account, 0, sizeof(account));
+	account.serial = serial + 1;
+	snprintf(account.username, sizeof(account.username), "%s",
+	         session->username);
+	account_load_cached();
+	char art[80];
+	account_set_art(cfg_load_profile_art(art, sizeof(art)) ? art : "");
+	top_set_account(&account, &account_art);
+
+	if (profile_thread || !session->username[0])
+		return;
+	memset(&profile, 0, sizeof(profile));
+	snprintf(profile.host, sizeof(profile.host), "%s", session->host);
+	snprintf(profile.library_token, sizeof(profile.library_token), "%s",
+	         session->library_token);
+	snprintf(profile.username, sizeof(profile.username), "%s",
+	         session->username);
+	/* /v1/me only with a token that is still good: renewing it is the
+	 * player's business. */
+	if (session->oauth_token[0] &&
+	    session->oauth_expires_at > time(NULL) + 60)
+		snprintf(profile.oauth_token, sizeof(profile.oauth_token), "%s",
+		         session->oauth_token);
+	profile_thread = threadCreate(profile_worker, &profile, 16 * 1024,
+	                              background_priority(), -2, false);
+	if (!profile_thread)
+		secure_clear(&profile, sizeof(profile));
+}
+
+static void account_join(void)
+{
+	threadJoin(profile_thread, U64_MAX);
+	threadFree(profile_thread);
+	profile_thread = NULL;
+}
+
+/* Once per frame: takes a finished profile in, and keeps it. */
+static void account_poll(void)
+{
+	if (!profile_thread || !profile.done)
+		return;
+	__sync_synchronize();
+	account_join();
+	if (profile.result != 0)
+		return;   /* the cached answer stays */
+	/* Only what came: a field the requests did not bring (/v1/me said
+	 * no) keeps the value kept from before. */
+	const sp_profile *p = &profile.profile;
+	if (p->display_name[0])
+		snprintf(account.display_name, sizeof(account.display_name), "%s",
+		         p->display_name);
+	if (p->product[0])
+		snprintf(account.product, sizeof(account.product), "%s",
+		         p->product);
+	if (p->country[0])
+		snprintf(account.country, sizeof(account.country), "%s",
+		         p->country);
+	account.serial++;
+	char value[192];
+	snprintf(value, sizeof(value), "%s%c%s%c%s", account.display_name,
+	         PROFILE_SEP, account.product, PROFILE_SEP, account.country);
+	cfg_set_async("profile", value);
+	if (p->art[0]) {
+		cfg_set_async("profile_art", p->art);
+		account_set_art(p->art);
+	}
+}
+
+/* Leaving the tabs: the next session may be another account. */
+static void account_stop(void)
+{
+	if (profile_thread)
+		account_join();
+	secure_clear(&profile, sizeof(profile));
+	unsigned serial = account.serial;
+	secure_clear(&account, sizeof(account));
+	account.serial = serial + 1;
+	account_set_art("");
+}
+
 /* Leaving the tabs: no audio, search, details or thumbnails survive the
  * session. */
 static void stop_tabs(void)
@@ -1584,7 +2134,9 @@ static void stop_tabs(void)
 	player_stop();
 	search_stop();
 	details_stop();
+	queue_feed_stop();
 	home_feed_stop();
+	account_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */
 	thumbs_wait();
@@ -2060,9 +2612,14 @@ int main(int argc, char **argv)
 	/* Without icons, thumbnails or the logo the views still work, just
 	 * without them. */
 	icons_init();
+	/* Before any worker that fills it: the thumbnails, the covers. */
+	art_cache_init();
 	thumbs_init();
 	if (romfs_ready)
 		logo_load();
+	/* After the logo: the loader mounts the fonts' archive beside romfs.
+	 * Korean and Chinese, in the background while the session starts. */
+	ui_font_start();
 	if (!view_home_init() || !view_results_init() ||
 	    !view_player_init() || !view_settings_init() || !view_login_init() ||
 	    !view_detail_init() || !top_init()) {
@@ -2076,6 +2633,7 @@ int main(int argc, char **argv)
 		logo_free();
 		thumbs_exit();
 		icons_exit();
+		ui_font_exit();
 		ui_exit();
 		if (romfs_ready)
 			romfsExit();
@@ -2084,6 +2642,9 @@ int main(int argc, char **argv)
 	}
 	cfg_set_path(NULL);
 	language_init();
+	shuffle_init();
+	recent_init();
+	volume_init();
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
 	bool soc_ready = false;
@@ -2146,9 +2707,14 @@ failed:
 	run_error(&error, true);
 
 done:
+	volume_save();
+	/* The preferences still queued (cfg_set_async) reach the card. */
+	cfg_flush();
 	stop_tabs();
 	artwork_close(&cover_art);
 	artwork_close(&detail_art);
+	artwork_close(&account_art);
+	artwork_forget_kept();
 	secure_clear(&session, sizeof(session));
 	secure_clear(&search, sizeof(search));
 	secure_clear(playback_queue, sizeof(playback_queue));
@@ -2168,6 +2734,8 @@ done:
 	view_home_exit();
 	logo_free();
 	thumbs_exit();
+	/* After the thumbnails' worker and the covers' (artwork_close). */
+	art_cache_exit();
 	icons_exit();
 	if (screens_dark)
 		set_backlights(true);
@@ -2179,6 +2747,7 @@ done:
 	aptSetSleepAllowed(true);
 	if (ptmu_ready)
 		ptmuExit();
+	ui_font_exit();
 	ui_exit();
 	if (romfs_ready)
 		romfsExit();
