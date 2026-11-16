@@ -26,6 +26,7 @@
 #include "spotify_id.h"
 #include "settings_logic.h"
 #include "tabs_logic.h"
+#include "text_compose.h"
 #include "text_fit.h"
 #include "thumb_queue.h"
 #include "theme.h"
@@ -2887,6 +2888,65 @@ static void test_art_cache(void)
 	assert(art_cache_victim(both, wrapped, 0) == -1);
 }
 
+static void test_text_compose(void)
+{
+	char out[64];
+
+	/* Plain text, precomposed accents and other scripts pass unchanged. */
+	assert(text_compose("Hello", out, sizeof(out)) == 5);
+	assert(strcmp(out, "Hello") == 0);
+	text_compose("Canci\xc3\xb3n espa\xc3\xb1ola", out, sizeof(out));
+	assert(strcmp(out, "Canci\xc3\xb3n espa\xc3\xb1ola") == 0);
+	text_compose("\xec\x82\xac\xeb\x9e\x91 \xe7\x88\xb1", out, sizeof(out));
+	assert(strcmp(out, "\xec\x82\xac\xeb\x9e\x91 \xe7\x88\xb1") == 0);
+
+	/* Decomposed accents become the one character: e + U+0301 -> é,
+	 * n + U+0303 -> ñ, U + U+0308 -> Ü. */
+	text_compose("Cafe\xcc\x81 man\xcc\x83" "ana U\xcc\x88", out, sizeof(out));
+	assert(strcmp(out, "Caf\xc3\xa9 ma\xc3\xb1" "ana \xc3\x9c") == 0);
+
+	/* A mark with nothing to compose with is dropped, as are variation
+	 * selectors; a second mark after a composed letter too. */
+	text_compose("x\xcc\x81y", out, sizeof(out));
+	assert(strcmp(out, "xy") == 0);
+	text_compose("\xcc\x81" "a", out, sizeof(out));
+	assert(strcmp(out, "a") == 0);
+	text_compose("e\xcc\x81\xcc\x88", out, sizeof(out));
+	assert(strcmp(out, "\xc3\xa9") == 0);
+	text_compose("\xe2\x9d\xa4\xef\xb8\x8f", out, sizeof(out));
+	assert(strcmp(out, "\xe2\x9d\xa4") == 0);
+
+	/* Korean jamo: U+1112 U+1161 U+11AB -> 한 (U+D55C), and without
+	 * the final consonant U+1112 U+1161 -> 하 (U+D558). */
+	text_compose("\xe1\x84\x92\xe1\x85\xa1\xe1\x86\xab", out, sizeof(out));
+	assert(strcmp(out, "\xed\x95\x9c") == 0);
+	text_compose("\xe1\x84\x92\xe1\x85\xa1", out, sizeof(out));
+	assert(strcmp(out, "\xed\x95\x98") == 0);
+
+	/* Malformed bytes read as U+FFFD, one per byte. */
+	text_compose("a\xff" "b", out, sizeof(out));
+	assert(strcmp(out, "a\xef\xbf\xbd" "b") == 0);
+	text_compose("\xc3", out, sizeof(out));
+	assert(strcmp(out, "\xef\xbf\xbd") == 0);
+
+	/* Cut on a character boundary when it does not fit. */
+	assert(text_compose("ab\xc3\xa9", out, 4) == 2);
+	assert(strcmp(out, "ab") == 0);
+	assert(text_compose("abc", out, 1) == 0 && out[0] == '\0');
+
+	/* The round trip of the UTF-8 helpers. */
+	uint32_t cps[] = { 0x41, 0xE9, 0x20AC, 0xD55C, 0x1F600 };
+	for (size_t i = 0; i < sizeof(cps) / sizeof(cps[0]); i++) {
+		char bytes[5] = {0};
+		size_t n = text_utf8_encode(cps[i], bytes);
+		uint32_t back;
+		assert(text_utf8_decode(bytes, &back) == n && back == cps[i]);
+	}
+	uint32_t cp;
+	assert(text_utf8_decode("\xc0\xaf", &cp) == 1 && cp == 0xFFFD);
+	assert(text_utf8_decode("\xed\xa0\x80", &cp) == 1 && cp == 0xFFFD);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -2903,6 +2963,7 @@ int main(void)
 	test_list_bubbles();
 	test_recent_searches();
 	test_art_cache();
+	test_text_compose();
 	test_spinner();
 	test_top_mode();
 	test_list_drag();

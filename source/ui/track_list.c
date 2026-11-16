@@ -4,6 +4,7 @@
 #include "tabbar.h"
 #include "thumbs.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -152,7 +153,7 @@ void track_list_extend(track_list *l, int count)
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 

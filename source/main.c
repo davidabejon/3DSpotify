@@ -29,6 +29,7 @@
 #include "tls3ds.h"
 #include "top.h"
 #include "ui.h"
+#include "ui_font.h"
 #include "view_detail.h"
 #include "view_home.h"
 #include "view_login.h"
@@ -1780,6 +1781,9 @@ typedef enum {
 static tabs_exit run_tabs(spotify_session *session)
 {
 	active_view = VIEW_TABS;
+	/* The service's text may be in any script from here on; the fonts
+	 * have had the whole sign-in to load. */
+	ui_font_wait();
 	tabbar_reset(TAB_HOME);
 	/* In the background: the home tab shows its skeleton meanwhile. */
 	home_feed_start(session->host, session->library_token, session->username);
@@ -2440,6 +2444,9 @@ int main(int argc, char **argv)
 	thumbs_init();
 	if (romfs_ready)
 		logo_load();
+	/* After the logo: the loader mounts the fonts' archive beside romfs.
+	 * Korean and Chinese, in the background while the session starts. */
+	ui_font_start();
 	if (!view_home_init() || !view_results_init() ||
 	    !view_player_init() || !view_settings_init() || !view_login_init() ||
 	    !view_detail_init() || !top_init()) {
@@ -2453,6 +2460,7 @@ int main(int argc, char **argv)
 		logo_free();
 		thumbs_exit();
 		icons_exit();
+		ui_font_exit();
 		ui_exit();
 		if (romfs_ready)
 			romfsExit();
@@ -2563,6 +2571,7 @@ done:
 	aptSetSleepAllowed(true);
 	if (ptmu_ready)
 		ptmuExit();
+	ui_font_exit();
 	ui_exit();
 	if (romfs_ready)
 		romfsExit();

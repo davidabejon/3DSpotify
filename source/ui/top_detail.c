@@ -7,6 +7,7 @@
 #include "now_layout.h"
 #include "theme.h"
 #include "top_now.h"
+#include "ui_font.h"
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -66,7 +67,7 @@ void top_detail_invalidate(void)
  * instead of being cut. */
 static void set_text(C2D_Text *text, const char *string, float scale)
 {
-	C2D_TextParse(text, text_buf, string);
+	ui_parse(text, text_buf, string);
 	C2D_TextOptimize(text);
 	text_w[text - texts] = ui_px_ceil(ui_text_width(text, scale));
 }

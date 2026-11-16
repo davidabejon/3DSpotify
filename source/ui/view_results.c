@@ -7,6 +7,7 @@
 #include "tabbar.h"
 #include "theme.h"
 #include "track_list.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -208,7 +209,7 @@ int view_results_selected(void)
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 

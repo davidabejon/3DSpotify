@@ -5,6 +5,7 @@
 #include "player_logic.h"
 #include "spinner_logic.h"
 #include "text_fit.h"
+#include "ui_font.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -397,7 +398,7 @@ float ui_measure(C2D_TextBuf scratch, const char *string, float scale)
 {
 	C2D_Text text;
 	C2D_TextBufClear(scratch);
-	C2D_TextParse(&text, scratch, string);
+	ui_parse(&text, scratch, string);
 	return ui_text_width(&text, scale);
 }
 
@@ -408,6 +409,6 @@ void ui_parse_fitted(C2D_Text *text, C2D_TextBuf buf, C2D_TextBuf scratch,
 	fit_ctx fit = { scratch, scale };
 	text_fit(string, (float)width, measure_fit, &fit, fitted,
 	         sizeof(fitted));
-	C2D_TextParse(text, buf, fitted);
+	ui_parse(text, buf, fitted);
 	C2D_TextOptimize(text);
 }

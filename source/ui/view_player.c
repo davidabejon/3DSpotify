@@ -5,6 +5,7 @@
 #include "player_logic.h"
 #include "press_logic.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -140,7 +141,7 @@ void view_player_set(const player_info *next)
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 

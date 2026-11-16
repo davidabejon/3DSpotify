@@ -6,6 +6,7 @@
 #include "press_logic.h"
 #include "settings_logic.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -71,7 +72,7 @@ void view_settings_enter(void)
 
 static void parse(C2D_Text *text, const char *string)
 {
-	C2D_TextParse(text, text_buf, string);
+	ui_parse(text, text_buf, string);
 	C2D_TextOptimize(text);
 }
 
