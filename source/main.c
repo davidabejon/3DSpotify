@@ -123,13 +123,10 @@ static unsigned queue_serial;
 static uint64_t queue_retry_at;
 #define QUEUE_RETRY_MS 5000
 static float playback_volume = 0.7f;
-/* The volume, in whole percent, is kept in the config. Dragging the bar
- * changes it every frame, so it is written once it has been still for
- * VOLUME_SAVE_MS (or on leaving), not on every change: `volume_save_at`
- * is when, 0 with nothing to write. */
-#define VOLUME_SAVE_MS 1000
+/* The volume, in whole percent, is kept in the config. The bar changes it
+ * every frame while dragged, so it is written once, on leaving, with
+ * whatever it ended at. */
 static int volume_saved_pct = -1;
-static uint64_t volume_save_at;
 static artwork_state cover_art;
 /* The image of the detail card on the top screen, apart from cover_art:
  * the player waits for that one before preparing a track, so a detail
@@ -239,20 +236,16 @@ static void volume_init(void)
 	playback_volume = pct / 100.0f;
 }
 
-/* Writes a changed volume once it has been still long enough, or now when
- * `now` (the app is closing). */
-static void volume_save(bool now)
+/* Writes the volume if it changed. Only as the app closes. */
+static void volume_save(void)
 {
-	if (!volume_save_at || (!now && osGetTime() < volume_save_at))
-		return;
-	volume_save_at = 0;
 	int pct = (int)(playback_volume * 100.0f + 0.5f);
 	if (pct == volume_saved_pct)
 		return;
 	char value[8];
 	snprintf(value, sizeof(value), "%d", pct);
-	if (cfg_set("volume", value))
-		volume_saved_pct = pct;
+	cfg_set_async("volume", value);
+	volume_saved_pct = pct;
 }
 
 /* The last searches, newest first, kept in the config (recent_logic.h). */
@@ -275,7 +268,7 @@ static void recent_remember(const char *query)
 		return;
 	char value[RECENT_SERIAL_SIZE];
 	if (recent_serialize(&recent_searches, value, sizeof(value)))
-		cfg_set("searches", value);
+		cfg_set_async("searches", value);
 	view_results_set_recent(&recent_searches);
 }
 
@@ -284,7 +277,7 @@ static void recent_remember(const char *query)
 static void switch_language(void)
 {
 	lang_set(lang_next(lang_get()));
-	cfg_set("language", lang_code(lang_get()));
+	cfg_set_async("language", lang_code(lang_get()));
 }
 
 static void download_worker(void *arg)
@@ -485,8 +478,6 @@ static void set_playback_volume(float volume)
 	if (volume > 1.0f)
 		volume = 1.0f;
 	playback_volume = volume;
-	if ((int)(volume * 100.0f + 0.5f) != volume_saved_pct)
-		volume_save_at = osGetTime() + VOLUME_SAVE_MS;
 	if (!player.s.ndsp_ready)
 		return;
 	float mix[12] = {0};
@@ -1601,7 +1592,7 @@ static void queue_feed_tick(const spotify_session *session)
 static void toggle_shuffle(void)
 {
 	shuffle_on = !shuffle_on;
-	cfg_set("shuffle", shuffle_on ? "1" : "0");
+	cfg_set_async("shuffle", shuffle_on ? "1" : "0");
 	view_detail_set_shuffle(shuffle_on);
 	if (queue_source == QUEUE_RADIO || player.phase == PLAYER_PHASE_IDLE)
 		return;
@@ -1799,7 +1790,6 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		queue_feed_tick(session);
-		volume_save(false);
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token,
 		             session->username);
@@ -2534,7 +2524,9 @@ failed:
 	run_error(&error, true);
 
 done:
-	volume_save(true);
+	volume_save();
+	/* The preferences still queued (cfg_set_async) reach the card. */
+	cfg_flush();
 	stop_tabs();
 	artwork_close(&cover_art);
 	artwork_close(&detail_art);
