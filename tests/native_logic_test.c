@@ -1105,10 +1105,12 @@ static void test_language_tables(void)
 			       strcmp(text, "EP") == 0 ||
 			       strcmp(text, "Premium") == 0 ||
 			       strcmp(text, "3DSpotify") == 0);
-			/* The tables stay ASCII until lifted on purpose (lang.h). */
-			for (const char *p = text; *p; p++)
-				assert((unsigned char)*p >= 0x20 &&
-				       (unsigned char)*p < 0x7f);
+			/* Valid UTF-8 with no control characters (lang.h). */
+			uint32_t cp;
+			size_t len;
+			for (const char *p = text;
+			     (len = text_utf8_decode(p, &cp)) > 0; p += len)
+				assert(cp >= 0x20 && cp != 0x7f && cp != 0xFFFD);
 			char expected[64], actual[64];
 			format_signature(lang_text(LANG_EN, (str_id)id), expected,
 			                 sizeof(expected));

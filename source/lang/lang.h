@@ -6,8 +6,8 @@
  * STR_HINT_ entries label one action each in the button bar (docs/STYLES.md
  * 5.6), next to the button's glyph; the limit is the width in pixels.
  * Capitals only start a sentence (STYLES.md 3.3).
- * The tables stay ASCII (no accents in Spanish) until that restriction is
- * lifted on purpose; citro2d itself could draw them.
+ * The tables are UTF-8, accents and all: ui_parse (ui_font.h) draws any
+ * character the console's fonts have. No control characters.
  *
  * This module has no 3DS dependencies so the host tests can link it.
  */
