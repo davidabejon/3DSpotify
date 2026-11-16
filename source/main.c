@@ -7,6 +7,7 @@
 #include <3ds/thread.h>
 
 #include "ap3ds.h"
+#include "art_cache.h"
 #include "artwork.h"
 #include "cfg3ds.h"
 #include "details.h"
@@ -2434,6 +2435,8 @@ int main(int argc, char **argv)
 	/* Without icons, thumbnails or the logo the views still work, just
 	 * without them. */
 	icons_init();
+	/* Before any worker that fills it: the thumbnails, the covers. */
+	art_cache_init();
 	thumbs_init();
 	if (romfs_ready)
 		logo_load();
@@ -2527,6 +2530,7 @@ done:
 	stop_tabs();
 	artwork_close(&cover_art);
 	artwork_close(&detail_art);
+	artwork_forget_kept();
 	secure_clear(&session, sizeof(session));
 	secure_clear(&search, sizeof(search));
 	secure_clear(playback_queue, sizeof(playback_queue));
@@ -2546,6 +2550,8 @@ done:
 	view_home_exit();
 	logo_free();
 	thumbs_exit();
+	/* After the thumbnails' worker and the covers' (artwork_close). */
+	art_cache_exit();
 	icons_exit();
 	if (screens_dark)
 		set_backlights(true);

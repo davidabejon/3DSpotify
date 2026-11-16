@@ -1,5 +1,6 @@
 #include "thumbs.h"
 
+#include "art_cache.h"
 #include "art_url.h"
 #include "http3ds.h"
 #include "image_util.h"
@@ -11,6 +12,7 @@
 #include <citro3d.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* The implementation lives in artwork.c; this only needs the API. */
@@ -93,13 +95,46 @@ void thumbs_exit(void)
 
 /* --- Worker ------------------------------------------------------------ */
 
-/* Downloads and decodes one cover into `texels`. Pure CPU and network. */
+/* Decodes a cover's bytes into `texels`. */
+static bool decode(const void *body, size_t len, u8 *texels, int *fit_w,
+                   int *fit_h)
+{
+	int w = 0, h = 0, channels = 0;
+	if (!body || len == 0 || len > THUMB_MAX_BYTES ||
+	    !stbi_info_from_memory((const stbi_uc *)body, (int)len, &w, &h,
+	                           &channels) ||
+	    w <= 0 || h <= 0 || w > THUMB_MAX_DIMENSION ||
+	    h > THUMB_MAX_DIMENSION)
+		return false;
+	stbi_uc *pixels = stbi_load_from_memory((const stbi_uc *)body, (int)len,
+	                                        &w, &h, &channels,
+	                                        STBI_rgb_alpha);
+	if (!pixels)
+		return false;
+	memset(texels, 0, THUMB_TEXEL_BYTES);
+	image_fit(w, h, THUMB_TEX_SIZE, fit_w, fit_h);
+	image_to_texture(pixels, w, h, texels, THUMB_TEX_SIZE, *fit_w, *fit_h);
+	stbi_image_free(pixels);
+	return true;
+}
+
+/* Downloads and decodes one cover into `texels`, from the cover cache when
+ * it is there (art_cache.h), into it when it was not. Pure CPU and
+ * network. */
 static bool fetch(http_session **session, const char *url, u8 *texels,
                   int *fit_w, int *fit_h)
 {
 	const char *path = art_url_path(url);
 	if (!path)
 		return false;
+	size_t cached_len = 0;
+	void *cached = art_cache_get(url, &cached_len);
+	if (cached) {
+		bool ok = decode(cached, cached_len, texels, fit_w, fit_h);
+		free(cached);
+		if (ok)
+			return true;
+	}
 	if (!*session)
 		*session = http_session_open(ART_HOST);
 	if (!*session)
@@ -113,26 +148,11 @@ static bool fetch(http_session **session, const char *url, u8 *texels,
 		http_session_close(*session);
 		*session = NULL;
 	}
-	bool ok = false;
-	int w = 0, h = 0, channels = 0;
-	if (rc == 0 && reply.status == 200 && reply.body && reply.len > 0 &&
-	    reply.len <= THUMB_MAX_BYTES &&
-	    stbi_info_from_memory((const stbi_uc *)reply.body, (int)reply.len,
-	                          &w, &h, &channels) &&
-	    w > 0 && h > 0 && w <= THUMB_MAX_DIMENSION &&
-	    h <= THUMB_MAX_DIMENSION) {
-		stbi_uc *pixels = stbi_load_from_memory(
-			(const stbi_uc *)reply.body, (int)reply.len, &w, &h,
-			&channels, STBI_rgb_alpha);
-		if (pixels) {
-			memset(texels, 0, THUMB_TEXEL_BYTES);
-			image_fit(w, h, THUMB_TEX_SIZE, fit_w, fit_h);
-			image_to_texture(pixels, w, h, texels, THUMB_TEX_SIZE,
-			                 *fit_w, *fit_h);
-			stbi_image_free(pixels);
-			ok = true;
-		}
-	}
+	bool ok = rc == 0 && reply.status == 200 &&
+	          decode(reply.body, reply.len, texels, fit_w, fit_h);
+	/* Only what decoded: the top screen's cover may want it next. */
+	if (ok)
+		art_cache_put(url, reply.body, reply.len);
 	http_reply_free(&reply);
 	return ok;
 }
@@ -335,6 +355,23 @@ bool thumbs_image(int index, C2D_Image *out)
 		out->subtex = &subtex[index];
 	}
 	return ready;
+}
+
+bool thumbs_find(const char *url, C2D_Image *out)
+{
+	if (pool_size == 0 || !url || !url[0])
+		return false;
+	int found = -1;
+	LightLock_Lock(&lock);
+	for (int i = 0; i < count && found < 0; i++)
+		if (states[i] == THUMB_READY && strcmp(urls[i], url) == 0)
+			found = i;
+	LightLock_Unlock(&lock);
+	if (found < 0)
+		return false;
+	out->tex = &textures[found];
+	out->subtex = &subtex[found];
+	return true;
 }
 
 void thumbs_stop(void)

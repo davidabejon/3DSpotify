@@ -1,3 +1,4 @@
+#include "art_cache_logic.h"
 #include "art_url.h"
 #include "detail_logic.h"
 #include "detail_nav.h"
@@ -2866,6 +2867,26 @@ static void test_recent_searches(void)
 	assert(last.y + last.h + SHADOW_OFF + SP_1 <= list_hints_rect().y);
 }
 
+static void test_art_cache(void)
+{
+	/* A free slot first, else the least recently used. */
+	bool used[4] = { true, false, true, true };
+	unsigned stamps[4] = { 5, 0, 2, 9 };
+	assert(art_cache_victim(used, stamps, 4) == 1);
+	/* The oldest in use, for the byte budget, skips the free slot. */
+	assert(art_cache_oldest(used, stamps, 4) == 2);
+	bool none[2] = { false, false };
+	assert(art_cache_oldest(none, stamps, 2) == -1);
+	used[1] = true;
+	stamps[1] = 7;
+	assert(art_cache_victim(used, stamps, 4) == 2);
+	/* Stamps that wrapped round still order by use. */
+	unsigned wrapped[2] = { 0xFFFFFFFEu, 1u };
+	bool both[2] = { true, true };
+	assert(art_cache_victim(both, wrapped, 2) == 0);
+	assert(art_cache_victim(both, wrapped, 0) == -1);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -2881,6 +2902,7 @@ int main(void)
 	test_now_layout();
 	test_list_bubbles();
 	test_recent_searches();
+	test_art_cache();
 	test_spinner();
 	test_top_mode();
 	test_list_drag();

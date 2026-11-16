@@ -23,6 +23,9 @@
 
 /* 256 is enough: the cover is shown at about 212 px. */
 #define ARTWORK_TEX_SIZE 256
+/* Covers kept decoded once off screen, 256 KB of linear memory each: going
+ * back to one of them shows it at once. */
+#define ARTWORK_KEEP 4
 
 typedef struct {
 	Thread thread;
@@ -42,15 +45,27 @@ typedef struct {
 	 * worker returns, so requesting never waits for a download. */
 	char next_url[128];
 	bool has_next;
+	/* The cover last asked for, kept after it arrives: without it, its
+	 * thumbnail shows instead (thumbs_find). Whether it was drawn, for
+	 * artwork_dirty. */
+	char want_url[128];
+	/* The cover the texture holds, while has_texture. */
+	char shown_url[128];
+	bool drawn_preview;
 } artwork_state;
 
-/* Drops the current image and starts loading `url` (i.scdn.co only). It
- * never waits: with a download still running, `url` is queued and starts
- * from artwork_poll once that one has returned (its result is dropped). */
+/* Drops the current image and starts loading `url` (i.scdn.co only): at
+ * once when it is one of the last ARTWORK_KEEP covers shown, else from the
+ * cover cache when it is there (art_cache.h). It never waits: with a
+ * download still running, `url` is queued and starts from artwork_poll
+ * once that one has returned (its result is dropped). Until it arrives,
+ * or if it fails, a ready thumbnail of the same URL shows scaled up. */
 void artwork_request(artwork_state *artwork, const char *url);
 bool artwork_pending(const artwork_state *artwork);
 /* Uploads a finished download. Call once per frame on the main thread. */
 void artwork_poll(artwork_state *artwork);
+/* True when the cover needs a frame: it changed, or its thumbnail came or
+ * went. */
 bool artwork_dirty(const artwork_state *artwork);
 /* Draws the cover into `box` on the top screen (7.5): a `sombra` hard
  * shadow `shadow` px to the right and down (0: none), a 1 px `tinta`
@@ -64,5 +79,8 @@ void artwork_draw_in(artwork_state *artwork, ui_rect box, int shadow);
 void artwork_invalidate(artwork_state *artwork);
 /* Joins the worker and frees the texture. Call before ui_exit. */
 void artwork_close(artwork_state *artwork);
+/* Frees the covers kept decoded. After every artwork_close, before
+ * ui_exit. */
+void artwork_forget_kept(void);
 
 #endif

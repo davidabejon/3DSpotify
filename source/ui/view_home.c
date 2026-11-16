@@ -1,5 +1,6 @@
 #include "view_home.h"
 
+#include "art_cache.h"
 #include "draw.h"
 #include "home_feed.h"
 #include "home_logic.h"
@@ -217,6 +218,9 @@ static void follow_preview(void)
 			preview.count = preview.total_tracks = r->length;
 			snprintf(preview.resume, sizeof(preview.resume), "%s",
 			         home_feed_resume_text(index));
+			/* Already here: no download to hold back. */
+			if (art_cache_has(r->art))
+				snprintf(preview.art, sizeof(preview.art), "%s", r->art);
 		}
 		return;
 	}
