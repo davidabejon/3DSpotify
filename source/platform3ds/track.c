@@ -80,11 +80,11 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 
 	/* The key must be asked for before the bytes are worth fetching: without
 	 * it the download is just noise. */
-	if (progress) progress("clave de audio");
+	if (progress) progress("audio key");
 	osTickCounterStart(&t);
 	uint8_t key[16];
 	int refused = 0;
-	int rc = ap_audio_key(ap, file->id, out->meta.gid, key, &refused,
+	int rc = ap_audio_key(ap, file->id, out->meta.audio_gid, key, &refused,
 	                      err, errlen);
 	osTickCounterUpdate(&t);
 	out->key_ms = osTickCounterRead(&t);
@@ -92,7 +92,7 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 	if (rc != 0)
 		return rc;
 
-	if (progress) progress("descarga del CDN");
+	if (progress) progress("CDN download");
 	osTickCounterStart(&t);
 	http_reply r;
 	int got = -1;
@@ -119,7 +119,7 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 		return -1;
 	}
 
-	if (progress) progress("descifrado");
+	if (progress) progress("decryption");
 	osTickCounterStart(&t);
 	if (!decrypt((uint8_t *)r.body, r.len, key)) {
 		snprintf(err, errlen, "AES-CTR failed");
@@ -185,10 +185,10 @@ static int track_stream_begin_internal(const char *sp_host, const char *token,
 	                       err, errlen) < 0)
 		return -1;
 
-	if (progress) progress("clave de audio");
+	if (progress) progress("audio key");
 	int refused = 0;
-	int rc = ap_audio_key(ap, file->id, out->meta.gid, out->key, &refused,
-	                      err, errlen);
+	int rc = ap_audio_key(ap, file->id, out->meta.audio_gid, out->key,
+	                      &refused, err, errlen);
 	out->key_refused_code = refused;
 	return rc;
 }
