@@ -302,7 +302,7 @@ problem.
 | `probe_ap` | Logging in to Spotify's access point and keeping the session alive. |
 | `probe_meta` | The full sign-in chain, then reading the library and a track's metadata. |
 | `probe_audio` | Decoding Ogg Vorbis and playing it through NDSP (reads `test.ogg`; no network). |
-| `probe_play` | One track end to end: audio key, download, decryption and playback. |
+| `probe_play` | One track end to end: every audio file it offers, audio key, download, decryption and playback. Reads the track from `spotify-play-uri.txt` (a URI or share link) next to the `.3dsx` when present. |
 
 Build one with `--app`, for example:
 
