@@ -121,6 +121,13 @@ static unsigned queue_serial;
 static uint64_t queue_retry_at;
 #define QUEUE_RETRY_MS 5000
 static float playback_volume = 0.7f;
+/* The volume, in whole percent, is kept in the config. Dragging the bar
+ * changes it every frame, so it is written once it has been still for
+ * VOLUME_SAVE_MS (or on leaving), not on every change: `volume_save_at`
+ * is when, 0 with nothing to write. */
+#define VOLUME_SAVE_MS 1000
+static int volume_saved_pct = -1;
+static uint64_t volume_save_at;
 static artwork_state cover_art;
 /* The image of the detail card on the top screen, apart from cover_art:
  * the player waits for that one before preparing a track, so a detail
@@ -214,6 +221,36 @@ static void shuffle_init(void)
 	shuffle_on = cfg_get("shuffle", value, sizeof(value)) &&
 	             strcmp(value, "1") == 0;
 	view_detail_set_shuffle(shuffle_on);
+}
+
+/* The volume, as it was left; the default with none kept or a bad one. */
+static void volume_init(void)
+{
+	char value[8];
+	if (!cfg_get("volume", value, sizeof(value)))
+		return;
+	char *end;
+	long pct = strtol(value, &end, 10);
+	if (end == value || *end || pct < 0 || pct > 100)
+		return;
+	volume_saved_pct = (int)pct;
+	playback_volume = pct / 100.0f;
+}
+
+/* Writes a changed volume once it has been still long enough, or now when
+ * `now` (the app is closing). */
+static void volume_save(bool now)
+{
+	if (!volume_save_at || (!now && osGetTime() < volume_save_at))
+		return;
+	volume_save_at = 0;
+	int pct = (int)(playback_volume * 100.0f + 0.5f);
+	if (pct == volume_saved_pct)
+		return;
+	char value[8];
+	snprintf(value, sizeof(value), "%d", pct);
+	if (cfg_set("volume", value))
+		volume_saved_pct = pct;
 }
 
 /* The last searches, newest first, kept in the config (recent_logic.h). */
@@ -446,6 +483,8 @@ static void set_playback_volume(float volume)
 	if (volume > 1.0f)
 		volume = 1.0f;
 	playback_volume = volume;
+	if ((int)(volume * 100.0f + 0.5f) != volume_saved_pct)
+		volume_save_at = osGetTime() + VOLUME_SAVE_MS;
 	if (!player.s.ndsp_ready)
 		return;
 	float mix[12] = {0};
@@ -1755,6 +1794,7 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		queue_feed_tick(session);
+		volume_save(false);
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token,
 		             session->username);
@@ -2420,6 +2460,7 @@ int main(int argc, char **argv)
 	language_init();
 	shuffle_init();
 	recent_init();
+	volume_init();
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
 	bool soc_ready = false;
@@ -2482,6 +2523,7 @@ failed:
 	run_error(&error, true);
 
 done:
+	volume_save(true);
 	stop_tabs();
 	artwork_close(&cover_art);
 	artwork_close(&detail_art);
