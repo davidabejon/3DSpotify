@@ -16,6 +16,7 @@
 #include "player_logic.h"
 #include "qrcodegen.h"
 #include "queue_logic.h"
+#include "recent_logic.h"
 #include "power_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
@@ -2783,6 +2784,88 @@ static void test_login_notice_and_hints(void)
 	assert(login_hints_fit(glyph, wide, 0, 100, show));
 }
 
+static void test_recent_searches(void)
+{
+	recent_list r = { .count = 0 };
+	char out[RECENT_SERIAL_SIZE];
+
+	/* Blank queries are not remembered. */
+	assert(!recent_push(&r, "   "));
+	assert(!recent_push(&r, ""));
+	assert(r.count == 0);
+	assert(recent_serialize(&r, out, sizeof(out)) && out[0] == '\0');
+
+	/* Newest first; the oldest falls off past RECENT_MAX. */
+	assert(recent_push(&r, "one"));
+	assert(recent_push(&r, " two "));
+	assert(recent_push(&r, "three"));
+	assert(recent_push(&r, "four"));
+	assert(r.count == RECENT_MAX);
+	assert(strcmp(r.items[0], "four") == 0);
+	assert(strcmp(r.items[1], "three") == 0);
+	assert(strcmp(r.items[2], "two") == 0);
+
+	/* A repeat moves up, whatever its case, and shows as typed last. */
+	assert(recent_push(&r, "TWO"));
+	assert(r.count == RECENT_MAX);
+	assert(strcmp(r.items[0], "TWO") == 0);
+	assert(strcmp(r.items[1], "four") == 0);
+	assert(strcmp(r.items[2], "three") == 0);
+	assert(recent_push(&r, "TWO"));
+	assert(strcmp(r.items[0], "TWO") == 0 && r.count == RECENT_MAX);
+
+	/* Control characters could break the config line or the separator. */
+	recent_list c = { .count = 0 };
+	assert(recent_push(&c, "a\x1f" "b\nc"));
+	assert(strcmp(c.items[0], "a b c") == 0);
+
+	/* Round trip through the config value. */
+	assert(recent_serialize(&r, out, sizeof(out)));
+	assert(strcmp(out, "TWO\x1f" "four\x1f" "three") == 0);
+	recent_list back;
+	recent_parse(&back, out);
+	assert(back.count == RECENT_MAX);
+	for (int i = 0; i < RECENT_MAX; i++)
+		assert(strcmp(back.items[i], r.items[i]) == 0);
+	assert(!recent_serialize(&r, out, 6));
+
+	/* A value edited by hand: blanks, repeats and extras are dropped. */
+	recent_parse(&back, "x\x1f\x1fX\x1fy\x1fz");
+	assert(back.count == 1 && strcmp(back.items[0], "x") == 0);
+	recent_parse(&back, NULL);
+	assert(back.count == 0);
+	recent_parse(&back, "solo");
+	assert(back.count == 1 && strcmp(back.items[0], "solo") == 0);
+
+	/* Full-length queries survive the round trip. */
+	recent_list l = { .count = 0 };
+	char longq[RECENT_QUERY_SIZE];
+	for (int i = 0; i < RECENT_MAX; i++) {
+		memset(longq, 'a' + i, sizeof(longq) - 1);
+		longq[sizeof(longq) - 1] = '\0';
+		assert(recent_push(&l, longq));
+	}
+	assert(recent_serialize(&l, out, sizeof(out)));
+	recent_parse(&back, out);
+	assert(back.count == RECENT_MAX);
+	for (int i = 0; i < RECENT_MAX; i++)
+		assert(strcmp(back.items[i], l.items[i]) == 0);
+
+	/* The idle layout: button, label and rows between the bars. */
+	ui_rect button = list_idle_button_rect(100);
+	assert(button.y >= list_top() + SP_1);
+	assert(button.x * 2 + button.w == SCREEN_BOTTOM_W);
+	assert(list_recent_label_cy() > button.y + button.h);
+	ui_rect first = list_recent_rect(0);
+	assert(first.y > list_recent_label_cy());
+	assert(first.h >= TOUCH_MIN);
+	for (int i = 1; i < RECENT_MAX; i++)
+		assert(list_recent_rect(i).y >= list_recent_rect(i - 1).y +
+		       list_recent_rect(i - 1).h);
+	ui_rect last = list_recent_rect(RECENT_MAX - 1);
+	assert(last.y + last.h + SHADOW_OFF + SP_1 <= list_hints_rect().y);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -2797,6 +2880,7 @@ int main(void)
 	test_player_shared_helpers();
 	test_now_layout();
 	test_list_bubbles();
+	test_recent_searches();
 	test_spinner();
 	test_top_mode();
 	test_list_drag();

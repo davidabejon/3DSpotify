@@ -293,6 +293,31 @@ static inline ui_rect list_action_rect(float content_width, bool centered)
 	return r;
 }
 
+/* Nothing searched yet with recent searches to suggest: the search button
+ * centred at the top, then a label and one row per recent query, all
+ * clear of the button bar. */
+static inline ui_rect list_idle_button_rect(float content_width)
+{
+	ui_rect r = list_action_rect(content_width, true);
+	r.y = list_top() + SP_2;
+	return r;
+}
+
+/* The vertical centre of the "Recent searches" label. */
+static inline int list_recent_label_cy(void)
+{
+	return list_top() + SP_2 + TOUCH_MIN + SP_2 + SP_2;
+}
+
+/* Recent query `i` (0 for the newest). */
+static inline ui_rect list_recent_rect(int i)
+{
+	ui_rect r = { SP_2, list_recent_label_cy() + SP_2 + SP_1 +
+	                    i * (TOUCH_MIN + SP_1),
+	              SCREEN_BOTTOM_W - 2 * SP_2, TOUCH_MIN };
+	return r;
+}
+
 /* Centred, SP_2 above the button bar (5.9). */
 static inline ui_rect list_bubble_rect(float content_width)
 {

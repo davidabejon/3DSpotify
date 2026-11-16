@@ -125,6 +125,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_ERR_DETAIL_THREAD] = "Could not start the loading task.",
 	[STR_RESULTS_EMPTY] = "No songs found.",
 	[STR_RESULTS_IDLE] = "Nothing searched yet.",
+	[STR_RESULTS_RECENT] = "Recent searches",
 
 	/* Playback. */
 	[STR_PLAYER_ART_LOADING] = "Loading cover art...",

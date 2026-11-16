@@ -216,6 +216,30 @@ static void shuffle_init(void)
 	view_detail_set_shuffle(shuffle_on);
 }
 
+/* The last searches, newest first, kept in the config (recent_logic.h). */
+_Static_assert(SEARCH_QUERY_SIZE == RECENT_QUERY_SIZE,
+               "a recent search holds a whole query");
+static recent_list recent_searches;
+
+static void recent_init(void)
+{
+	char value[RECENT_SERIAL_SIZE];
+	recent_parse(&recent_searches,
+	             cfg_get("searches", value, sizeof(value)) ? value : NULL);
+	view_results_set_recent(&recent_searches);
+}
+
+/* `query` on top of the recent searches, on the card at once. */
+static void recent_remember(const char *query)
+{
+	if (!recent_push(&recent_searches, query))
+		return;
+	char value[RECENT_SERIAL_SIZE];
+	if (recent_serialize(&recent_searches, value, sizeof(value)))
+		cfg_set("searches", value);
+	view_results_set_recent(&recent_searches);
+}
+
 /* SELECT, or the language button in Settings, switches the language from
  * any screen and remembers the choice. */
 static void switch_language(void)
@@ -1352,6 +1376,7 @@ static void search_start(const spotify_session *session, const char *query)
 	search_stop();
 	memset(&search, 0, sizeof(search));
 	snprintf(search.query, sizeof(search.query), "%s", query);
+	recent_remember(search.query);
 	snprintf(search.host, sizeof(search.host), "%s", session->host);
 	snprintf(search.library_token, sizeof(search.library_token), "%s",
 	         session->library_token);
@@ -1789,6 +1814,17 @@ static tabs_exit run_tabs(spotify_session *session)
 				break;
 			case RESULTS_ACTION_BACK:
 				switch_tab(TAB_HOME);
+				break;
+			case RESULTS_ACTION_CLOSE:
+				/* Back to before the results: the button and the
+				 * recent searches. */
+				view_results_idle();
+				break;
+			case RESULTS_ACTION_RECENT:
+				snprintf(home_query, sizeof(home_query), "%s",
+				         view_results_recent_query());
+				if (home_query[0])
+					search_start(session, home_query);
 				break;
 			case RESULTS_ACTION_NEW_SEARCH:
 				keyboard_search(session, home_query);
@@ -2383,6 +2419,7 @@ int main(int argc, char **argv)
 	cfg_set_path(NULL);
 	language_init();
 	shuffle_init();
+	recent_init();
 
 	u32 *soc_buffer = memalign(0x1000, SOC_BUFFER);
 	bool soc_ready = false;
