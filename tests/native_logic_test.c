@@ -269,6 +269,40 @@ static void test_meta_parse_track(void)
 	assert(t.is_explicit);
 	assert(!t.album_uri[0] && !t.artist_uri[0] && !t.art_small[0]);
 	assert(t.year == 0 && t.track_number == 0 && t.file_count == 0);
+	assert(t.audio_gid[0] == 1 && t.audio_gid[15] == 1 + 15 * 7);
+
+	/* No files of its own: they come from the first alternative that has
+	 * any, and the key must then name that alternative. */
+	static uint8_t alt_s[2][256];
+	pb alt[2];
+	pb_init(&alt[0], alt_s[0], sizeof(alt_s[0]));
+	add_gid(&alt[0], 1, 5);                   /* an alternative with none */
+	pb_init(&alt[1], alt_s[1], sizeof(alt_s[1]));
+	add_gid(&alt[1], 1, 6);
+	pb_sub(&alt[1], 12, &file[0]);
+	pb_sub(&alt[1], 12, &file[1]);
+	pb_init(&track, track_s, sizeof(track_s));
+	add_gid(&track, 1, 1);
+	pb_str(&track, 2, "Only alternatives");
+	pb_sub(&track, 13, &alt[0]);
+	pb_sub(&track, 13, &alt[1]);
+	assert(pb_ok(&track));
+	memset(&t, 0, sizeof(t));
+	tv.p = track.p;
+	tv.len = track.len;
+	sp_parse_track(&tv, &t);
+	assert(t.gid[0] == 1);                    /* still the track asked for */
+	assert(t.audio_gid[0] == 6);
+	assert(t.file_count == 2);
+	assert(t.files[1].format == SP_FMT_OGG_160 && t.files[1].id[0] == 0x11);
+
+	/* Files of its own win over an alternative's. */
+	pb_sub(&track, 12, &file[0]);
+	memset(&t, 0, sizeof(t));
+	tv.p = track.p;
+	tv.len = track.len;
+	sp_parse_track(&tv, &t);
+	assert(t.file_count == 1 && t.audio_gid[0] == 1);
 }
 
 static void test_meta_parse_album(void)

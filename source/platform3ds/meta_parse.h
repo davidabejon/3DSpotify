@@ -8,7 +8,7 @@
  *
  *   Track  { gid 1, name 2, album 3, artist 4 (repeated), number 5 (sint32),
  *            disc_number 6 (sint32), duration 7 (sint32), explicit 9,
- *            file 12 (repeated) }
+ *            file 12 (repeated), alternative 13 (repeated Track) }
  *   Album  { gid 1, name 2, artist 3 (repeated), type 4, label 5, date 6,
  *            cover 9 (repeated Image), disc 11 (repeated),
  *            cover_group 17 }

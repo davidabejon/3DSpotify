@@ -36,6 +36,11 @@ typedef struct {
 	 * URI -- it is the same value the base62 in the URI decodes to. */
 	uint8_t gid[16];
 	bool    has_gid;
+	/* The track `files` belong to, which the audio key must name: `gid`
+	 * itself, or, when the Track lists no files of its own, the
+	 * Track.alternative they were taken from. Some tracks carry their
+	 * files only there (4UfBg1NzbhayZmry10RA0j, probe_play step 4). */
+	uint8_t audio_gid[16];
 	char    name[128];
 	char    artist[128];
 	char    album[128];

@@ -102,6 +102,23 @@ bool sp_parse_entity(const uint8_t *body, size_t len, pbv *entity)
 	       pb_get_bytes(any.p, any.len, 2, entity);
 }
 
+/* A Track's AudioFile list (field 12) into out->files. */
+static void read_files(const pbv *t, sp_track *out)
+{
+	size_t at = 0;
+	pbv file;
+	while (out->file_count < SP_MAX_FILES && pb_next_bytes(t, 12, &at, &file)) {
+		pbv fid;
+		uint64_t fmt = 0;
+		if (pb_get_bytes(file.p, file.len, 1, &fid) && fid.len == 20) {
+			memcpy(out->files[out->file_count].id, fid.p, 20);
+			pb_get_varint(file.p, file.len, 2, &fmt);
+			out->files[out->file_count].format = (int)fmt;
+			out->file_count++;
+		}
+	}
+}
+
 void sp_parse_track(const pbv *t, sp_track *out)
 {
 	pbv v;
@@ -145,17 +162,20 @@ void sp_parse_track(const pbv *t, sp_track *out)
 		             sizeof(out->artist_uri));
 	}
 
+	memcpy(out->audio_gid, out->gid, sizeof(out->audio_gid));
+	read_files(t, out);
+
+	/* A Track with no files of its own may carry them on an alternative,
+	 * a Track of its own (field 13) for the same recording: the first one
+	 * that has files stands in, and the audio key then names it. */
 	size_t at = 0;
-	pbv file;
-	while (out->file_count < SP_MAX_FILES && pb_next_bytes(t, 12, &at, &file)) {
-		pbv fid;
-		uint64_t fmt = 0;
-		if (pb_get_bytes(file.p, file.len, 1, &fid) && fid.len == 20) {
-			memcpy(out->files[out->file_count].id, fid.p, 20);
-			pb_get_varint(file.p, file.len, 2, &fmt);
-			out->files[out->file_count].format = (int)fmt;
-			out->file_count++;
-		}
+	pbv alt, gid;
+	while (out->file_count == 0 && pb_next_bytes(t, 13, &at, &alt)) {
+		if (!pb_get_bytes(alt.p, alt.len, 1, &gid) || gid.len != 16)
+			continue;
+		read_files(&alt, out);
+		if (out->file_count)
+			memcpy(out->audio_gid, gid.p, 16);
 	}
 }
 
