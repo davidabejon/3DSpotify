@@ -1183,6 +1183,16 @@ botones con el foco en «Descargas».
     descargado se conserva.
   - No pararlo al salir de la pestaña «Búsqueda»: esperar a su petición en curso bloquearía
     el hilo principal, y con él el audio. Solo pide las filas visibles y las 4 siguientes.
+- Motor de descargas:
+  - Un solo hilo por debajo del decodificador, una pista (o una colección por resolver) a
+    la vez. Las escrituras en la SD y el índice van en hilos de fondo, nunca en el bucle
+    principal.
+  - El reproductor manda: mientras prepara una pista o descarga la que suena, el motor no
+    empieza nada, y la pista que estuviera bajando se para y vuelve a la cola.
+  - Las claves de audio salen de un cupo que Spotify limita por cuenta y consola (unas 15
+    seguidas, luego una cada 30 s). El motor deja siempre una reserva para el reproductor,
+    y un rechazo por cupo pausa toda la cola un rato en vez de marcar la pista con error.
+  - Las vistas leen el porcentaje como mucho una vez por segundo.
 
 ---
 
