@@ -1111,10 +1111,15 @@ botones con el foco en «Descargas».
 - Reproducción: solo lo descargado. Al pasar a una pista que no está en la SD, salta a la
   siguiente descargada en la dirección en que iba la cola; si no queda ninguna, el
   reproductor muestra «Sin conexión, y nada de esta cola está descargado.».
-- «Reintentar conexión» (Inicio, Búsqueda) y «Volver a conectar» (Ajustes) vuelven a
-  arrancar la sesión. Si sigue sin haber conexión, se vuelve a las pestañas sin conexión
-  con la burbuja «Sigue sin conexión» (icono de Wi-Fi tachado). La música se para, como en
-  cualquier reconexión.
+- «Reintentar conexión» (Inicio, Búsqueda) y «Volver a conectar» (Ajustes) conectan sin
+  salir de las pestañas, y lo que suena sigue sonando:
+  - sin Wi-Fi, al instante, la burbuja «Sigue sin conexión» (icono de Wi-Fi tachado);
+  - con Wi-Fi, «Conectando...» y el arranque en segundo plano. Si llega, «Conectado de
+    nuevo»: el indicador se va, Inicio carga sus playlists y todo vuelve a funcionar, sin
+    cortar la canción. Si falla por la red, «Sigue sin conexión». Si Spotify dice que no a
+    la cuenta, la sesión arranca de nuevo como al abrir la app (pantalla de error o
+    emparejar), y ahí sí se para la música.
+  Las burbujas salen en la vista que esté en pantalla (Inicio, Reproducción o un detalle).
 - Las descargas en cola esperan: el motor no descarga sin conexión.
 
 ## 8. Movimiento

@@ -160,6 +160,8 @@ static screen_view active_view = VIEW_LOGIN;
 static app_tab active_tab = TAB_HOME;
 /* The tabs run with a session that reached Spotify. */
 static bool net_online = true;
+/* Sockets and TLS came up: without them no connection can be tried. */
+static bool net_ready = true;
 /* Settings shows the downloads manager instead of its buttons. */
 static bool manager_open;
 /* An applet (the keyboard) drew over both screens. */
@@ -2089,12 +2091,76 @@ static void open_from_manager(dlv_action action)
 	switch_tab(TAB_HOME);
 }
 
+/* Reconnecting from the tabs without leaving them (defined with the
+ * session start-up). */
+typedef enum {
+	RECONNECT_NONE,      /* nothing new */
+	RECONNECT_ONLINE,    /* connected: the session is up, music went on */
+	RECONNECT_OFFLINE,   /* still no network */
+	RECONNECT_RESTART    /* the account said no: the full start-up */
+} reconnect_result;
+static void reconnect_start(void);
+static reconnect_result reconnect_poll(spotify_session *session);
+static bool reconnect_running(void);
+static void reconnect_stop(void);
+static bool wifi_down(void);
+
 /* Where the tabs go when they end. */
 typedef enum {
 	TABS_EXIT,       /* close the app */
 	TABS_RECONNECT,  /* start the session again */
 	TABS_PAIR        /* pair another account */
 } tabs_exit;
+
+/* A bubble on whichever view shows: what a reconnection came to. */
+static void tabs_notice(str_id text, bool ok)
+{
+	if (details_active(active_tab)) {
+		view_detail_notice(text, ok);
+		return;
+	}
+	switch (active_tab) {
+	case TAB_HOME:
+		view_home_notice(text);
+		break;
+	case TAB_PLAYER:
+		view_player_notice(text, ok);
+		break;
+	default:
+		break;
+	}
+}
+
+/* "Retry connection" offline: with no Wi-Fi it says so at once; with Wi-Fi
+ * the start-up runs in the background while the downloads go on playing. */
+static void try_reconnect(void)
+{
+	if (reconnect_running())
+		return;
+	if (!net_ready || wifi_down()) {
+		tabs_notice(STR_OFFLINE_STILL, false);
+		return;
+	}
+	reconnect_start();
+	tabs_notice(STR_OFFLINE_CONNECTING, true);
+}
+
+/* Connected from the tabs: what an online start does, without stopping
+ * what plays. */
+static void go_online(spotify_session *session)
+{
+	net_online = true;
+	tabbar_set_offline(false);
+	view_home_set_offline(false);
+	view_detail_set_offline(false);
+	cfg_set_async("username", session->username);
+	account_start(session);
+	home_feed_start(session->host, session->library_token, session->username);
+	view_results_idle();
+	downloads_start(session->host, session->library_token, session->username,
+	                downloads_open_ap);
+	tabs_notice(STR_ONLINE_AGAIN, true);
+}
 
 /* The app once the session is up: one loop for every tab, so the audio
  * keeps playing while the user moves between them. */
@@ -2146,6 +2212,18 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 		downloads_poll(dl_player_busy(player_preparing(), dl.thread != NULL,
 		                              dl.done));
 		account_poll();
+		switch (reconnect_poll(session)) {
+		case RECONNECT_ONLINE:
+			go_online(session);
+			break;
+		case RECONNECT_OFFLINE:
+			tabs_notice(STR_OFFLINE_STILL, false);
+			break;
+		case RECONNECT_RESTART:
+			return TABS_RECONNECT;
+		default:
+			break;
+		}
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token,
 		             session->username);
@@ -2175,7 +2253,8 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 					switch_tab(TAB_SEARCH);
 				break;
 			case HOME_ACTION_RECONNECT:
-				return TABS_RECONNECT;
+				try_reconnect();
+				break;
 			case HOME_ACTION_OPEN:
 				/* On Home's own stack: L/R and back find it as left. The
 				 * Downloads tile opens the card's, with no network. */
@@ -2234,8 +2313,10 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 				break;
 			case RESULTS_ACTION_RETRY:
 				/* Offline, Retry is retrying the connection. */
-				if (!net_online)
-					return TABS_RECONNECT;
+				if (!net_online) {
+					try_reconnect();
+					break;
+				}
 				search_start(session, home_query);
 				break;
 			case RESULTS_ACTION_LANGUAGE:
@@ -2322,6 +2403,11 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 				view_downloads_enter();
 				break;
 			case SETTINGS_ACTION_RECONNECT:
+				/* Offline it connects without leaving the tabs. */
+				if (!net_online) {
+					try_reconnect();
+					break;
+				}
 				return TABS_RECONNECT;
 			case SETTINGS_ACTION_PAIR:
 				return TABS_PAIR;
@@ -2514,6 +2600,7 @@ static void stop_tabs(void)
 {
 	/* Every worker's network wait fails within TLS_ABORT_SLICE_MS, so the
 	 * joins below take a moment, not a whole connection's timeout. */
+	reconnect_stop();
 	tls_set_abort(true);
 	player_stop();
 	search_stop();
@@ -2539,6 +2626,8 @@ static void stop_tabs(void)
  * the worker holds its address. */
 typedef struct {
 	bool force_pair;                /* in: skip the stored credential */
+	bool no_pair;                   /* in: a dead credential fails instead
+	                                 * of pairing (no screen to pair on) */
 	spotify_session *session;       /* out, filled on success */
 	volatile str_id stage;          /* what it is doing now */
 	volatile bool pairing;          /* a code is on screen, being polled */
@@ -2824,7 +2913,7 @@ static bool start_session(bool force_pair, startup_error *error,
 	if (renewed != 0) {
 		secure_clear(stored, stored_size);
 		secure_clear(tokens, sizeof(*tokens));
-		if (strstr(detail, "invalid_grant")) {
+		if (strstr(detail, "invalid_grant") && !login.no_pair) {
 			/* Straight to pairing; the pairing screen says why. */
 			login.reason_expired = true;
 			if (!pair_account(tokens, error))
@@ -2874,6 +2963,69 @@ static void session_cancel(void)
 	threadFree(login.thread);
 	login.thread = NULL;
 	tls_set_abort(false);
+}
+
+/* --- Reconnecting from the tabs ------------------------------------------ */
+
+/* Where a background start-up puts the session; copied into the tabs'
+ * once it is safe, then wiped. */
+static spotify_session reconnect_session;
+
+static bool reconnect_running(void)
+{
+	return login.thread != NULL;
+}
+
+static void reconnect_start(void)
+{
+	secure_clear(&login, sizeof(login));
+	LightLock_Init(&login.lock);
+	login.no_pair = true;
+	login.session = &reconnect_session;
+	secure_clear(&reconnect_session, sizeof(reconnect_session));
+	__sync_synchronize();
+	login.thread = threadCreate(session_worker, NULL, SESSION_STACK,
+	                            background_priority(), -2, false);
+}
+
+/* Once per frame with the tabs. A session that came up waits for the
+ * player to be between preparations (its worker reads the session), then
+ * replaces the offline one under the session lock. */
+static reconnect_result reconnect_poll(spotify_session *session)
+{
+	if (!login.thread || !login.done)
+		return RECONNECT_NONE;
+	if (login.ok && (prep.thread || player_preparing()))
+		return RECONNECT_NONE;
+	__sync_synchronize();
+	threadJoin(login.thread, U64_MAX);
+	threadFree(login.thread);
+	login.thread = NULL;
+	reconnect_result result;
+	if (login.ok) {
+		LightLock_Lock(&session_lock);
+		*session = reconnect_session;
+		session->online = true;
+		LightLock_Unlock(&session_lock);
+		result = RECONNECT_ONLINE;
+	} else {
+		result = login_error_allows_offline(login.error.category,
+		                                    login.error.transport)
+		         ? RECONNECT_OFFLINE : RECONNECT_RESTART;
+	}
+	secure_clear(&reconnect_session, sizeof(reconnect_session));
+	secure_clear(&login, sizeof(login));
+	return result;
+}
+
+/* Leaving the tabs: a background start-up is cut short and joined. */
+static void reconnect_stop(void)
+{
+	if (!login.thread)
+		return;
+	session_cancel();
+	secure_clear(&reconnect_session, sizeof(reconnect_session));
+	secure_clear(&login, sizeof(login));
 }
 
 typedef enum {
@@ -3080,7 +3232,7 @@ int main(int argc, char **argv)
 	spotify_session session = {0};
 
 	/* Sockets and TLS: without them only the downloads can play. */
-	bool net_ready = true;
+	net_ready = true;
 	if (!soc_buffer || R_FAILED(socInit(soc_buffer, SOC_BUFFER))) {
 		error.category = STR_CAT_NO_NETWORK;
 		snprintf(error.detail, sizeof(error.detail), "%s",

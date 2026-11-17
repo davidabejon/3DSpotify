@@ -1018,6 +1018,39 @@ class BuildTests(unittest.TestCase):
         # session.
         self.assertIn('cfg_set_async("username", session.username);', loop)
 
+    def test_reconnecting_keeps_the_music(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+
+        def body(signature):
+            text = app[app.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Offline, retrying never leaves the tabs: no Wi-Fi says so at once,
+        # with Wi-Fi the start-up runs in the background.
+        retry = body("static void try_reconnect(void)")
+        self.assertLess(retry.index("wifi_down()"),
+                        retry.index("reconnect_start();"))
+        self.assertNotIn("TABS_RECONNECT", retry)
+        tabs = body("static tabs_exit run_tabs(")
+        self.assertIn("case HOME_ACTION_RECONNECT:\n\t\t\t\ttry_reconnect();",
+                      tabs)
+        # A background start-up cannot pair: it has no screen for a code.
+        self.assertIn("login.no_pair = true;",
+                      body("static void reconnect_start(void)\n{"))
+        self.assertIn('strstr(detail, "invalid_grant") && !login.no_pair', app)
+        # The new session replaces the offline one only between two
+        # preparations of the player, and under the session lock.
+        poll = body("static reconnect_result reconnect_poll(spotify_session "
+                    "*session)\n{")
+        self.assertIn("prep.thread || player_preparing()", poll)
+        self.assertLess(poll.index("LightLock_Lock(&session_lock);"),
+                        poll.index("*session = reconnect_session;"))
+        self.assertIn("secure_clear(&reconnect_session", poll)
+        # Leaving the tabs cuts it short first.
+        stop = body("static void stop_tabs(void)")
+        self.assertLess(stop.index("reconnect_stop();"),
+                        stop.index("player_stop();"))
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(
@@ -1500,7 +1533,9 @@ class BuildTests(unittest.TestCase):
         callback = app[app.index("static ap_session *downloads_open_ap("):]
         self.assertIn("open_playback_ap(downloads_session",
                       callback[:callback.index("\n}\n")])
-        self.assertEqual(app.count("downloads_open_ap"), 2)  # def + start
+        # The definition, and the engine's start: with the tabs, and when
+        # they come back online.
+        self.assertEqual(app.count("downloads_open_ap"), 3)
         self.assertEqual(app.count("track_stream_begin_cached("), 1)
         self.assertIn("threadCreate(prepare_worker, &prep, PREPARE_STACK,", app)
         pump = app[app.index("static void player_pump(void)"):
