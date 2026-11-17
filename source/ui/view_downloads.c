@@ -750,14 +750,10 @@ static void draw_entry(int i, const dlv_look *look)
 	C2D_Image image;
 	bool shown = w >= 0 && w < WINDOW &&
 	             thumbs_client_image(&thumbs, w, &image);
-	int placeholder = ICON_NOTE;
-	if (e->kind == DLV_COLL || e->kind == DLV_PENDING) {
-		const char *uri = entry_uri(i);
-		placeholder = strcmp(uri, SP_LIKED_URI) == 0 ? ICON_HEART
-		              : e->kind == DLV_COLL &&
-		                idx->colls[e->index].kind == DL_COLL_ALBUM
-		              ? ICON_ALBUM : ICON_PLAYLIST;
-	}
+	/* The note where a cover is missing, as everywhere; Liked Songs'
+	 * heart. */
+	int placeholder = strcmp(entry_uri(i), SP_LIKED_URI) == 0 ? ICON_HEART
+	                                                          : ICON_NOTE;
 	ui_art_or(list_thumb_rect(r), shown ? &image : NULL, placeholder);
 	if (w < 0 || w >= WINDOW)
 		return;

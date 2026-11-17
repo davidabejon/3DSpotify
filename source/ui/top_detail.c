@@ -246,24 +246,11 @@ static bool changed(const detail_doc *d)
 /* --- State and drawing ------------------------------------------------- */
 
 /* What shows where the cover goes until it comes, or when there is none:
- * the icon of what it is, as in the lists (an album's disc, a playlist's
- * lines, Liked Songs' heart, the Downloads' arrow); a note for a track. */
+ * the note, as everywhere; the Downloads, which has no cover, its arrow, as
+ * on its tile. */
 static int placeholder(const detail_doc *d)
 {
-	bool liked = strcmp(d->uri, SP_LIKED_URI) == 0;
-	switch (d->kind) {
-	case DETAIL_ALBUM:
-		return ICON_ALBUM;
-	case DETAIL_PLAYLIST:
-		return liked ? ICON_HEART : ICON_PLAYLIST;
-	case DETAIL_OFFLINE_COLLECTION:
-		return liked ? ICON_HEART
-		       : d->offline_album ? ICON_ALBUM : ICON_PLAYLIST;
-	case DETAIL_DOWNLOADS:
-		return ICON_DOWNLOAD;
-	default:
-		return ICON_NOTE;
-	}
+	return d->kind == DETAIL_DOWNLOADS ? ICON_DOWNLOAD : ICON_NOTE;
 }
 
 /* How far every text has rolled by now: -1 for one that fits. */

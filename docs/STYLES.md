@@ -227,13 +227,12 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
   (1, 2, 3…, continua entre discos) en `t_meta` · `texto_2`, centrada. También en la fila en
   foco: el cuadrado sigue siendo `capa_alta` y `tinta` sobre él apenas se leería. Sin
   descarga de miniaturas.
-- Variante de colección (Descargas, §7.14): un álbum o una playlist entre canciones. Su
-  portada va **apilada**, con dos marcos `capa_luz` de contorno `tinta` asomando detrás,
-  desplazados 2 y 4 px arriba a la derecha, como discos en una pila; en la esquina inferior
-  izquierda de la portada, una insignia: el icono de disco o de líneas (16 px, `texto` sobre
-  `tinta`). La segunda línea dice «Álbum · Canciones: 12» o «Playlist · 8 de 40», y a la
-  derecha va un chevron `>` en lugar de la duración: A la abre, no la reproduce. Se
-  distingue de una canción sin depender del color, y los estados de foco no cambian.
+- Variante de colección (Descargas, §7.14): un álbum o una playlist entre canciones. Con
+  portada, en su esquina inferior izquierda una insignia: el icono de disco o de líneas
+  (16 px, `texto` sobre `tinta`); sin portada, la nota de siempre y sin insignia. La segunda
+  línea dice «Álbum · Canciones: 12» o «Playlist · 8 de 40», y a la derecha va un chevron
+  `>` en lugar de la duración: A la abre, no la reproduce. Se distingue de una canción sin
+  depender del color, y los estados de foco no cambian.
 - Variante sin descargar (colección descargada, §7.14): título, artista y número en
   `texto_off`, y a la derecha, en lugar de la duración, el icono de su estado (reloj en
   cola, error si falló). No toma el foco ni responde al toque.
@@ -431,10 +430,9 @@ La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 
 
 - Alto 32 px: el mínimo táctil (§4.4), así que cada tesela es un objetivo válido.
 - Portada 24×24 (`TILE_COVER`) a 4 px de los bordes izquierdo, superior e inferior, con
-  contorno 1 px `tinta`; sin imagen, cuadrado `capa_alta` con el icono de lo que es
-  centrado: líneas para una playlist (como en el gestor de descargas, §7.13), corazón para
-  «Canciones que te gustan», flecha para «Descargas». El layout no cambia al llegar la
-  imagen.
+  contorno 1 px `tinta`; sin imagen, cuadrado `capa_alta` con el icono de nota centrado,
+  como la fila (corazón para «Canciones que te gustan», flecha para «Descargas»). El layout
+  no cambia al llegar la imagen.
 - Nombre en `t_cuerpo` · `texto`, una línea, recortado con `...` (§3.3), a `e2` de la
   portada y con `e2` de margen derecho. Sin nombre: «(sin titulo)».
 - Estados idénticos a la fila (§5.3, §6.3): reposo `capa` con contorno; en foco `clorofila`
@@ -998,8 +996,8 @@ Error:
 
 - Carátula, portada o retrato a 160×160 con contorno y sombra dura de 3 px, como la ficha de
   §7.5, pero sin tiempos ni barra: la carátula va centrada en la altura (y 40) y el bloque de
-  textos, centrado junto a ella. Sin imagen, o mientras llega, el icono de lo que es: disco
-  (álbum), líneas (playlist), corazón, flecha (Descargas) o nota (canción, artista).
+  textos, centrado junto a ella. Sin imagen, o mientras llega, el icono de nota (la flecha
+  para «Descargas»).
 - Título en `t_titulo` · `texto` y hasta 4 líneas en `t_cuerpo` · `texto_2`:
   - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
     año.
@@ -1052,8 +1050,8 @@ botones con el foco en «Descargas».
   - Descargadas: álbumes y playlists sin nada en cola («Canciones: 12»; también los que se
     quedaron cortos por canciones con error), y las canciones en la SD que ninguno de ellos
     contiene, de la más reciente a la más antigua.
-- Miniatura: la portada de la SD o de la red (§5.3); sin ella, nota, disco (álbum), líneas
-  (playlist) o corazón (Canciones que te gustan). A la derecha, el estado: reloj, error o
+- Miniatura: la portada de la SD o de la red (§5.3); sin ella, la nota (el corazón para
+  Canciones que te gustan). A la derecha, el estado: reloj, error o
   check, en el color secundario de la fila.
 - A: en curso o en cola, cancelar; con error, reintentar; descargada, abrir su detalle en
   «Inicio» (cambia a esa pestaña). X: borrar cualquier fila (en cola, cancelarla). Cancelar

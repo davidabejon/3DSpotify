@@ -454,25 +454,18 @@ static void draw_number(const track_list *l, ui_rect row, int index)
 	                 box.y + box.h / 2, TXT_META, COL_TEXTO_2);
 }
 
-/* A collection's cover (5.3): two `capa_luz` frames stacked behind it,
- * 2 and 4 px up and to the right, like records in a pile; and a badge, the
- * album or playlist icon, at its bottom left. Without a cover the square
- * shows that icon itself, as the downloads manager does: no badge then. */
-static void draw_stack(const track_list *l, ui_rect row, int index,
+/* A collection's cover (5.3), with a badge, the album or playlist icon,
+ * at its bottom left. Without a cover the square shows the note, as
+ * everywhere (the heart for Liked Songs), and no badge over it. */
+static void draw_collection_cover(const track_list *l, ui_rect row, int index,
                        const track_row *r)
 {
 	ui_rect box = list_thumb_rect(row);
-	for (int k = 2; k >= 1; k--) {
-		ui_rect back = ui_rect_offset(box, 2 * k, -2 * k);
-		ui_fill(back, COL_TINTA);
-		ui_fill(ui_rect_inset(back, OUTLINE_W), COL_CAPA_LUZ);
-	}
 	C2D_Image image;
 	bool shown = thumbs_client_image(&l->thumbs, index - l->base, &image);
 	bool album = r->kind == TRACK_ROW_ALBUM;
 	bool liked = strcmp(l->tracks[index].uri, SP_LIKED_URI) == 0;
-	ui_art_or(box, shown ? &image : NULL,
-	          liked ? ICON_HEART : album ? ICON_ALBUM : ICON_PLAYLIST);
+	ui_art_or(box, shown ? &image : NULL, liked ? ICON_HEART : ICON_NOTE);
 	if (!shown)
 		return;
 	ui_rect badge = { box.x, box.y + box.h - ICON_S, ICON_S, ICON_S };
@@ -493,7 +486,7 @@ static void draw_row(const track_list *l, ui_rect row, int index,
 	row = ui_item_frame(row, focused, pressed, &title_ink, &meta_ink);
 	const track_row *r = l ? row_of(l, index) : NULL;
 	if (is_collection(r))
-		draw_stack(l, row, index, r);
+		draw_collection_cover(l, row, index, r);
 	else if (index >= 0 && l->style == TRACK_LIST_NUMBERS)
 		draw_number(l, row, index);
 	else
