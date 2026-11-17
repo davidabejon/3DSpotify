@@ -1,6 +1,8 @@
 #include "top_detail.h"
 
+#include "downloads_view_logic.h"
 #include "draw.h"
+#include "icons.h"
 #include "lang.h"
 #include "list_logic.h"
 #include "marquee_logic.h"
@@ -176,6 +178,38 @@ static void parse_playlist(const detail_doc *d)
 	}
 }
 
+/* The Home tab's Downloads: how many songs and collections. */
+static void parse_downloads(const detail_doc *d)
+{
+	set_text(&texts[0], tr(STR_SETTINGS_DOWNLOADS), TXT_TITULO);
+	char line[128];
+	snprintf(line, sizeof(line), tr(STR_DLH_SUMMARY_FMT), d->track_rows,
+	         d->coll_rows);
+	add_line(line);
+}
+
+/* An album or playlist on the card: what it is and by whom, and how many
+ * songs take how much. */
+static void parse_offline_collection(const detail_doc *d)
+{
+	set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNTITLED),
+	         TXT_TITULO);
+	char line[192];
+	const char *type = d->offline_album ? tr(STR_ALBUM_TYPE_ALBUM)
+	                                    : tr(STR_PLAYLIST_TYPE);
+	if (d->subtitle[0])
+		snprintf(line, sizeof(line), "%s - %s", type, d->subtitle);
+	else
+		snprintf(line, sizeof(line), "%s", type);
+	add_line(line);
+	char size[32];
+	dlv_format_size(d->bytes, lang_get() == LANG_ES ? ',' : '.', size,
+	                sizeof(size));
+	snprintf(line, sizeof(line), tr(STR_DLH_COLL_SIZE_FMT), d->total_tracks,
+	         size);
+	add_line(line);
+}
+
 static void parse(const detail_doc *d)
 {
 	C2D_TextBufClear(text_buf);
@@ -191,6 +225,10 @@ static void parse(const detail_doc *d)
 		parse_album(d);
 	} else if (d->kind == DETAIL_PLAYLIST) {
 		parse_playlist(d);
+	} else if (d->kind == DETAIL_DOWNLOADS) {
+		parse_downloads(d);
+	} else if (d->kind == DETAIL_OFFLINE_COLLECTION) {
+		parse_offline_collection(d);
 	} else {
 		set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNKNOWN_ARTIST),
 		    TXT_TITULO);
@@ -206,6 +244,14 @@ static bool changed(const detail_doc *d)
 }
 
 /* --- State and drawing ------------------------------------------------- */
+
+/* What shows where the cover goes until it comes, or when there is none:
+ * the note, as everywhere; the Downloads, which has no cover, its arrow, as
+ * on its tile. */
+static int placeholder(const detail_doc *d)
+{
+	return d->kind == DETAIL_DOWNLOADS ? ICON_DOWNLOAD : ICON_NOTE;
+}
 
 /* How far every text has rolled by now: -1 for one that fits. */
 static void current_rolls(int *rolls)
@@ -242,6 +288,6 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art)
 		lines[i] = &texts[1 + i];
 	current_rolls(drawn_rolls);
 	top_now_draw_header(art, true, &texts[0], lines, line_count,
-	                    drawn_rolls);
+	                    drawn_rolls, placeholder(doc));
 	drawn_valid = true;
 }

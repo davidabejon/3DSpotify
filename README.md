@@ -134,10 +134,10 @@ icon:
 
 | Icon | Tab | What it holds |
 |---|---|---|
-| House | **Home** | Your recent playlists, and a shortcut to search. |
+| House | **Home** | Your recent playlists, your downloads, and a shortcut to search. |
 | Magnifying glass | **Search** | The latest results, the search in progress, or its error. |
 | Equalizer | **Playing** | The current track and its controls. |
-| Gear | **Settings** | Language, reconnect and pair another account. |
+| Gear | **Settings** | Language, downloads, reconnect and pair another account. |
 
 - Tap a tab to open it (it switches when you lift the stylus inside it).
 - **L/R** move to the previous or next tab from any screen; **ZL/ZR** (New 3DS only) do the
@@ -170,6 +170,7 @@ is a live session of another service, with no track list this client can play.
 
 - The first tile is always **Liked Songs** (a heart where the cover goes), newest first,
   loaded 50 at a time like a playlist.
+- The second tile is always **Downloads** ([Downloads](#downloads)).
 - With a tile highlighted, the top screen previews it: cover, name, number of tracks and
   the last song played in it. The cover loads once the highlight rests for a moment.
 - Playlists always open at their first song; the last song played is only shown on the
@@ -226,6 +227,11 @@ The chosen track plays locally and keeps playing when you switch tabs. When it e
 - The **top screen** shows the album artwork large (a note placeholder until it arrives).
 - The **bottom screen** shows the title, artist, album and place in the queue ("3 of 24"), the previous, play/pause and next buttons, the time, the progress bar (with the download ahead of it) and the volume bar.
 - Tap the **title**, the **artist** or the **album** to open its detail ([Details](#details)). They work while the track loads, plays or has finished; the text turns lime with an underline while pressed.
+- The icon to the right of the artist and album says whether the track is on the SD card: an arrow
+  (not downloaded), a clock (queued), its percentage (downloading) or a check (downloaded).
+  Tap the arrow, or press
+  <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>,
+  to download the track.
 
 **Playback controls:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pauses/resumes; once the track has finished, plays it again; after an error, retries
@@ -254,9 +260,15 @@ and controls still need validation on real hardware. The probes remain available
 
 From a song you can open its detail, and from there its artist and album:
 
-- **Song:** **Play**, **Artist: …** and **Album: …** buttons (up/down and **A**, or
-  tap). Play starts the song with the list it came from as the queue; for a song from
-  the search results, or from the radio playing, a radio from it.
+- **Song:** **Play**, **Download**, **Artist: …** and **Album: …** buttons (up/down and
+  **A**, or tap). Play starts the song with the list it came from as the queue; for a song
+  from the search results, or from the radio playing, a radio from it. The download button
+  shows where the song is: **Download**, **Queued**, **Downloading 42%**, **Retry
+  download**, **Remove download** (press **A** twice) or **Downloaded** when it came with an
+  album or playlist (remove it with them).
+- **Album and playlist:** a **Download album** / **Download playlist** button above the
+  list downloads them whole; up from the first song reaches it. It then shows the progress
+  ("Downloading 8 of 12") and **Downloaded**, which opens the downloaded copy.
 - **Album:** its tracks, numbered. **Artist:** their popular tracks, with thumbnails.
   **Playlist:** its tracks, with thumbnails, loaded 50 at a time: the next page comes by
   itself as you near the end of the list (a "Loading…" bubble shows meanwhile), up to 500.
@@ -278,13 +290,60 @@ Details open from **Home** (a playlist tile), from **Search** (<span style="back
 **Playing** (tap the title, artist or album). A new search closes the details open in
 **Search**.
 
+### Downloads
+
+Songs, albums and playlists (Liked Songs too) can be saved to the SD card and played
+without a connection.
+
+- **Downloading:** the **Download** button in a song's, album's or playlist's detail, or
+  <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>
+  on the **Playing** tab. Downloads run in the background, one song at a time, while you
+  keep listening; they wait while the player loads a track.
+- **Pace:** Spotify limits how many audio keys an account can ask for: about 15 in a row,
+  then one every 30 seconds. A large playlist therefore takes a while; the queue waits and
+  goes on by itself, and always leaves keys for the music you play.
+- **Playing:** a downloaded song plays from the SD card wherever you pick it, with no
+  network use for its audio.
+- **Home → Downloads:** your downloaded albums and playlists, then the loose songs, most
+  recent first. Open an album or playlist to play it; songs not yet downloaded are dimmed
+  and skipped. Its **Remove download** button (press **A** twice) deletes it.
+- **Settings → Downloads** (the manager): every download by state (downloading, queued,
+  failed, downloaded), with the space used and free on the SD card.
+  - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span>
+    cancels a queued or running download, retries a failed one, or opens a downloaded one.
+  - <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>
+    removes the highlighted row.
+  - Cancelling and removing ask for a second press of the same button.
+  - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+    pauses or resumes the whole queue.
+- **Where they are:** in `SD:/3ds/3DSpotify/downloads/`. The audio stays encrypted as
+  Spotify sends it, and its keys are stored encrypted with a key tied to this console: the
+  files cannot be played on another console or by another program, and copying them
+  elsewhere is no use. They belong to the account that downloaded them; after pairing a
+  different account they are not shown.
+
+**Offline:** with a stored credential, the app starts without a connection, at once when
+Wi-Fi is off, or when Spotify cannot be reached. It also switches to offline by itself if
+Wi-Fi goes while you use it, without stopping what plays from the SD card.
+
+- A crossed-out Wi-Fi icon shows beside the **Search** tab icon.
+- **Home** shows only the **Downloads** tile, and **Search** says it needs a connection.
+- Only downloaded songs play: skipping onto one that is not on the SD card jumps to the next
+  downloaded one. Artist and album links, and new downloads, are unavailable; queued
+  downloads wait for the connection.
+- **Retry connection** (Home), **Retry** (Search) or **Reconnect** (Settings) connect
+  without leaving the app; the music keeps playing. If Spotify rejects the account, the
+  sign-in starts again as at launch.
+
 ### Settings
 
 - **Language** — shows the current language and switches it (so does **SELECT** from any tab).
+- **Downloads** — opens the downloads manager ([Downloads](#downloads)); it shows how many
+  are waiting.
 - **Reconnect** — opens the session again with the saved credential.
 - **Pair another account** — starts pairing with a new code.
 
-Choose with up/down and **A**, or by tapping the button. Reconnecting and pairing stop playback. **B** returns to the Home tab.
+Choose with up/down and **A**, or by tapping the button. Reconnecting while online and pairing stop playback. **B** returns to the Home tab.
 
 ## Probes
 

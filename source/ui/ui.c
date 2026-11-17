@@ -74,6 +74,28 @@ void ui_scene(gfxScreen_t screen)
 	                  COL_FONDO_INF, COL_FONDO_INF);
 }
 
+/* The colour of the screen's background gradient (ui_scene) at `y`. */
+static u32 background_at(int y)
+{
+	u32 out = 0;
+	for (int shift = 0; shift < 32; shift += 8) {
+		int top = (int)((COL_FONDO_SUP >> shift) & 0xFF);
+		int bottom = (int)((COL_FONDO_INF >> shift) & 0xFF);
+		int c = top + (bottom - top) * y / SCREEN_H;
+		out |= (u32)c << shift;
+	}
+	return out;
+}
+
+void ui_background(ui_rect r)
+{
+	if (r.w > 0 && r.h > 0) {
+		u32 top = background_at(r.y), bottom = background_at(r.y + r.h);
+		C2D_DrawRectangle(r.x, r.y, 0.0f, r.w, r.h, top, top, bottom,
+		                  bottom);
+	}
+}
+
 void ui_end(void)
 {
 	C3D_FrameEnd(0);

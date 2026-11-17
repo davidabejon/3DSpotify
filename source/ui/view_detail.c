@@ -1,6 +1,7 @@
 #include "view_detail.h"
 
 #include "detail_logic.h"
+#include "downloads.h"
 #include "draw.h"
 #include "icons.h"
 #include "lang.h"
@@ -8,6 +9,7 @@
 #include "press_logic.h"
 #include "theme.h"
 #include "track_list.h"
+#include "ui.h"
 #include "ui_font.h"
 
 #include <citro2d.h>
@@ -17,9 +19,19 @@
 #define TEXT_GLYPHS    1024
 #define SCRATCH_GLYPHS UI_FIELD_SIZE
 
-/* Touch control id of the error state's retry button; the track buttons
- * are their detail_button. */
-#define CONTROL_RETRY 100
+/* Touch control ids of the error state's retry button and of the button
+ * over a list; the track buttons are their detail_button. */
+#define CONTROL_RETRY  100
+#define CONTROL_HEADER 101
+
+/* The button over an album or playlist on the card: it removes it. Past
+ * the dl_coll_button values. */
+#define DL_COLL_BUTTON_REMOVE 100
+
+/* A download's share is read again once a second (STYLES.md 9). */
+#define DL_SAMPLE_FRAMES 60
+/* "Press A again to remove" shows, and waits for that press, this long. */
+#define CONFIRM_FRAMES   (2 * BUBBLE_SHOW)
 
 typedef enum {
 	MODE_NONE,       /* no document: nothing but B */
@@ -37,15 +49,25 @@ static const u32 glyph_colors[GLYPH_COUNT] = {
 	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y
 };
 
-/* What the bubble (5.9) says: the language after SELECT, or the order
- * after Y. A new one replaces the last. */
-typedef enum { BUBBLE_LANGUAGE, BUBBLE_SHUFFLE } bubble_kind;
+/* What the bubble (5.9) says: the language after SELECT, the order after
+ * Y, or what a download button did (view_detail_notice). A new one
+ * replaces the last. */
+typedef enum { BUBBLE_LANGUAGE, BUBBLE_SHUFFLE, BUBBLE_NOTICE } bubble_kind;
+
+/* The download button's state: a dl_button (the track) or a
+ * dl_coll_button (the button over an album or playlist), with its share,
+ * or how many of how many. `doc_kind` is whose button it is: the same
+ * `kind` says "Download" on a track and "Download playlist" on a list. */
+typedef struct {
+	int doc_kind, kind, a, b;
+} dl_label;
 
 /* Parsed text, for `parsed_doc` as it was at `parsed_serial` and
  * `parsed_state`, in `parsed_lang`. */
 static C2D_TextBuf text_buf, scratch_buf;
 static C2D_Text button_text[DETAIL_BUTTON_COUNT];
 static C2D_Text letter_text[GLYPH_COUNT];
+static C2D_Text hint_open;
 static C2D_Text hint_choose, hint_play, hint_detail, hint_back, hint_cancel,
                 hint_retry, hint_shuffle_on, hint_shuffle_off;
 static C2D_Text bubble_text, shuffle_on_text, shuffle_off_text, loading_text,
@@ -59,6 +81,25 @@ static detail_state parsed_state;
  * whether the next page is on its way (the waiting bubble shows). */
 static int parsed_count;
 static bool loading_more;
+
+/* The download of what is shown, and its text, in a buffer of its own:
+ * the share changes while the rest stays. */
+static C2D_TextBuf dl_buf;
+static C2D_Text dl_text, notice_text;
+static dl_label dl_now = { -1, -1, 0, 0 }, dl_parsed = { -1, -1, 0, 0 };
+static unsigned dl_seen = ~0u;
+static int dl_frames;
+static lang_id dl_lang = LANG_COUNT;
+static str_id notice_id = STR_COUNT, notice_parsed = STR_COUNT;
+static bool notice_ok;
+/* An album's or playlist's list has its download button over it; the
+ * D-pad reaches it up from the first row (detail_header_focus). */
+static bool header, header_enabled, header_focus;
+/* What the level on screen is (details.h). */
+static detail_kind shown_kind = DETAIL_TRACK;
+/* No connection: what needs one is disabled. */
+static bool offline;
+static press_state press_header;
 
 static detail_mode mode = MODE_NONE;
 /* Which track buttons the track allows (6.1). */
@@ -94,6 +135,9 @@ typedef struct {
 	bool more;
 	int loader_step;
 	track_list_look list;
+	dl_label dl;
+	str_id notice;
+	bool header, header_focus, header_pressed, header_enabled;
 } detail_look;
 static detail_look drawn;
 static bool drawn_valid;
@@ -104,7 +148,8 @@ bool view_detail_init(void)
 {
 	text_buf = C2D_TextBufNew(TEXT_GLYPHS);
 	scratch_buf = C2D_TextBufNew(SCRATCH_GLYPHS);
-	if (!text_buf || !scratch_buf ||
+	dl_buf = C2D_TextBufNew(2 * UI_FIELD_SIZE);
+	if (!text_buf || !scratch_buf || !dl_buf ||
 	    !track_list_init(&list, TRACK_LIST_NUMBERS)) {
 		view_detail_exit();
 		return false;
@@ -118,7 +163,9 @@ void view_detail_exit(void)
 		C2D_TextBufDelete(text_buf);
 	if (scratch_buf)
 		C2D_TextBufDelete(scratch_buf);
-	text_buf = scratch_buf = NULL;
+	if (dl_buf)
+		C2D_TextBufDelete(dl_buf);
+	text_buf = scratch_buf = dl_buf = NULL;
 	track_list_exit(&list);
 }
 
@@ -128,10 +175,13 @@ void view_detail_enter(void)
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
 		press_reset(&press_button[i]);
 	press_reset(&press_retry);
+	press_reset(&press_header);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_reset(&press_glyph[i]);
 	touch.target = -1;
 	bubble_frames = -1;
+	header_focus = false;
+	dl_seen = ~0u;
 	loader_frames = 0;
 	pending = DETAIL_ACTION_NONE;
 	pending_press = NULL;
@@ -191,6 +241,7 @@ static void parse_text(const detail_doc *doc)
 	parse(&hint_choose, tr(STR_HINT_CHOOSE));
 	parse(&hint_play, tr(STR_HINT_PLAY));
 	parse(&hint_detail, tr(STR_HINT_DETAIL));
+	parse(&hint_open, tr(STR_HINT_OPEN));
 	parse(&hint_back, tr(STR_HINT_BACK));
 	parse(&hint_cancel, tr(STR_HINT_CANCEL));
 	parse(&hint_retry, tr(STR_HINT_RETRY));
@@ -200,7 +251,8 @@ static void parse_text(const detail_doc *doc)
 	parse(&shuffle_on_text, tr(STR_SHUFFLE_ON));
 	parse(&shuffle_off_text, tr(STR_SHUFFLE_OFF));
 	parse(&loading_text, tr(STR_DETAIL_LOADING));
-	parse(&empty_text, tr(STR_DETAIL_EMPTY));
+	parse(&empty_text, tr(doc && doc->kind == DETAIL_DOWNLOADS
+	                      ? STR_DLH_EMPTY : STR_DETAIL_EMPTY));
 	parse(&retry_text, tr(STR_RESULTS_RETRY));
 	ui_rect notice = list_notice_rect();
 	ui_parse_fitted(&notice_title_text, text_buf, scratch_buf,
@@ -215,14 +267,219 @@ static void parse_text(const detail_doc *doc)
 	if (mode == MODE_TRACK) {
 		const sp_track *t = &doc->tracks[doc->selected];
 		enabled[DETAIL_BUTTON_PLAY] = true;
-		enabled[DETAIL_BUTTON_ARTIST] = t->artist_uri[0] != '\0';
-		enabled[DETAIL_BUTTON_ALBUM] = t->album_uri[0] != '\0';
+		enabled[DETAIL_BUTTON_DOWNLOAD] = dl_button_enabled(dl_now.kind);
+		enabled[DETAIL_BUTTON_ARTIST] = t->artist_uri[0] != '\0' && !offline;
+		enabled[DETAIL_BUTTON_ALBUM] = t->album_uri[0] != '\0' && !offline;
 		parse(&button_text[DETAIL_BUTTON_PLAY], tr(STR_DETAIL_PLAY));
 		parse_button(DETAIL_BUTTON_ARTIST, STR_DETAIL_ARTIST_FMT,
 		             t->artist[0] ? t->artist : tr(STR_UNKNOWN_ARTIST));
 		parse_button(DETAIL_BUTTON_ALBUM, STR_DETAIL_ALBUM_FMT,
 		             t->album[0] ? t->album : tr(STR_UNKNOWN_ALBUM));
 	}
+}
+
+/* --- Downloads --------------------------------------------------------- */
+
+static bool same_label(dl_label a, dl_label b)
+{
+	return a.doc_kind == b.doc_kind && a.kind == b.kind && a.a == b.a &&
+	       a.b == b.b;
+}
+
+/* What the download button says now. */
+static void label_string(const detail_doc *doc, char *out, size_t len)
+{
+	str_id id = STR_DL_DOWNLOAD;
+	if (mode == MODE_TRACK) {
+		switch ((dl_button)dl_now.kind) {
+		case DL_BUTTON_QUEUED:
+			id = STR_DL_QUEUED;
+			break;
+		case DL_BUTTON_PROGRESS:
+			snprintf(out, len, tr(STR_DL_PROGRESS_FMT), dl_now.a);
+			return;
+		case DL_BUTTON_RETRY:
+			id = STR_DL_RETRY;
+			break;
+		case DL_BUTTON_REMOVE:
+			id = STR_DL_REMOVE;
+			break;
+		case DL_BUTTON_HELD:
+			id = STR_DL_DONE;
+			break;
+		default:
+			break;
+		}
+	} else if (dl_now.kind == DL_COLL_BUTTON_REMOVE) {
+		id = STR_DL_REMOVE;
+	} else {
+		switch ((dl_coll_button)dl_now.kind) {
+		case DL_COLL_BUTTON_WAITING:
+			id = STR_DL_COLL_WAITING;
+			break;
+		case DL_COLL_BUTTON_PROGRESS:
+			snprintf(out, len, tr(STR_DL_COLL_PROGRESS_FMT), dl_now.a,
+			         dl_now.b);
+			return;
+		case DL_COLL_BUTTON_DONE:
+			id = STR_DL_DONE;
+			break;
+		default:
+			id = doc && doc->kind == DETAIL_ALBUM ? STR_DL_ALL_ALBUM
+			                                      : STR_DL_ALL_PLAYLIST;
+			break;
+		}
+	}
+	snprintf(out, len, "%s", tr(id));
+}
+
+/* The button's label and the notice, when either changed. */
+static void parse_download(const detail_doc *doc)
+{
+	if (same_label(dl_parsed, dl_now) && dl_lang == lang_get() &&
+	    notice_parsed == notice_id)
+		return;
+	C2D_TextBufClear(dl_buf);
+	char label[96];
+	label_string(doc, label, sizeof(label));
+	ui_parse_fitted(&dl_text, dl_buf, scratch_buf, label, TXT_CUERPO,
+	                detail_button_rect(DETAIL_BUTTON_DOWNLOAD).w - 2 * SP_4 -
+	                ICON_S - SP_1);
+	C2D_TextOptimize(&dl_text);
+	if (notice_id != STR_COUNT) {
+		ui_parse(&notice_text, dl_buf, tr(notice_id));
+		C2D_TextOptimize(&notice_text);
+	}
+	dl_parsed = dl_now;
+	dl_lang = lang_get();
+	notice_parsed = notice_id;
+}
+
+/* Reads the download of what is shown again when the downloads changed,
+ * once a second while a track's is under way (its share), or when
+ * `force`d by a new document. */
+static void follow_download(const detail_doc *doc, bool force)
+{
+	if (!doc || (mode != MODE_TRACK && !header))
+		return;
+	unsigned now = downloads_generation();
+	bool sample = mode == MODE_TRACK && dl_now.kind == DL_BUTTON_PROGRESS &&
+	              ++dl_frames >= DL_SAMPLE_FRAMES;
+	if (!force && now == dl_seen && !sample)
+		return;
+	dl_frames = 0;
+	dl_seen = now;
+	dl_label next = { (int)doc->kind, 0, 0, 0 };
+	if (mode == MODE_TRACK) {
+		const sp_track *t = &doc->tracks[doc->selected];
+		dl_state state = DL_QUEUED;
+		bool alone = false;
+		int pct = 0;
+		bool known = downloads_track_state(t->uri, &state, &pct, &alone);
+		next.kind = dl_track_button(known, state, alone);
+		if (next.kind == DL_BUTTON_PROGRESS)
+			next.a = pct;
+		/* Removing needs no connection; downloading does. */
+		enabled[DETAIL_BUTTON_DOWNLOAD] = dl_button_enabled(next.kind) &&
+		                                  (!offline ||
+		                                   next.kind == DL_BUTTON_REMOVE);
+		/* Queued by its own press: a disabled button holds no focus. */
+		focus = detail_focus_move(focus, 0, enabled);
+	} else if (doc->kind == DETAIL_OFFLINE_COLLECTION) {
+		next.kind = DL_COLL_BUTTON_REMOVE;
+		header_enabled = true;
+	} else {
+		bool pending;
+		int done, count;
+		bool known = downloads_collection_state(doc->uri, &pending, &done,
+		                                        &count);
+		next.kind = dl_collection_button(pending, known, done, count);
+		if (next.kind == DL_COLL_BUTTON_PROGRESS) {
+			next.a = done;
+			next.b = count;
+		}
+		/* "Downloaded" opens it from the card. */
+		header_enabled = next.kind == DL_COLL_BUTTON_DOWNLOAD ||
+		                 next.kind == DL_COLL_BUTTON_DONE;
+		header_focus = detail_header_focus(header_focus, list.selected, 0,
+		                                   header_enabled);
+	}
+	dl_now = next;
+}
+
+static bool has_header(const detail_doc *doc)
+{
+	return doc && (doc->kind == DETAIL_ALBUM || doc->kind == DETAIL_PLAYLIST ||
+	               doc->kind == DETAIL_OFFLINE_COLLECTION);
+}
+
+/* An album's or playlist's list goes under its download button (one on
+ * the card, under the button that removes it); an artist's (popular
+ * tracks are no collection to keep) and the Downloads have the screen. */
+static void place_list(const detail_doc *doc)
+{
+	header = mode == MODE_LIST && has_header(doc);
+	if (!header)
+		header_focus = false;
+	track_list_set_frame(&list, header ? list_frame_under_button()
+	                                   : list_frame_full());
+}
+
+static list_frame skeleton_frame(const detail_doc *doc)
+{
+	return has_header(doc) ? list_frame_under_button() : list_frame_full();
+}
+
+static bool remove_armed(void)
+{
+	return bubble_frames >= 0 && bubble == BUBBLE_NOTICE &&
+	       notice_id == STR_DL_REMOVE_CONFIRM;
+}
+
+/* A or a tap on the track's download button. Removing asks first: the
+ * first press says to press again, and a second one while that shows
+ * removes. */
+static detail_action download_action(void)
+{
+	if (dl_now.kind != DL_BUTTON_REMOVE)
+		return DETAIL_ACTION_DOWNLOAD;
+	if (remove_armed()) {
+		bubble_frames = -1;
+		return DETAIL_ACTION_DOWNLOAD;
+	}
+	view_detail_notice(STR_DL_REMOVE_CONFIRM, true);
+	return DETAIL_ACTION_NONE;
+}
+
+/* A or a tap on the button over the list: download it all, open it from
+ * the card, or (on the card) remove it after a second press. */
+static detail_action header_action(void)
+{
+	if (shown_kind != DETAIL_OFFLINE_COLLECTION)
+		return DETAIL_ACTION_DOWNLOAD_ALL;
+	if (remove_armed()) {
+		bubble_frames = -1;
+		return DETAIL_ACTION_REMOVE_ALL;
+	}
+	view_detail_notice(STR_DL_REMOVE_CONFIRM, true);
+	return DETAIL_ACTION_NONE;
+}
+
+/* The focused row of the Downloads is an album or a playlist. */
+static bool focused_collection(void)
+{
+	return list.rows && list.count > 0 &&
+	       list.rows[list.selected].kind != TRACK_ROW_TRACK;
+}
+
+/* A, or a tap, on the focused row: play from it, or open the collection;
+ * nothing on a track that is not on the card. */
+static detail_action row_action(void)
+{
+	if (list.count <= 0 || !track_row_on(list.rows, list.selected))
+		return DETAIL_ACTION_NONE;
+	return focused_collection() ? DETAIL_ACTION_OPEN_COLLECTION
+	                            : DETAIL_ACTION_PLAY;
 }
 
 /* Follows `doc`: another level starts afresh (focus on Play, no press
@@ -239,7 +496,10 @@ static void sync(const detail_doc *doc)
 		} else if (mode == MODE_EMPTY && doc->count > 0) {
 			mode = MODE_LIST;
 			list.style = TRACK_LIST_THUMBS;
+			place_list(doc);
 			track_list_set(&list, doc->tracks, doc->count, doc->selected);
+			track_list_set_rows(&list, doc->rows);
+			follow_download(doc, true);
 		}
 		parsed_count = doc->count;
 	}
@@ -252,17 +512,24 @@ static void sync(const detail_doc *doc)
 			focus = DETAIL_BUTTON_PLAY;
 		}
 		mode = mode_of(doc);
+		shown_kind = doc ? doc->kind : DETAIL_TRACK;
+		place_list(doc);
 		if (mode == MODE_LIST) {
 			/* Where the list was left, if this level was shown before. */
-			list.style = doc->kind == DETAIL_ALBUM ? TRACK_LIST_NUMBERS
-			                                      : TRACK_LIST_THUMBS;
+			bool numbers = doc->kind == DETAIL_ALBUM ||
+			               (doc->kind == DETAIL_OFFLINE_COLLECTION &&
+			                doc->offline_album);
+			list.style = numbers ? TRACK_LIST_NUMBERS : TRACK_LIST_THUMBS;
 			track_list_set(&list, doc->tracks, doc->count, doc->selected);
+			track_list_set_rows(&list, doc->rows);
 			track_list_scroll_to(&list, doc->first);
 		} else {
 			track_list_set(&list, NULL, 0, 0);
 		}
 	}
 	parse_text(doc);
+	/* parse_text set the buttons afresh: the download's follows. */
+	follow_download(doc, true);
 	parsed_doc = doc;
 	parsed_serial = doc ? doc->serial : 0;
 	parsed_state = doc ? doc->state : DETAIL_LOADING;
@@ -285,6 +552,12 @@ static detail_look current_look(void)
 		.loader_step = mode == MODE_LOADING || loading_more
 		               ? loader_frames / LOADER_STEP : 0,
 		.list = track_list_get_look(&list),
+		.dl = dl_now,
+		.notice = notice_id,
+		.header = header,
+		.header_focus = header_focus,
+		.header_pressed = press_down(&press_header),
+		.header_enabled = header_enabled,
 	};
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
 		look.button[i] = press_down(&press_button[i]);
@@ -299,7 +572,11 @@ static bool same_look(const detail_look *a, const detail_look *b)
 	    a->bubble != b->bubble || a->bubble_kind != b->bubble_kind ||
 	    a->shuffle != b->shuffle || a->more != b->more ||
 	    a->loader_step != b->loader_step ||
-	    !track_list_same_look(&a->list, &b->list))
+	    !track_list_same_look(&a->list, &b->list) ||
+	    !same_label(a->dl, b->dl) || a->notice != b->notice ||
+	    a->header != b->header || a->header_focus != b->header_focus ||
+	    a->header_pressed != b->header_pressed ||
+	    a->header_enabled != b->header_enabled)
 		return false;
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
 		if (a->button[i] != b->button[i])
@@ -316,9 +593,12 @@ static void tick(void)
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
 		press_tick(&press_button[i]);
 	press_tick(&press_retry);
+	press_tick(&press_header);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_tick(&press_glyph[i]);
-	if (bubble_frames >= 0 && ++bubble_frames >= BUBBLE_SHOW)
+	/* "Press A again" waits for that press longer than a bubble shows. */
+	int shown = remove_armed() ? CONFIRM_FRAMES : BUBBLE_SHOW;
+	if (bubble_frames >= 0 && ++bubble_frames >= shown)
 		bubble_frames = -1;
 	if (mode == MODE_LOADING || loading_more)
 		loader_frames++;
@@ -329,6 +609,8 @@ static void tick(void)
 static detail_action button_action(detail_button button)
 {
 	switch (button) {
+	case DETAIL_BUTTON_DOWNLOAD:
+		return download_action();
 	case DETAIL_BUTTON_ARTIST:
 		return DETAIL_ACTION_ARTIST;
 	case DETAIL_BUTTON_ALBUM:
@@ -367,6 +649,7 @@ static void release_keys(u32 up)
 			for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
 				press_end(&press_button[i]);
 			press_end(&press_retry);
+			press_end(&press_header);
 		}
 	}
 	if (up & KEY_B)
@@ -377,8 +660,8 @@ static void release_keys(u32 up)
 		press_end(&press_glyph[GLYPH_Y]);
 }
 
-/* The buttons of the track and error states. Returns true while the
- * stylus owns the input. */
+/* The buttons of the track and error states, and the one over a list.
+ * Returns true while the stylus owns the input. */
 static bool handle_button_touch(u32 down, u32 held, u32 up)
 {
 	int hit = -1;
@@ -390,6 +673,9 @@ static bool handle_button_touch(u32 down, u32 held, u32 up)
 		else if (mode == MODE_FAILED &&
 		         ui_rect_contains(retry_rect(), pos.px, pos.py))
 			hit = CONTROL_RETRY;
+		else if (header && header_enabled &&
+		         ui_rect_contains(list_header_button_rect(), pos.px, pos.py))
+			hit = CONTROL_HEADER;
 	}
 	int control;
 	touch_event event = touch_track_update(&touch, (down & KEY_TOUCH) != 0,
@@ -397,10 +683,13 @@ static bool handle_button_touch(u32 down, u32 held, u32 up)
 	                                       (up & KEY_TOUCH) != 0, hit,
 	                                       &control);
 	press_state *press = control == CONTROL_RETRY ? &press_retry
+	                     : control == CONTROL_HEADER ? &press_header
 	                     : control >= 0 ? &press_button[control] : NULL;
 	switch (event) {
 	case TOUCH_PRESS:
-		if (control != CONTROL_RETRY)
+		if (control == CONTROL_HEADER)
+			header_focus = true;
+		else if (control != CONTROL_RETRY)
 			focus = (detail_button)control;
 		press_begin(press);
 		break;
@@ -410,7 +699,8 @@ static bool handle_button_touch(u32 down, u32 held, u32 up)
 	case TOUCH_ACTIVATE:
 		press_end(press);
 		queue(control == CONTROL_RETRY ? DETAIL_ACTION_RETRY
-		                               : button_action((detail_button)control),
+		      : control == CONTROL_HEADER ? header_action()
+		      : button_action((detail_button)control),
 		      press);
 		break;
 	case TOUCH_NONE:
@@ -446,9 +736,16 @@ static detail_action update(u32 down)
 	if (mode == MODE_LIST) {
 		track_list_touch event = track_list_update_touch(&list, down, held,
 		                                                 up);
-		if (event == TRACK_LIST_ACTIVATE)
-			queue(DETAIL_ACTION_PLAY, &list.press);  /* the focused row */
-		if (event != TRACK_LIST_IDLE)
+		/* A row touched while the button over the list has the focus
+		 * takes the focus back first, without playing. */
+		if (event == TRACK_LIST_ACTIVATE && !header_focus)
+			queue(row_action(), &list.press);  /* the focused row */
+		if (event != TRACK_LIST_IDLE) {
+			header_focus = false;
+			return DETAIL_ACTION_NONE;
+		}
+		if (header && (handle_button_touch(down, held, up) ||
+		               pending != DETAIL_ACTION_NONE))
 			return DETAIL_ACTION_NONE;
 	} else if (mode == MODE_TRACK || mode == MODE_FAILED) {
 		if (handle_button_touch(down, held, up) ||
@@ -456,7 +753,8 @@ static detail_action update(u32 down)
 			return DETAIL_ACTION_NONE;
 	}
 
-	if (mode == MODE_LIST && track_list_realign(&list, down, KEY_A | KEY_X)) {
+	if (mode == MODE_LIST && !header_focus &&
+	    track_list_realign(&list, down, KEY_A | KEY_X)) {
 		/* 6.6: with the focus dragged out of view, the first press only
 		 * brings the list back to it; A and X show their glyph pressed
 		 * but act on nothing they cannot see. */
@@ -466,21 +764,36 @@ static detail_action update(u32 down)
 			press_begin(&press_glyph[GLYPH_X]);
 		return DETAIL_ACTION_NONE;
 	}
-	if (mode == MODE_LIST)
-		track_list_navigate(&list, down);
+	if (mode == MODE_LIST) {
+		/* Up from the first row to the button over the list, and down
+		 * back; the list itself moves only while it has the focus. */
+		u32 nav = down;
+		if (down & (KEY_UP | KEY_DOWN)) {
+			bool next = detail_header_focus(header_focus, list.selected,
+			                                (down & KEY_UP) ? -1 : 1,
+			                                header && header_enabled);
+			if (next != header_focus)
+				nav &= ~(u32)(KEY_UP | KEY_DOWN);
+			header_focus = next;
+		}
+		if (!header_focus)
+			track_list_navigate(&list, nav);
+	}
 	/* 6.2: the focus moves, and shows, in the same frame. */
 	if (mode == MODE_TRACK && (down & (KEY_UP | KEY_DOWN)))
 		focus = detail_focus_move(focus, (down & KEY_UP) ? -1 : 1, enabled);
 
 	if ((down & KEY_A) && mode == MODE_TRACK) {
 		press_key(GLYPH_A, button_action(focus), &press_button[focus]);
+	} else if ((down & KEY_A) && mode == MODE_LIST && header_focus) {
+		press_key(GLYPH_A, header_action(), &press_header);
 	} else if ((down & KEY_A) && mode == MODE_LIST) {
 		/* The album or artist from this row (plan 8.1). */
-		press_key(GLYPH_A, DETAIL_ACTION_PLAY,
-		          track_list_focused_press(&list));
+		press_key(GLYPH_A, row_action(), track_list_focused_press(&list));
 	} else if ((down & KEY_A) && mode == MODE_FAILED) {
 		press_key(GLYPH_A, DETAIL_ACTION_RETRY, &press_retry);
-	} else if ((down & KEY_X) && mode == MODE_LIST) {
+	} else if ((down & KEY_X) && mode == MODE_LIST && !header_focus &&
+	           !focused_collection() && list.count > 0) {
 		press_key(GLYPH_X, DETAIL_ACTION_OPEN_TRACK, NULL);
 	} else if ((down & KEY_Y) && mode == MODE_LIST) {
 		press_key(GLYPH_Y, DETAIL_ACTION_SHUFFLE, NULL);
@@ -499,6 +812,8 @@ static detail_action update(u32 down)
 detail_action view_detail_update(detail_doc *doc, u32 down)
 {
 	sync(doc);
+	follow_download(doc, false);
+	parse_download(doc);
 	detail_action action = update(down);
 	/* The level keeps where its list was, for "Play", for the track detail
 	 * opened from it, and for coming back to it. */
@@ -514,6 +829,23 @@ void view_detail_set_shuffle(bool on)
 	shuffle = on;
 }
 
+void view_detail_set_offline(bool on)
+{
+	if (on == offline)
+		return;
+	offline = on;
+	parsed_lang = LANG_COUNT;   /* the buttons are set again */
+	dl_seen = ~0u;
+}
+
+void view_detail_notice(str_id text, bool ok)
+{
+	notice_id = text;
+	notice_ok = ok;
+	bubble = BUBBLE_NOTICE;
+	bubble_frames = 0;
+}
+
 bool view_detail_dirty(const detail_doc *doc)
 {
 	if (doc_changed(doc) || parsed_lang != lang_get() || !drawn_valid ||
@@ -526,21 +858,63 @@ bool view_detail_dirty(const detail_doc *doc)
 
 /* --- Drawing ----------------------------------------------------------- */
 
+/* The download button's icon: what pressing it would do, or where the
+ * download is. */
+static icon_id download_icon(const detail_look *look)
+{
+	if (look->mode == MODE_TRACK) {
+		switch ((dl_button)look->dl.kind) {
+		case DL_BUTTON_QUEUED:
+			return ICON_QUEUED;
+		case DL_BUTTON_REMOVE:
+		case DL_BUTTON_HELD:
+			return ICON_DOWNLOADED;
+		default:
+			return ICON_DOWNLOAD;
+		}
+	}
+	if (look->dl.kind == DL_COLL_BUTTON_REMOVE)
+		return ICON_DOWNLOADED;
+	switch ((dl_coll_button)look->dl.kind) {
+	case DL_COLL_BUTTON_WAITING:
+		return ICON_QUEUED;
+	case DL_COLL_BUTTON_DONE:
+		return ICON_DOWNLOADED;
+	default:
+		return ICON_DOWNLOAD;
+	}
+}
+
 static void draw_track(const detail_look *look)
 {
 	C2D_Image play = icon_image(ICON_PLAY);
+	C2D_Image download = icon_image(download_icon(look));
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++) {
 		ui_control_look button = {
 			.pressed = look->button[i],
 			.focused = look->focus == (detail_button)i,
 			.disabled = !enabled[i],
 		};
+		bool dl = i == DETAIL_BUTTON_DOWNLOAD;
 		ui_button(detail_button_rect(i),
 		          i == DETAIL_BUTTON_PLAY ? UI_BUTTON_PRIMARY
 		                                  : UI_BUTTON_SECONDARY,
-		          button, &button_text[i],
-		          i == DETAIL_BUTTON_PLAY ? &play : NULL);
+		          button, dl ? &dl_text : &button_text[i],
+		          i == DETAIL_BUTTON_PLAY ? &play : dl ? &download : NULL);
 	}
+}
+
+/* The button over an album's or playlist's list: its download. */
+static void draw_header(const detail_look *look)
+{
+	C2D_Image icon = icon_image(download_icon(look));
+	ui_control_look button = {
+		.pressed = look->header_pressed,
+		.focused = look->header_focus,
+		.disabled = !look->header_enabled,
+	};
+	ui_button(list_header_button_rect(), UI_BUTTON_SECONDARY, button,
+	          &dl_text, &icon);
 }
 
 static ui_hint hint(int glyph, const C2D_Text *label, const detail_look *look)
@@ -558,8 +932,19 @@ static void draw_bar(const detail_look *look)
 		hints[n++] = hint(GLYPH_A, &hint_choose, look);
 		break;
 	case MODE_LIST:
-		hints[n++] = hint(GLYPH_A, &hint_play, look);
-		hints[n++] = hint(GLYPH_X, &hint_detail, look);
+		/* On the button over the list, A downloads, and X has no row. */
+		if (look->header_focus) {
+			hints[n++] = hint(GLYPH_A, &hint_choose, look);
+		} else {
+			/* A collection of the Downloads opens, and has no detail of
+			 * a track to show. */
+			bool coll = list.rows && list.count > 0 &&
+			            list.rows[look->list.selected].kind !=
+			            TRACK_ROW_TRACK;
+			hints[n++] = hint(GLYPH_A, coll ? &hint_open : &hint_play, look);
+			if (!coll)
+				hints[n++] = hint(GLYPH_X, &hint_detail, look);
+		}
 		hints[n++] = hint(GLYPH_Y, look->shuffle ? &hint_shuffle_on
 		                                         : &hint_shuffle_off, look);
 		break;
@@ -578,6 +963,7 @@ static void draw_bar(const detail_look *look)
 void view_detail_draw_bottom(const detail_doc *doc)
 {
 	sync(doc);
+	parse_download(doc);
 	track_list_ensure_parsed(&list);
 	detail_look look = current_look();
 
@@ -587,10 +973,22 @@ void view_detail_draw_bottom(const detail_doc *doc)
 		break;
 	case MODE_LOADING:
 		/* Skeleton rows: the layout the tracks will fill. */
-		track_list_draw_skeleton();
+		track_list_draw_skeleton(skeleton_frame(doc));
 		break;
 	case MODE_LIST:
-		track_list_draw(&list, &look.list);
+		if (look.header) {
+			/* No row shows the focus while the button has it. Rows
+			 * dragged up slide under the button, as under the bars. */
+			track_list_look rows = look.list;
+			if (look.header_focus)
+				rows.selected = -1;
+			track_list_draw(&list, &rows);
+			ui_background((ui_rect){ 0, TAB_H, SCREEN_BOTTOM_W,
+			                         list.frame.top - TAB_H });
+			draw_header(&look);
+		} else {
+			track_list_draw(&list, &look.list);
+		}
 		break;
 	case MODE_EMPTY: {
 		/* A single message: centred (3.3). */
@@ -626,10 +1024,14 @@ void view_detail_draw_bottom(const detail_doc *doc)
 	}
 	if (look.bubble) {
 		bool order = look.bubble_kind == BUBBLE_SHUFFLE;
-		const C2D_Text *text = !order ? &bubble_text
+		bool notice = look.bubble_kind == BUBBLE_NOTICE;
+		const C2D_Text *text = notice ? &notice_text
+		                       : !order ? &bubble_text
 		                       : look.shuffle ? &shuffle_on_text
 		                                      : &shuffle_off_text;
-		C2D_Image icon = icon_image(order ? ICON_SHUFFLE : ICON_LANGUAGE);
+		C2D_Image icon = icon_image(notice ? (notice_ok ? ICON_NOTE
+		                                                : ICON_ERROR)
+		                            : order ? ICON_SHUFFLE : ICON_LANGUAGE);
 		ui_bubble(list_bubble_slot_rect(ui_bubble_content_width(text), slot),
 		          &icon, text);
 	}

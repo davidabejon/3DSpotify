@@ -38,6 +38,10 @@ void top_set_detail(const detail_doc *doc, artwork_state *art);
  * caller's and must outlive the tabs. */
 void top_set_account(const about_account *account, artwork_state *art);
 
+/* Whether Settings shows the downloads manager, whose card then takes the
+ * top screen. Once per frame with the tabs. */
+void top_set_manager(bool on);
+
 bool top_dirty(app_tab tab, const artwork_state *art);
 
 void top_draw(app_tab tab, artwork_state *art);

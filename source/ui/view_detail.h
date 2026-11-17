@@ -2,10 +2,13 @@
  * a track, an album or an artist, whichever is on top of the active tab's
  * detail stack (details.h). The top screen belongs to top.h.
  *
- * Track: three buttons with the geometry of the Settings tab
- * (detail_logic.h) -- Play, the artist and the album, the last two
- * disabled when the track does not name them -- and "[A] Choose [B] Back".
- * The focus starts on Play.
+ * Track: four buttons with the geometry of the Settings tab
+ * (detail_logic.h) -- Play, its download, the artist and the album, the
+ * last two disabled when the track does not name them -- and
+ * "[A] Choose [B] Back". The focus starts on Play. The download button
+ * says where the track is (downloads.h): "Download", "Queued",
+ * "Downloading 42%", "Retry download", "Remove download", the last asking
+ * for a second A while "Press A again to remove" shows.
  *
  * Album and artist: while loading, skeleton rows under a "Loading..."
  * bubble, B cancelling; if it failed, the notice with the reason and a
@@ -14,7 +17,9 @@
  * focused row, plays the list from that row; X opens that track's detail;
  * Y switches the order the lists play in, which the bar shows, and a bubble
  * confirms. An album's rows show their position, an artist's their cover
- * thumbnail.
+ * thumbnail. An album's or playlist's list has three rows under a button
+ * that downloads it all, and then says how far that went; up from the
+ * first row reaches it.
  *
  * Every call takes the document on screen. A different level starts with
  * no press, focus or bubble left over; the same level that finished
@@ -28,6 +33,7 @@
 #define VIEW_DETAIL_H
 
 #include "details.h"
+#include "lang.h"
 
 #include <3ds.h>
 
@@ -51,7 +57,17 @@ typedef enum {
 	DETAIL_ACTION_LANGUAGE,
 	/* A list's Y: switch shuffle on or off, then view_detail_set_shuffle
 	 * with the new state; the view shows the bubble itself. */
-	DETAIL_ACTION_SHUFFLE
+	DETAIL_ACTION_SHUFFLE,
+	/* Track: its download button, confirmed when it removes. The caller
+	 * queues, retries or removes, then says so (view_detail_notice). */
+	DETAIL_ACTION_DOWNLOAD,
+	/* Album or playlist: the button over the list (download it, or once
+	 * downloaded open it from the card). */
+	DETAIL_ACTION_DOWNLOAD_ALL,
+	/* An album or playlist on the card: its button, confirmed. */
+	DETAIL_ACTION_REMOVE_ALL,
+	/* The Downloads: A on an album or playlist, open it from the card. */
+	DETAIL_ACTION_OPEN_COLLECTION
 } detail_action;
 
 /* After ui_init and icons_init. */
@@ -69,6 +85,14 @@ detail_action view_detail_update(detail_doc *doc, u32 down);
 /* Whether lists play shuffled, for Y's label and its bubble: at start-up
  * and after every DETAIL_ACTION_SHUFFLE. */
 void view_detail_set_shuffle(bool on);
+
+/* Without a connection the artist's and the album's buttons, and
+ * downloading, are disabled (6.1); removing a download still works. */
+void view_detail_set_offline(bool on);
+
+/* A bubble (5.9) with what a download action did; `ok` picks the note
+ * icon, else the error one. */
+void view_detail_notice(str_id text, bool ok);
 
 bool view_detail_dirty(const detail_doc *doc);
 

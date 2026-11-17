@@ -1,6 +1,7 @@
 #include "track_list.h"
 
 #include "draw.h"
+#include "icons.h"
 #include "tabbar.h"
 #include "thumbs.h"
 #include "theme.h"
@@ -36,6 +37,7 @@ bool track_list_init(track_list *l, track_list_style style)
 {
 	memset(l, 0, sizeof(*l));
 	l->style = style;
+	l->frame = list_frame_full();
 	l->parsed_lang = LANG_COUNT;
 	l->stale = true;
 	l->press_index = -1;
@@ -111,24 +113,47 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 	l->count = count < 0 ? 0 : count > TRACK_LIST_MAX ? TRACK_LIST_MAX
 	                                                  : count;
 	l->selected = list_clamp(selected, l->count);
-	l->first = list_scroll(0, l->selected, l->count, RESULTS_PER_PAGE);
+	l->first = list_scroll(0, l->selected, l->count, l->frame.rows);
 	l->scroll = l->first * LIST_PITCH;
 	l->base = list_window_base(0, l->first, l->count, TRACK_LIST_WINDOW);
 	/* New tracks: thumbs.c is handed their covers by the next claim. */
 	offer_window(l, false);
 	thumbs_client_window(&l->thumbs, l->first - l->base);
+	l->rows = NULL;
 	l->stale = true;
 	track_list_reset_input(l);
 }
 
+void track_list_set_rows(track_list *l, const track_row *rows)
+{
+	l->rows = rows;
+	l->stale = true;
+}
+
+static const track_row *row_of(const track_list *l, int index)
+{
+	return l->rows && index >= 0 && index < l->count ? &l->rows[index]
+	                                                  : NULL;
+}
+
+static bool is_collection(const track_row *r)
+{
+	return r && r->kind != TRACK_ROW_TRACK;
+}
+
+void track_list_set_frame(track_list *l, list_frame frame)
+{
+	l->frame = frame;
+}
+
 void track_list_scroll_to(track_list *l, int first)
 {
-	int last = list_max_scroll(l->count) / LIST_PITCH;
+	int last = list_max_scroll_in(l->frame, l->count) / LIST_PITCH;
 	l->first = first < 0 ? 0 : first > last ? last : first;
 	l->scroll = l->first * LIST_PITCH;
 	/* The focus is never left out of view by this. */
-	if (!list_row_whole(l->selected, l->scroll, l->count))
-		l->first = list_align(l->scroll, l->selected, l->count);
+	if (!list_row_whole_in(l->frame, l->selected, l->scroll, l->count))
+		l->first = list_align_in(l->frame, l->scroll, l->selected, l->count);
 	l->scroll = l->first * LIST_PITCH;
 	follow_window(l);
 }
@@ -190,16 +215,39 @@ void track_list_ensure_parsed(track_list *l)
 		n = TRACK_LIST_WINDOW;
 	for (int i = 0; i < n; i++) {
 		const sp_track *t = &l->tracks[l->base + i];
+		const track_row *r = row_of(l, l->base + i);
 		char text[16];
-		list_format_duration(t->duration_ms, text, sizeof(text));
+		/* A collection opens: a chevron. A track that is not on the card
+		 * shows its state as an icon: no text. */
+		if (is_collection(r))
+			snprintf(text, sizeof(text), ">");
+		else if (r && r->off)
+			text[0] = '\0';
+		else
+			list_format_duration(t->duration_ms, text, sizeof(text));
 		parse(&l->duration[i], l->buf, text);
 		l->duration_width[i] = ui_text_width(&l->duration[i], TXT_META);
 		/* The duration is never cut (5.3): the title makes room. */
 		int title_width = width - ui_px_ceil(l->duration_width[i]) - SP_2;
 		ui_parse_fitted(&l->title[i], l->buf, l->scratch, track_name(t),
 		                TXT_CABEZA, title_width);
-		ui_parse_fitted(&l->artist[i], l->buf, l->scratch, track_artist(t),
-		                TXT_CUERPO, width);
+		char sub[192];
+		if (is_collection(r)) {
+			bool album = r->kind == TRACK_ROW_ALBUM;
+			if (r->done < r->count)
+				snprintf(sub, sizeof(sub),
+				         tr(album ? STR_DLH_ALBUM_PROGRESS_FMT
+				                  : STR_DLH_PLAYLIST_PROGRESS_FMT),
+				         r->done, r->count);
+			else
+				snprintf(sub, sizeof(sub),
+				         tr(album ? STR_DLH_ALBUM_FMT : STR_DLH_PLAYLIST_FMT),
+				         r->count);
+		} else {
+			snprintf(sub, sizeof(sub), "%s", track_artist(t));
+		}
+		ui_parse_fitted(&l->artist[i], l->buf, l->scratch, sub, TXT_CUERPO,
+		                width);
 		if (l->style == TRACK_LIST_NUMBERS) {
 			snprintf(text, sizeof(text), "%d", l->base + i + 1);
 			parse(&l->number[i], l->buf, text);
@@ -246,7 +294,7 @@ void track_list_tick(track_list *l)
 void track_list_focus(track_list *l, int index)
 {
 	l->selected = list_clamp(index, l->count);
-	l->first = list_align(l->scroll, l->selected, l->count);
+	l->first = list_align_in(l->frame, l->scroll, l->selected, l->count);
 	l->scroll = l->first * LIST_PITCH;
 	follow_window(l);
 }
@@ -254,7 +302,7 @@ void track_list_focus(track_list *l, int index)
 /* 6.9: the list follows the stylus pixel for pixel. */
 static void drag_to(track_list *l, int y)
 {
-	l->scroll = list_drag_scroll(&l->drag, y, l->count);
+	l->scroll = list_drag_scroll_in(l->frame, &l->drag, y, l->count);
 	int now_first = l->scroll / LIST_PITCH;
 	if (now_first != l->first) {
 		l->first = now_first;
@@ -274,7 +322,9 @@ static void drag_end(track_list *l)
 static void move_focus(track_list *l, int delta)
 {
 	bool bumped;
-	int next = list_move(l->selected, delta, l->count, &bumped);
+	int next = l->rows ? track_row_move(l->rows, l->count, l->selected,
+	                                    delta, &bumped)
+	                   : list_move(l->selected, delta, l->count, &bumped);
 	/* Whole rows again, bumped or not. */
 	track_list_focus(l, next);
 	if (bumped) {
@@ -299,7 +349,7 @@ track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
 		if (down & KEY_TOUCH) {
 			/* Only from the list itself: the tab bar keeps its own
 			 * touches. */
-			if (list_area_contains(pos.px, pos.py) && !tabbar_touching())
+			if (list_area_contains_in(l->frame, pos.px, pos.py) && !tabbar_touching())
 				list_drag_begin(&l->drag, pos.py, l->scroll);
 		} else if (list_drag_update(&l->drag, pos.py)) {
 			/* A drag is not a tap: the row returns to rest without
@@ -317,7 +367,10 @@ track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
 	if (held & KEY_TOUCH) {
 		touchPosition pos;
 		hidTouchRead(&pos);
-		hit = list_hit_row(pos.px, pos.py, l->scroll, l->count);
+		hit = list_hit_row_in(l->frame, pos.px, pos.py, l->scroll,
+		                      l->count);
+		if (hit >= 0 && !track_row_on(l->rows, hit))
+			hit = -1;
 	}
 	int control;
 	touch_event event = touch_track_update(&l->touch, (down & KEY_TOUCH) != 0,
@@ -347,7 +400,7 @@ track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
 bool track_list_realign(track_list *l, u32 down, u32 confirm_keys)
 {
 	u32 keys = KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | confirm_keys;
-	if (!(down & keys) || list_row_whole(l->selected, l->scroll, l->count))
+	if (!(down & keys) || list_row_whole_in(l->frame, l->selected, l->scroll, l->count))
 		return false;
 	track_list_focus(l, l->selected);
 	return true;
@@ -360,9 +413,9 @@ void track_list_navigate(track_list *l, u32 down)
 	else if (down & KEY_DOWN)
 		move_focus(l, 1);
 	else if (down & KEY_LEFT)
-		move_focus(l, -RESULTS_PER_PAGE);
+		move_focus(l, -l->frame.rows);
 	else if (down & KEY_RIGHT)
-		move_focus(l, RESULTS_PER_PAGE);
+		move_focus(l, l->frame.rows);
 }
 
 press_state *track_list_focused_press(track_list *l)
@@ -401,6 +454,26 @@ static void draw_number(const track_list *l, ui_rect row, int index)
 	                 box.y + box.h / 2, TXT_META, COL_TEXTO_2);
 }
 
+/* A collection's cover (5.3), with a badge, the album or playlist icon,
+ * at its bottom left. Without a cover the square shows the note, as
+ * everywhere (the heart for Liked Songs), and no badge over it. */
+static void draw_collection_cover(const track_list *l, ui_rect row, int index,
+                       const track_row *r)
+{
+	ui_rect box = list_thumb_rect(row);
+	C2D_Image image;
+	bool shown = thumbs_client_image(&l->thumbs, index - l->base, &image);
+	bool album = r->kind == TRACK_ROW_ALBUM;
+	bool liked = strcmp(l->tracks[index].uri, SP_LIKED_URI) == 0;
+	ui_art_or(box, shown ? &image : NULL, liked ? ICON_HEART : ICON_NOTE);
+	if (!shown)
+		return;
+	ui_rect badge = { box.x, box.y + box.h - ICON_S, ICON_S, ICON_S };
+	ui_fill(badge, COL_TINTA);
+	C2D_Image icon = icon_image(album ? ICON_ALBUM : ICON_PLAYLIST);
+	ui_icon(&icon, badge.x, badge.y, COL_TEXTO);
+}
+
 /* 5.3. `index` < 0 draws an empty skeleton row. */
 static void draw_row(const track_list *l, ui_rect row, int index,
                      const track_list_look *look)
@@ -411,12 +484,18 @@ static void draw_row(const track_list *l, ui_rect row, int index,
 		row = ui_rect_offset(row, 0, look->edge);
 	u32 title_ink, meta_ink;
 	row = ui_item_frame(row, focused, pressed, &title_ink, &meta_ink);
-	if (index >= 0 && l->style == TRACK_LIST_NUMBERS)
+	const track_row *r = l ? row_of(l, index) : NULL;
+	if (is_collection(r))
+		draw_collection_cover(l, row, index, r);
+	else if (index >= 0 && l->style == TRACK_LIST_NUMBERS)
 		draw_number(l, row, index);
 	else
 		draw_thumb(l, row, index);
 	if (index < 0)
 		return;
+	/* Not on the card (6.1): `texto_off`, never focused. */
+	if (r && r->off)
+		title_ink = meta_ink = COL_TEXTO_OFF;
 
 	/* Rows on screen are always inside the window (list_window_base). */
 	int w = index - l->base;
@@ -429,31 +508,40 @@ static void draw_row(const track_list *l, ui_rect row, int index,
 	ui_text(&l->artist[w], x, artist_cy, TXT_CUERPO, meta_ink);
 	int duration_x = row.x + row.w - SP_2 - ui_px_ceil(l->duration_width[w]);
 	ui_text(&l->duration[w], duration_x, title_cy, TXT_META, meta_ink);
+	if (r && r->off) {
+		/* Where it is instead of its length: queued, or failed. */
+		C2D_Image icon = icon_image(r->state == DL_FAILED ? ICON_ERROR
+		                                                  : ICON_QUEUED);
+		ui_icon(&icon, row.x + row.w - SP_2 - ICON_S,
+		        title_cy - ICON_S / 2, meta_ink);
+	}
 }
 
 void track_list_draw(const track_list *l, const track_list_look *look)
 {
 	/* Mid-drag one more row peeks in at the bottom. The focused row goes
 	 * last, so its nudge draws over its neighbours. */
-	int last = look->first + RESULTS_PER_PAGE;
+	int last = look->first + l->frame.rows;
 	if (last > l->count - 1)
 		last = l->count - 1;
 	for (int index = look->first; index <= last; index++)
 		if (index != look->selected)
-			draw_row(l, list_row_at(index, look->scroll), index, look);
+			draw_row(l, list_row_at_in(l->frame, index, look->scroll), index, look);
 	if (look->selected >= look->first && look->selected <= last)
-		draw_row(l, list_row_at(look->selected, look->scroll),
+		draw_row(l, list_row_at_in(l->frame, look->selected,
+		                        look->scroll),
 		         look->selected, look);
 	/* 5.11: only when the list does not fit. */
-	if (l->count > RESULTS_PER_PAGE) {
-		ui_fill(list_scroll_track(), COL_CAPA);
-		ui_fill(list_scroll_thumb(look->scroll, l->count), COL_CLOROFILA);
+	if (l->count > l->frame.rows) {
+		ui_fill(list_scroll_track_in(l->frame), COL_CAPA);
+		ui_fill(list_scroll_thumb_in(l->frame, look->scroll, l->count),
+		        COL_CLOROFILA);
 	}
 }
 
-void track_list_draw_skeleton(void)
+void track_list_draw_skeleton(list_frame frame)
 {
 	track_list_look none = { .selected = -1, .pressed = -1 };
-	for (int slot = 0; slot < RESULTS_PER_PAGE; slot++)
-		draw_row(NULL, list_row_rect(slot), -1, &none);
+	for (int slot = 0; slot < frame.rows; slot++)
+		draw_row(NULL, list_row_rect_in(frame, slot), -1, &none);
 }

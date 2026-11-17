@@ -1,6 +1,7 @@
 #include "details.h"
 
 #include "detail_logic.h"
+#include "downloads.h"
 #include "http3ds.h"
 #include "list_logic.h"
 #include "lang.h"
@@ -323,6 +324,7 @@ static detail_doc *push(app_tab tab)
 	/* No stack holds it, and nothing else points at its buffer: the view
 	 * re-sets its list before it draws a level again. */
 	free(d->owned);
+	free(d->rows);
 	memset(d, 0, sizeof(*d));
 	d->serial = serial;
 	d->tracks = d->inline_tracks;
@@ -418,6 +420,151 @@ void details_open_playlist(app_tab tab, const char *uri)
 	open_entity(tab, DETAIL_PLAYLIST, uri);
 }
 
+/* ------------------------------------------------------------- offline */
+
+static bool offline(const detail_doc *d)
+{
+	return d->kind == DETAIL_DOWNLOADS || d->kind == DETAIL_OFFLINE_COLLECTION;
+}
+
+/* A collection as a row of the Downloads list: its name, who it is by, its
+ * cover. */
+static void collection_as_track(const dl_collection *c, sp_track *t)
+{
+	memset(t, 0, sizeof(*t));
+	snprintf(t->uri, sizeof(t->uri), "%s", c->uri);
+	snprintf(t->name, sizeof(t->name), "%s",
+	         strcmp(c->uri, SP_LIKED_URI) == 0 ? tr(STR_LIKED_SONGS) : c->name);
+	snprintf(t->artist, sizeof(t->artist), "%s", c->subtitle);
+	snprintf(t->art_small, sizeof(t->art_small), "%s", c->art);
+	snprintf(t->art_large, sizeof(t->art_large), "%s", c->art);
+}
+
+/* Fills an offline document from the index. True when what it lists
+ * changed; then its serial moves on, so the view and the card take it as
+ * new, with the focus kept on the same track or collection. */
+static bool fill_offline(detail_doc *d)
+{
+	static track_row before[DETAIL_PLAYLIST_MAX];
+	static offline_item scratch[DL_TRACKS_MAX];
+	const dl_index *idx = downloads_index();
+	d->dl_generation = downloads_generation();
+	if (!d->rows || !d->owned) {
+		d->state = DETAIL_READY;
+		return false;
+	}
+	int old_count = d->count;
+	memcpy(before, d->rows, (size_t)old_count * sizeof(before[0]));
+	char kept[sizeof(d->tracks[0].uri)] = "";
+	if (d->count > 0)
+		snprintf(kept, sizeof(kept), "%s", d->tracks[d->selected].uri);
+
+	int n = 0;
+	if (d->kind == DETAIL_DOWNLOADS) {
+		int colls;
+		n = offline_home_rows(idx, d->rows, d->capacity, scratch, &colls);
+		for (int i = 0; i < n; i++) {
+			const track_row *r = &d->rows[i];
+			if (r->kind == TRACK_ROW_TRACK)
+				downloads_track_to_sp(&idx->tracks[r->index], &d->tracks[i]);
+			else
+				collection_as_track(&idx->colls[r->index], &d->tracks[i]);
+		}
+		d->coll_rows = colls;
+		d->track_rows = n - colls;
+	} else {
+		int c = idx ? dl_find_collection(idx, d->uri) : -1;
+		n = offline_collection_rows(idx, c, d->rows, d->capacity);
+		d->bytes = 0;
+		for (int i = 0; i < n; i++) {
+			const dl_track *t = &idx->tracks[d->rows[i].index];
+			downloads_track_to_sp(t, &d->tracks[i]);
+			if (t->state == DL_DONE)
+				d->bytes += t->size;
+		}
+		if (c >= 0) {
+			const dl_collection *coll = &idx->colls[c];
+			snprintf(d->title, sizeof(d->title), "%s",
+			         strcmp(coll->uri, SP_LIKED_URI) == 0
+			         ? tr(STR_LIKED_SONGS) : coll->name);
+			snprintf(d->subtitle, sizeof(d->subtitle), "%s", coll->subtitle);
+			snprintf(d->art, sizeof(d->art), "%s", coll->art);
+			snprintf(d->art_small, sizeof(d->art_small), "%s", coll->art);
+			d->offline_album = coll->kind == DL_COLL_ALBUM;
+		}
+		d->total_tracks = n;
+	}
+	d->count = n;
+	d->state = DETAIL_READY;
+
+	int selected = 0;
+	for (int i = 0; kept[0] && i < n; i++)
+		if (strcmp(d->tracks[i].uri, kept) == 0) {
+			selected = i;
+			break;
+		}
+	int on = track_row_first_on(d->rows, n, selected);
+	d->selected = on < 0 ? 0 : on;
+	if (d->first > d->selected)
+		d->first = d->selected;
+	bool same = n == old_count &&
+	            memcmp(before, d->rows, (size_t)n * sizeof(before[0])) == 0;
+	if (!same)
+		d->serial++;
+	return !same;
+}
+
+static void open_offline(app_tab tab, detail_kind kind, const char *uri)
+{
+	detail_doc *d = push(tab);
+	if (!d)
+		return;
+	d->kind = kind;
+	d->state = DETAIL_READY;
+	snprintf(d->uri, sizeof(d->uri), "%s", uri);
+	/* Made once at their full size, like a playlist's: the list and the
+	 * thumbnails point into them. Without the memory the level is empty. */
+	d->owned = malloc(DETAIL_PLAYLIST_MAX * sizeof(sp_track));
+	d->rows = malloc(DETAIL_PLAYLIST_MAX * sizeof(track_row));
+	if (d->owned && d->rows) {
+		d->tracks = d->owned;
+		d->capacity = DETAIL_PLAYLIST_MAX;
+	}
+	fill_offline(d);
+	d->selected = track_row_first_on(d->rows, d->count, 0);
+	if (d->selected < 0)
+		d->selected = 0;
+	d->first = 0;
+}
+
+void details_open_downloads(app_tab tab)
+{
+	open_offline(tab, DETAIL_DOWNLOADS, DL_HOME_URI);
+}
+
+void details_open_offline_collection(app_tab tab, const char *uri)
+{
+	if (uri && uri[0])
+		open_offline(tab, DETAIL_OFFLINE_COLLECTION, uri);
+}
+
+/* The downloads changed: every offline level on a stack follows. True
+ * when one on top changed. */
+static bool follow_downloads(void)
+{
+	unsigned now = downloads_generation();
+	bool changed = false;
+	for (int s = 0; s < DETAIL_STACKS; s++)
+		for (int i = 0; i < stacks[s].count; i++) {
+			int slot = stacks[s].slot[i];
+			detail_doc *d = &docs[slot];
+			if (offline(d) && d->dl_generation != now &&
+			    fill_offline(d) && on_top(slot))
+				changed = true;
+		}
+	return changed;
+}
+
 bool details_back(app_tab tab)
 {
 	detail_stack *s = stack_of(tab);
@@ -462,6 +609,7 @@ bool details_poll(app_tab active, const char *host, const char *token,
                   const char *username)
 {
 	bool changed = reap();
+	changed |= follow_downloads();
 	if (!worker && host && host[0] && token && token[0]) {
 		int slot = waiting(active);
 		if (slot >= 0) {
@@ -490,7 +638,9 @@ void details_stop(void)
 	 * next session's first level. */
 	for (int i = 0; i < DETAIL_POOL; i++) {
 		free(docs[i].owned);
+		free(docs[i].rows);
 		docs[i].owned = NULL;
+		docs[i].rows = NULL;
 		docs[i].tracks = docs[i].inline_tracks;
 		docs[i].capacity = DETAIL_MAX_TRACKS;
 		docs[i].count = 0;

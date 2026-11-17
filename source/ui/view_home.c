@@ -1,6 +1,8 @@
 #include "view_home.h"
 
 #include "art_cache.h"
+#include "downloads.h"
+#include "offline_logic.h"
 #include "draw.h"
 #include "home_feed.h"
 #include "home_logic.h"
@@ -43,6 +45,13 @@ static home_mode mode = MODE_LOADING;
 static unsigned synced_generation = (unsigned)-1;
 static const sp_playlist_ref *items;
 static int item_count;
+/* The feed's playlists with the pinned Downloads tile after Liked Songs
+ * (offline_logic.h): what the grids show. */
+static sp_playlist_ref shown_items[HOME_MAX_PLAYLISTS];
+/* No connection: the Downloads tile alone, and "Retry connection". */
+static bool offline;
+/* What the bubble says: the language, or a notice. */
+static str_id bubble_id = STR_LANG_NAME;
 static tile_grid six, more;
 static home_focus focus = HOME_FOCUS_TILES;
 
@@ -136,9 +145,10 @@ static void reset_interaction(void)
 	drawn_valid = false;
 }
 
+/* The button under the six: "Show more", or offline "Retry connection". */
 static bool has_more(void)
 {
-	return home_has_more(item_count);
+	return offline || home_has_more(item_count);
 }
 
 /* The feed changed: the mode and the grids follow it. */
@@ -148,7 +158,8 @@ static void sync(void)
 	if (generation == synced_generation)
 		return;
 	synced_generation = generation;
-	switch (home_feed_get_state()) {
+	home_feed_state state = offline ? HOME_FEED_READY : home_feed_get_state();
+	switch (state) {
 	case HOME_FEED_IDLE:
 	case HOME_FEED_LOADING:
 		mode = MODE_LOADING;
@@ -161,10 +172,38 @@ static void sync(void)
 		items = NULL;
 		item_count = 0;
 		break;
-	case HOME_FEED_READY:
-		items = home_feed_items(&item_count);
+	case HOME_FEED_READY: {
+		if (offline) {
+			/* Liked Songs needs the network; the Downloads do not. */
+			sp_playlist_ref *d = &shown_items[0];
+			memset(d, 0, sizeof(*d));
+			snprintf(d->uri, sizeof(d->uri), "%s", DL_HOME_URI);
+			item_count = 1;
+			items = shown_items;
+			mode = MODE_SIX;
+			break;
+		}
+		int feed_count;
+		const sp_playlist_ref *feed = home_feed_items(&feed_count);
+		item_count = 0;
+		for (int i = 0; i < feed_count; i++) {
+			int at = home_tile_of_feed(i);
+			if (at < HOME_MAX_PLAYLISTS)
+				shown_items[at] = feed[i];
+			if (at + 1 > item_count)
+				item_count = at + 1;
+		}
+		if (feed_count > 0) {
+			sp_playlist_ref *d = &shown_items[home_downloads_tile()];
+			memset(d, 0, sizeof(*d));
+			snprintf(d->uri, sizeof(d->uri), "%s", DL_HOME_URI);
+		}
+		if (item_count > HOME_MAX_PLAYLISTS)
+			item_count = HOME_MAX_PLAYLISTS;
+		items = shown_items;
 		mode = item_count > 0 ? MODE_SIX : MODE_EMPTY;
 		break;
+	}
 	}
 	int shown = item_count < HOME_RECENT_SHOWN ? item_count
 	                                           : HOME_RECENT_SHOWN;
@@ -181,6 +220,25 @@ void view_home_enter(void)
 {
 	sync();
 	reset_interaction();
+}
+
+void view_home_set_offline(bool on)
+{
+	if (on == offline)
+		return;
+	offline = on;
+	synced_generation = (unsigned)-1;   /* sync again */
+	stale = true;
+}
+
+/* Shown from the next update on, after any sync that resets the view. */
+static bool notice_pending;
+
+void view_home_notice(str_id text)
+{
+	bubble_id = text;
+	stale = true;
+	notice_pending = true;
 }
 
 const char *view_home_selected_uri(void)
@@ -211,6 +269,18 @@ static void follow_preview(void)
 			unsigned serial = preview.serial + 1;
 			memset(&preview, 0, sizeof(preview));
 			preview.serial = serial;
+			if (strcmp(r->uri, DL_HOME_URI) == 0) {
+				/* The Downloads: how much is on the card. */
+				preview.kind = DETAIL_DOWNLOADS;
+				preview.state = DETAIL_READY;
+				snprintf(preview.uri, sizeof(preview.uri), "%s", r->uri);
+				const dl_index *idx = downloads_index();
+				for (int t = 0; idx && t < idx->track_count; t++)
+					preview.track_rows += idx->tracks[t].standalone &&
+					                      idx->tracks[t].state == DL_DONE;
+				preview.coll_rows = idx ? idx->coll_count : 0;
+				return;
+			}
 			preview.kind = DETAIL_PLAYLIST;
 			preview.state = DETAIL_READY;
 			snprintf(preview.uri, sizeof(preview.uri), "%s", r->uri);
@@ -226,6 +296,7 @@ static void follow_preview(void)
 		return;
 	}
 	if (index >= 0 && index < item_count &&
+	    strcmp(items[index].uri, DL_HOME_URI) != 0 &&
 	    ++preview_still == HOME_PREVIEW_DELAY)
 		snprintf(preview.art, sizeof(preview.art), "%s", items[index].art);
 }
@@ -248,9 +319,10 @@ static void ensure_parsed(void)
 {
 	if (stale || parsed_lang != lang_get()) {
 		C2D_TextBufClear(text_buf);
-		parse(&label_text, tr(home_feed_is_recent() ? STR_HOME_RECENT
-		                                            : STR_HOME_YOUR_PLAYLISTS));
-		parse(&more_text, tr(STR_HOME_SHOW_MORE));
+		parse(&label_text, tr(offline ? STR_OFFLINE_NOTICE
+		                      : home_feed_is_recent() ? STR_HOME_RECENT
+		                                              : STR_HOME_YOUR_PLAYLISTS));
+		parse(&more_text, tr(offline ? STR_OFFLINE_RETRY : STR_HOME_SHOW_MORE));
 		parse(&button_text, tr(mode == MODE_ERROR ? STR_RESULTS_RETRY
 		                                          : STR_HOME_SEARCH));
 		parse(&empty_text, tr(STR_HOME_EMPTY));
@@ -262,7 +334,7 @@ static void ensure_parsed(void)
 		parse(&notice_body_text, detail[0] ? detail
 		                                   : tr(STR_SEARCH_CHECK_WIFI));
 		parse(&loading_text, tr(STR_DETAIL_LOADING));
-		parse(&bubble_text, tr(STR_LANG_NAME));
+		parse(&bubble_text, tr(bubble_id));
 		for (int i = 0; i < GLYPH_COUNT; i++)
 			parse(&letter_text[i], glyph_letters[i]);
 		parse(&hint_open, tr(STR_HINT_OPEN));
@@ -391,7 +463,10 @@ static void activate_button(void)
 {
 	switch (mode) {
 	case MODE_SIX:
-		queue_step(enter_more, &press_button);
+		if (offline)
+			queue(HOME_ACTION_RECONNECT, &press_button);
+		else
+			queue_step(enter_more, &press_button);
 		break;
 	case MODE_ERROR:
 		queue(HOME_ACTION_RETRY, &press_button);
@@ -494,6 +569,10 @@ home_action view_home_update(u32 down)
 	u32 held = hidKeysHeld();
 	u32 up = hidKeysUp();
 	sync();
+	if (notice_pending) {
+		notice_pending = false;
+		bubble_frames = 0;
+	}
 	ensure_parsed();
 	tick();
 	release_keys(up);
@@ -551,6 +630,10 @@ home_action view_home_update(u32 down)
 		queue(HOME_ACTION_SEARCH, &press_glyph[GLYPH_Y]);
 	} else if (down & KEY_SELECT) {
 		/* No control on screen: a bubble with the result (6.5). */
+		if (bubble_id != STR_LANG_NAME) {
+			bubble_id = STR_LANG_NAME;
+			stale = true;
+		}
 		bubble_frames = 0;
 		return HOME_ACTION_LANGUAGE;
 	}
@@ -666,7 +749,8 @@ void view_home_draw_bottom(void)
 		slot = 1;
 	}
 	if (look.bubble) {
-		C2D_Image globe = icon_image(ICON_LANGUAGE);
+		C2D_Image globe = icon_image(bubble_id == STR_LANG_NAME
+		                             ? ICON_LANGUAGE : ICON_OFFLINE);
 		ui_bubble(list_bubble_slot_rect(ui_bubble_content_width(&bubble_text),
 		                                slot),
 		          &globe, &bubble_text);

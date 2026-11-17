@@ -356,4 +356,40 @@ static inline int login_step(str_id stage, bool paired)
 	}
 }
 
+/* --- Starting without a connection ------------------------------------ */
+
+/* Whether a failed start-up may go on without a connection, with the
+ * downloads: what was missing was the network, not the credential. The
+ * network's own failures always may; renewing the credential or opening
+ * the library only when no answer came at all (`transport`), since an
+ * answer that says no is about the account. A refused access point login,
+ * a refused library, and anything about pairing or saving never may. */
+static inline bool login_error_allows_offline(str_id category, bool transport)
+{
+	switch (category) {
+	case STR_CAT_NO_NETWORK:
+	case STR_CAT_TLS_INIT:
+	case STR_CAT_AP_RESOLVE:
+	case STR_CAT_AP_CONNECT:
+	case STR_CAT_SERVER_RESOLVE:
+		return true;
+	case STR_CAT_OAUTH_RENEW:
+	case STR_CAT_LOGIN_FAILED:
+		return transport;
+	default:
+		return false;
+	}
+}
+
+/* Whether the console has no connection right now, from ACU: the Wi-Fi
+ * status failing or 0, or the status not 3 (connected). A probe on the
+ * console: without Wi-Fi the status call fails and the other says 1, both
+ * at once. A Wi-Fi with no Internet behind it says 3: that case waits for
+ * the start-up's own timeouts. */
+static inline bool login_wifi_down(bool wifi_ok, unsigned wifi,
+                                   bool status_ok, unsigned status)
+{
+	return !wifi_ok || wifi == 0 || !status_ok || status != 3;
+}
+
 #endif

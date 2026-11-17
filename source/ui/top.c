@@ -6,6 +6,7 @@
 #include "top_detail.h"
 #include "top_logic.h"
 #include "top_now.h"
+#include "view_downloads.h"
 
 static player_phase phase = PLAYER_PHASE_IDLE;
 /* The detail on top of the active tab and its image, or NULL. */
@@ -14,6 +15,7 @@ static artwork_state *detail_art;
 /* The account signed in and its picture, for Settings. */
 static const about_account *account;
 static artwork_state *account_art;
+static bool manager;
 static top_mode drawn_mode;
 static bool drawn_valid;
 /* The spinner: whether it shows, its frame count, and what was drawn. */
@@ -66,9 +68,15 @@ void top_set_account(const about_account *acc, artwork_state *art)
 	account_art = art;
 }
 
+void top_set_manager(bool on)
+{
+	manager = on;
+}
+
 bool top_dirty(app_tab tab, const artwork_state *art)
 {
-	top_mode mode = top_mode_for(tab, phase, detail != NULL);
+	top_mode mode = top_mode_with_manager(
+		top_mode_for(tab, phase, detail != NULL), manager);
 	if (!drawn_valid || mode != drawn_mode || spinning != drawn_spinning ||
 	    (spinning && spinner_step() != drawn_step))
 		return true;
@@ -81,6 +89,8 @@ bool top_dirty(app_tab tab, const artwork_state *art)
 		return top_detail_dirty(detail, detail_art);
 	case TOP_ABOUT:
 		return account && top_about_dirty(account, account_art);
+	case TOP_DOWNLOADS:
+		return view_downloads_top_dirty();
 	default:
 		/* The logo never changes by itself. */
 		return false;
@@ -89,7 +99,8 @@ bool top_dirty(app_tab tab, const artwork_state *art)
 
 void top_draw(app_tab tab, artwork_state *art)
 {
-	top_mode mode = top_mode_for(tab, phase, detail != NULL);
+	top_mode mode = top_mode_with_manager(
+		top_mode_for(tab, phase, detail != NULL), manager);
 	switch (mode) {
 	case TOP_NOW_CARD:
 		top_now_draw_card(art);
@@ -106,6 +117,9 @@ void top_draw(app_tab tab, artwork_state *art)
 			break;
 		}
 		logo_draw_centered(SCREEN_TOP_W / 2, SCREEN_H / 2);
+		break;
+	case TOP_DOWNLOADS:
+		view_downloads_draw_top();
 		break;
 	default:
 		logo_draw_centered(SCREEN_TOP_W / 2, SCREEN_H / 2);

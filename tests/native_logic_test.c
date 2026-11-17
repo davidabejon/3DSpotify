@@ -3,6 +3,9 @@
 #include "art_url.h"
 #include "detail_logic.h"
 #include "detail_nav.h"
+#include "downloads_logic.h"
+#include "downloads_view_logic.h"
+#include "offline_logic.h"
 #include "grid_logic.h"
 #include "home_feed_logic.h"
 #include "home_logic.h"
@@ -824,51 +827,478 @@ static void test_detail_stack(void)
 
 static void test_detail_buttons(void)
 {
-	/* The Settings geometry: three full-width buttons of TOUCH_MIN under
-	 * the tab bar, SP_4 apart, clear of the button bar. */
+	/* The Settings geometry: four full-width buttons of TOUCH_MIN under
+	 * the tab bar, SP_3 apart, clear of the button bar. */
+	assert(DETAIL_BUTTON_COUNT == 4);
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++) {
 		ui_rect r = detail_button_rect(i);
 		ui_rect s = settings_item_rect(i);
 		assert(r.x == s.x && r.y == s.y && r.w == s.w && r.h == s.h);
 		assert(r.h >= TOUCH_MIN);
-		assert(r.y + r.h <= detail_hints_rect().y);
+		/* Its shadow, or its pressed shift, clear of the button bar. */
+		assert(r.y + r.h + SHADOW_OFF + PRESS_SHIFT <= detail_hints_rect().y);
 		if (i > 0)
 			assert(r.y - (detail_button_rect(i - 1).y +
-			              detail_button_rect(i - 1).h) == SP_4);
+			              detail_button_rect(i - 1).h) == SP_3);
 	}
-	assert(detail_button_rect(0).y >= TAB_H);
+	assert(detail_button_rect(0).y == 44);
+	assert(detail_button_rect(DETAIL_BUTTON_DOWNLOAD).y == 88);
+	assert(detail_button_rect(DETAIL_BUTTON_ALBUM).y == 176);
 
-	bool all[DETAIL_BUTTON_COUNT] = { true, true, true };
-	bool no_artist[DETAIL_BUTTON_COUNT] = { true, false, true };
-	bool only_play[DETAIL_BUTTON_COUNT] = { true, false, false };
+	bool all[DETAIL_BUTTON_COUNT] = { true, true, true, true };
+	bool no_artist[DETAIL_BUTTON_COUNT] = { true, true, false, true };
+	bool only_play[DETAIL_BUTTON_COUNT] = { true, false, false, false };
+	/* A download queued or under way: its button is disabled. */
+	bool queued[DETAIL_BUTTON_COUNT] = { true, false, true, true };
 	ui_rect artist = detail_button_rect(DETAIL_BUTTON_ARTIST);
 	int ax = artist.x + artist.w / 2, ay = artist.y + artist.h / 2;
+	ui_rect save = detail_button_rect(DETAIL_BUTTON_DOWNLOAD);
+	int sx = save.x + save.w / 2, sy = save.y + save.h / 2;
 
 	/* A disabled button does not answer the stylus (6.1). */
 	assert(detail_hit_test(ax, ay, all) == DETAIL_BUTTON_ARTIST);
 	assert(detail_hit_test(ax, ay, no_artist) == DETAIL_BUTTON_NONE);
+	assert(detail_hit_test(sx, sy, all) == DETAIL_BUTTON_DOWNLOAD);
+	assert(detail_hit_test(sx, sy, queued) == DETAIL_BUTTON_NONE);
 	assert(detail_hit_test(0, 0, all) == DETAIL_BUTTON_NONE);
 
 	/* The D-pad stops at the ends and steps over disabled buttons. */
 	assert(detail_focus_move(DETAIL_BUTTON_PLAY, -1, all) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, all) ==
+	       DETAIL_BUTTON_DOWNLOAD);
+	assert(detail_focus_move(DETAIL_BUTTON_DOWNLOAD, 1, all) ==
 	       DETAIL_BUTTON_ARTIST);
 	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, 1, all) ==
 	       DETAIL_BUTTON_ALBUM);
-	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, no_artist) ==
+	assert(detail_focus_move(DETAIL_BUTTON_DOWNLOAD, 1, no_artist) ==
 	       DETAIL_BUTTON_ALBUM);
 	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, -1, no_artist) ==
+	       DETAIL_BUTTON_DOWNLOAD);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, queued) ==
+	       DETAIL_BUTTON_ARTIST);
+	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, -1, queued) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, only_play) ==
 	       DETAIL_BUTTON_PLAY);
-	/* A focus that is not usable falls back to Play. */
+	/* A focus that is not usable falls back to Play: the download button
+	 * that its own press queued, too. */
 	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 1, no_artist) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_DOWNLOAD, 0, queued) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_NONE, 1, all) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 0, all) ==
 	       DETAIL_BUTTON_ARTIST);
+
+	/* An album's list and the button over it: up from the first row only,
+	 * down back to the list; a disabled button never holds the focus. */
+	assert(detail_header_focus(false, 0, -1, true));
+	assert(!detail_header_focus(false, 1, -1, true));
+	assert(!detail_header_focus(false, 0, 1, true));
+	assert(!detail_header_focus(false, 0, -1, false));
+	assert(detail_header_focus(true, 0, -1, true));
+	assert(detail_header_focus(true, 3, 0, true));
+	assert(!detail_header_focus(true, 0, 1, true));
+	assert(!detail_header_focus(true, 0, 0, false));
+}
+
+/* The list under an album's or playlist's download button: three rows
+ * where the results have four, the same pitch, the same edges. */
+static void test_list_frames(void)
+{
+	list_frame full = list_frame_full();
+	list_frame under = list_frame_under_button();
+	assert(full.top == TAB_H && full.rows == RESULTS_PER_PAGE);
+	ui_rect button = list_header_button_rect();
+	assert(button.y == TAB_H + SP_1 && button.h == TOUCH_MIN);
+	assert(button.x == SP_2 && button.w == SCREEN_BOTTOM_W - 2 * SP_2);
+	assert(under.top == button.y + button.h + SP_1);
+	assert(under.rows == 3);
+	/* The rows: 76..117, 121..162, 166..207, clear of the button bar. */
+	assert(list_row_rect_in(under, 0).y == 76);
+	ui_rect last = list_row_rect_in(under, under.rows - 1);
+	assert(last.y == 166 && last.y + last.h <= SCREEN_H - BAR_H - SP_1);
+	/* The full frame is the one the functions without a frame use. */
+	for (int i = 0; i < RESULTS_PER_PAGE; i++) {
+		ui_rect a = list_row_rect(i), b = list_row_rect_in(full, i);
+		assert(a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
+	}
+	/* Ten tracks: seven rows of scroll under the button, six without. */
+	assert(list_max_scroll_in(under, 10) == 7 * LIST_PITCH);
+	assert(list_max_scroll(10) == 6 * LIST_PITCH);
+	assert(list_max_scroll_in(under, 3) == 0);
+	/* A touch on the button is not a row, nor the start of a drag. */
+	assert(!list_area_contains_in(under, 10, button.y + 1));
+	assert(list_hit_row_in(under, 10, button.y + 1, 0, 10) == -1);
+	assert(list_hit_row_in(under, 10, 80, 0, 10) == 0);
+	assert(list_hit_row_in(under, 10, 170, 0, 10) == 2);
+	assert(list_hit_row_in(under, 10, 170, LIST_PITCH, 10) == 3);
+	/* Whole rows, and the buttons' realignment, in three. */
+	int from, to;
+	list_full_rows_in(under, 0, 10, &from, &to);
+	assert(from == 0 && to == 2);
+	assert(list_row_whole_in(under, 2, 0, 10));
+	assert(!list_row_whole_in(under, 3, 0, 10));
+	assert(list_align_in(under, 0, 5, 10) == 3);
+	assert(list_align_in(under, 0, 1, 10) == 0);
+	list_drag d;
+	list_drag_begin(&d, 150, 0);
+	assert(list_drag_scroll_in(under, &d, -400, 10) == 7 * LIST_PITCH);
+	/* The scroll indicator runs between the button and the button bar. */
+	ui_rect track = list_scroll_track_in(under);
+	assert(track.y == under.top && track.y + track.h == SCREEN_H - BAR_H);
+	ui_rect thumb = list_scroll_thumb_in(under, 7 * LIST_PITCH, 10);
+	assert(thumb.y + thumb.h == track.y + track.h);
+	assert(list_scroll_thumb_in(under, 0, 3).h == track.h);
+}
+
+/* What the download buttons say and do, from where the download is. */
+/* An index for the manager: tracks in every state, an album with one
+ * track waiting, a whole playlist, and a lone track on the card. */
+static void manager_index(dl_index *idx)
+{
+	dl_index_clear(idx);
+	dl_track t;
+	const char *names[] = { "q1", "q2", "f1", "d1", "d2", "a1", "p1", "p2",
+	                        "lone" };
+	for (int i = 0; i < 9; i++) {
+		memset(&t, 0, sizeof(t));
+		snprintf(t.uri, sizeof(t.uri), "spotify:track:%s", names[i]);
+		snprintf(t.name, sizeof(t.name), "%s", names[i]);
+		dl_add_track(idx, &t, i >= 2, 100 + (uint32_t)i);
+	}
+	/* q1, q2 queued (q1 first); f1 failed; d1, d2, p1, p2, lone on the
+	 * card; a1 downloading. */
+	idx->tracks[2].state = DL_FAILED;
+	for (int i = 3; i < 9; i++)
+		if (i != 5)
+			idx->tracks[i].state = DL_DONE;
+	idx->tracks[5].state = DL_ACTIVE;
+	idx->tracks[3].added_at = 300;   /* d1: the newest of the tracks */
+	idx->tracks[8].added_at = 50;    /* lone: the oldest */
+	dl_collection c;
+	memset(&c, 0, sizeof(c));
+	snprintf(c.uri, sizeof(c.uri), "spotify:album:a");
+	c.kind = DL_COLL_ALBUM;
+	int album = dl_add_collection(idx, &c, 200);
+	dl_add_ref(idx, album, 0);    /* q1: the album still waits */
+	dl_add_ref(idx, album, 3);    /* d1 */
+	snprintf(c.uri, sizeof(c.uri), "spotify:playlist:p");
+	c.kind = DL_COLL_PLAYLIST;
+	int playlist = dl_add_collection(idx, &c, 250);
+	dl_add_ref(idx, playlist, 6);
+	dl_add_ref(idx, playlist, 7);
+}
+
+static void test_downloads_manager_list(void)
+{
+	static dl_index idx;
+	static dlv_list l;
+	static dlv_done_item scratch[DL_TRACKS_MAX + DL_COLLS_MAX];
+	manager_index(&idx);
+	dlv_build(&l, &idx, 1, scratch);
+
+	/* In progress: a1. Queued: the collection being resolved, the album
+	 * that waits (for q1), then q2 on its own: q1 is the album's row.
+	 * Failed: f1. Downloaded, newest first: d1 (300), the playlist (250),
+	 * d2 (104), lone (50); p1 and p2 are the playlist's row, and d1 is a
+	 * row of its own, since its album still waits. */
+	struct { int kind, section, index; } want[] = {
+		{ DLV_HEADER, DLV_SEC_ACTIVE, DLV_SEC_ACTIVE },
+		{ DLV_TRACK, DLV_SEC_ACTIVE, 5 },
+		{ DLV_HEADER, DLV_SEC_QUEUED, DLV_SEC_QUEUED },
+		{ DLV_PENDING, DLV_SEC_QUEUED, 0 },
+		{ DLV_COLL, DLV_SEC_QUEUED, 0 },
+		{ DLV_TRACK, DLV_SEC_QUEUED, 1 },
+		{ DLV_HEADER, DLV_SEC_FAILED, DLV_SEC_FAILED },
+		{ DLV_TRACK, DLV_SEC_FAILED, 2 },
+		{ DLV_HEADER, DLV_SEC_DONE, DLV_SEC_DONE },
+		{ DLV_TRACK, DLV_SEC_DONE, 3 },
+		{ DLV_COLL, DLV_SEC_DONE, 1 },
+		{ DLV_TRACK, DLV_SEC_DONE, 4 },
+		{ DLV_TRACK, DLV_SEC_DONE, 8 },
+	};
+	int n = (int)(sizeof(want) / sizeof(want[0]));
+	assert(l.count == n);
+	for (int i = 0; i < n; i++) {
+		assert(l.entries[i].kind == want[i].kind);
+		assert(l.entries[i].section == want[i].section);
+		assert(l.entries[i].index == want[i].index);
+	}
+	assert(l.rows[DLV_SEC_ACTIVE] == 1 && l.rows[DLV_SEC_QUEUED] == 3 &&
+	       l.rows[DLV_SEC_FAILED] == 1 && l.rows[DLV_SEC_DONE] == 4);
+	/* Headers and rows one under the other. */
+	assert(l.entries[0].y == 0 && l.entries[1].y == DLV_HEADER_H);
+	assert(l.entries[2].y == DLV_HEADER_H + LIST_PITCH);
+	assert(l.height == 4 * DLV_HEADER_H + 9 * LIST_PITCH);
+
+	/* The focus skips the headers and stops at the ends. */
+	bool bumped;
+	assert(dlv_first_row(&l) == 1);
+	assert(dlv_move(&l, 1, 1, &bumped) == 3 && !bumped);
+	assert(dlv_move(&l, 5, 1, &bumped) == 7);
+	assert(dlv_move(&l, 3, -1, &bumped) == 1);
+	assert(dlv_move(&l, 1, -1, &bumped) == 1 && bumped);
+	assert(dlv_move(&l, 12, 1, &bumped) == 12 && bumped);
+	assert(dlv_clamp_focus(&l, 6) == 7);
+	assert(dlv_clamp_focus(&l, 99) == 12);
+	assert(dlv_clamp_focus(&l, -3) == 1);
+
+	/* Scrolling: the first row of a section brings its header; the list
+	 * never scrolls past either end. */
+	int max = dlv_max_scroll(&l);
+	assert(max == SP_1 + l.height - dlv_view_h());
+	assert(dlv_scroll_to(&l, 1, 200) == 0);
+	int s = dlv_scroll_to(&l, 12, 0);
+	assert(s == max);
+	assert(dlv_row_whole(&l, 12, s) && !dlv_row_whole(&l, 1, s));
+	s = dlv_scroll_to(&l, 7, max);
+	assert(s == l.entries[6].y);
+	assert(dlv_clamp_scroll(&l, -5) == 0 && dlv_clamp_scroll(&l, 9999) == max);
+	/* Taps land on rows, never on headers or the bars. */
+	ui_rect r = dlv_entry_rect(&l, 1, 0);
+	assert(r.y == TAB_H + SP_1 + DLV_HEADER_H && r.h == ROW_H);
+	assert(dlv_hit_row(&l, r.x + 1, r.y + 1, 0) == 1);
+	assert(dlv_hit_row(&l, r.x + 1, TAB_H + SP_1 + 2, 0) == -1);
+	assert(dlv_hit_row(&l, r.x + 1, 230, 0) == -1);
+	int from, to;
+	dlv_visible(&l, 0, &from, &to);
+	assert(from == 0 && to >= 3 && to < l.count);
+	ui_rect thumb = dlv_scroll_thumb(&l, max);
+	ui_rect track = dlv_scroll_track();
+	assert(thumb.y + thumb.h == track.y + track.h);
+
+	/* Nothing to list, or no index: an empty list, no focus. */
+	dlv_build(&l, NULL, 0, scratch);
+	assert(l.count == 0 && dlv_first_row(&l) == -1 &&
+	       dlv_clamp_focus(&l, 0) == -1 && dlv_max_scroll(&l) == 0);
+	static dl_index none;
+	dl_index_clear(&none);
+	dlv_build(&l, &none, 0, scratch);
+	assert(l.count == 0);
+
+	/* An album whose tracks all failed has nothing waiting: it is a
+	 * Downloaded row (to remove it), its tracks Failed rows. */
+	manager_index(&idx);
+	idx.tracks[0].state = DL_FAILED;
+	idx.tracks[1].state = DL_DONE;
+	idx.tracks[5].state = DL_DONE;
+	dlv_build(&l, &idx, 0, scratch);
+	assert(l.rows[DLV_SEC_ACTIVE] == 0 && l.rows[DLV_SEC_QUEUED] == 0);
+	assert(l.rows[DLV_SEC_FAILED] == 2);
+	bool album_done = false;
+	for (int i = 0; i < l.count; i++)
+		if (l.entries[i].kind == DLV_COLL && l.entries[i].index == 0)
+			album_done = l.entries[i].section == DLV_SEC_DONE;
+	assert(album_done);
+	/* d1 is the album's now: no row of its own. */
+	for (int i = 0; i < l.count; i++)
+		assert(!(l.entries[i].kind == DLV_TRACK && l.entries[i].index == 3));
+
+	/* The summary: on the card, its size, what waits. */
+	manager_index(&idx);
+	idx.tracks[3].size = 3u * 1024 * 1024;
+	idx.tracks[4].size = 2u * 1024 * 1024;
+	dlv_summary sum = dlv_summarize(&idx);
+	assert(sum.tracks == 5 && sum.albums == 1 && sum.playlists == 1);
+	assert(sum.used == 5u * 1024 * 1024 && sum.waiting == 3);
+	char text[32];
+	dlv_format_size(5u * 1024 * 1024, ',', text, sizeof(text));
+	assert(strcmp(text, "5 MB") == 0);
+	dlv_format_size(0, ',', text, sizeof(text));
+	assert(strcmp(text, "0 MB") == 0);
+	dlv_format_size((uint64_t)5 * 1024 * 1024 * 1024 + 100u * 1024 * 1024,
+	                ',', text, sizeof(text));
+	assert(strcmp(text, "5,1 GB") == 0);
+	dlv_format_size((uint64_t)1024 * 1024 * 1024, '.', text, sizeof(text));
+	assert(strcmp(text, "1.0 GB") == 0);
+
+	/* The manager's top screen is Settings' in another mode. */
+	assert(top_mode_with_manager(TOP_ABOUT, true) == TOP_DOWNLOADS);
+	assert(top_mode_with_manager(TOP_ABOUT, false) == TOP_ABOUT);
+	assert(top_mode_with_manager(TOP_DETAIL, true) == TOP_DETAIL);
+	assert(top_mode_with_manager(TOP_NOW_CARD, true) == TOP_NOW_CARD);
+}
+
+static void test_offline_rows(void)
+{
+	static dl_index idx;
+	static track_row rows[64];
+	static offline_item scratch[DL_TRACKS_MAX];
+	dl_index_clear(&idx);
+	dl_track t;
+	/* t0..t4: t0, t1 alone (t1 newest), t2..t4 an album's; t3 queued. */
+	for (int i = 0; i < 5; i++) {
+		memset(&t, 0, sizeof(t));
+		snprintf(t.uri, sizeof(t.uri), "spotify:track:t%d", i);
+		dl_add_track(&idx, &t, i < 2, 10 + (uint32_t)i);
+		idx.tracks[i].state = DL_DONE;
+	}
+	idx.tracks[3].state = DL_QUEUED;
+	idx.tracks[4].state = DL_FAILED;
+	/* A sixth, alone but still queued: not in the Downloads yet. */
+	memset(&t, 0, sizeof(t));
+	snprintf(t.uri, sizeof(t.uri), "spotify:track:t5");
+	dl_add_track(&idx, &t, true, 99);
+	dl_collection c;
+	memset(&c, 0, sizeof(c));
+	snprintf(c.uri, sizeof(c.uri), "spotify:album:x");
+	c.kind = DL_COLL_ALBUM;
+	int album = dl_add_collection(&idx, &c, 5);
+	for (int i = 2; i < 5; i++)
+		dl_add_ref(&idx, album, i);
+	snprintf(c.uri, sizeof(c.uri), "spotify:playlist:y");
+	c.kind = DL_COLL_PLAYLIST;
+	int playlist = dl_add_collection(&idx, &c, 50);
+	dl_add_ref(&idx, playlist, 0);
+
+	/* Collections first, newest first; then the tracks alone on the card,
+	 * newest first. */
+	int colls;
+	int n = offline_home_rows(&idx, rows, 64, scratch, &colls);
+	assert(n == 4 && colls == 2);
+	assert(rows[0].kind == TRACK_ROW_PLAYLIST && rows[0].index == playlist);
+	assert(rows[0].done == 1 && rows[0].count == 1);
+	assert(rows[1].kind == TRACK_ROW_ALBUM && rows[1].index == album);
+	assert(rows[1].done == 1 && rows[1].count == 3);
+	assert(rows[2].kind == TRACK_ROW_TRACK && rows[2].index == 1);
+	assert(rows[3].kind == TRACK_ROW_TRACK && rows[3].index == 0);
+	for (int i = 0; i < n; i++)
+		assert(!rows[i].off);
+	/* Room for fewer: the first ones. */
+	assert(offline_home_rows(&idx, rows, 3, scratch, &colls) == 3);
+	assert(offline_home_rows(NULL, rows, 64, scratch, &colls) == 0 &&
+	       colls == 0);
+
+	/* An album on the card: its order; what is not downloaded is off. */
+	n = offline_collection_rows(&idx, album, rows, 64);
+	assert(n == 3);
+	assert(rows[0].index == 2 && !rows[0].off);
+	assert(rows[1].index == 3 && rows[1].off && rows[1].state == DL_QUEUED);
+	assert(rows[2].index == 4 && rows[2].off && rows[2].state == DL_FAILED);
+	assert(offline_collection_rows(&idx, 7, rows, 64) == 0);
+
+	/* The D-pad over rows that are off: up/down to the next on, pages
+	 * counting only those, bumping at the ends. */
+	track_row r[6];
+	memset(r, 0, sizeof(r));
+	r[1].off = r[2].off = r[4].off = true;
+	bool bumped;
+	assert(track_row_move(r, 6, 0, 1, &bumped) == 3 && !bumped);
+	assert(track_row_move(r, 6, 3, 1, &bumped) == 5);
+	assert(track_row_move(r, 6, 5, 1, &bumped) == 5 && bumped);
+	assert(track_row_move(r, 6, 3, -1, &bumped) == 0);
+	assert(track_row_move(r, 6, 0, -1, &bumped) == 0 && bumped);
+	assert(track_row_move(r, 6, 0, 4, &bumped) == 5 && !bumped);
+	assert(track_row_move(r, 6, 5, -2, &bumped) == 0);
+	assert(track_row_move(NULL, 6, 2, 1, &bumped) == 3);
+	assert(track_row_first_on(r, 6, 1) == 3);
+	assert(track_row_first_on(r, 6, 4) == 5);
+	r[5].off = true;
+	r[3].off = true;
+	assert(track_row_first_on(r, 6, 4) == 0);
+	r[0].off = true;
+	assert(track_row_first_on(r, 6, 0) == -1);
+	assert(track_row_on(NULL, 3) && !track_row_on(r, 3));
+
+	/* Home: Liked Songs, the Downloads, then the feed's playlists. */
+	assert(home_tile_of_feed(0) == 0);
+	assert(home_downloads_tile() == 1);
+	assert(home_tile_of_feed(1) == 2 && home_tile_of_feed(5) == 6);
+	assert(HOME_PINNED == 2);
+}
+
+static void test_offline_start(void)
+{
+	/* The network's own failures go on with the downloads. */
+	assert(login_error_allows_offline(STR_CAT_NO_NETWORK, false));
+	assert(login_error_allows_offline(STR_CAT_TLS_INIT, false));
+	assert(login_error_allows_offline(STR_CAT_AP_RESOLVE, false));
+	assert(login_error_allows_offline(STR_CAT_AP_CONNECT, false));
+	assert(login_error_allows_offline(STR_CAT_SERVER_RESOLVE, false));
+	/* Renewing the credential or opening the library: only when no answer
+	 * came at all. */
+	assert(login_error_allows_offline(STR_CAT_OAUTH_RENEW, true));
+	assert(!login_error_allows_offline(STR_CAT_OAUTH_RENEW, false));
+	assert(login_error_allows_offline(STR_CAT_LOGIN_FAILED, true));
+	assert(!login_error_allows_offline(STR_CAT_LOGIN_FAILED, false));
+	/* The account said no, or pairing, or the card: never. */
+	assert(!login_error_allows_offline(STR_CAT_AP_REJECTED, true));
+	assert(!login_error_allows_offline(STR_CAT_LOGIN_REFUSED, true));
+	assert(!login_error_allows_offline(STR_CAT_PS_INIT, true));
+	assert(!login_error_allows_offline(STR_CAT_SAVE_RENEWED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIRING, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_CANCELLED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_EXPIRED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_DENIED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_FAILED, true));
+	assert(!login_error_allows_offline(STR_CAT_SAVE_CREDENTIALS, true));
+
+	/* ACU, as measured on the console: without Wi-Fi the status call
+	 * fails and the other says 1; connected, 1 or 2 and 3. */
+	assert(login_wifi_down(false, 0, true, 1));
+	assert(login_wifi_down(true, 0, true, 3));
+	assert(login_wifi_down(true, 1, true, 1));
+	assert(login_wifi_down(true, 1, false, 3));
+	assert(!login_wifi_down(true, 1, true, 3));
+	assert(!login_wifi_down(true, 2, true, 3));
+}
+
+/* Offline before any online start saved the username: the index's own
+ * owner is taken; online, or with a username, it must match. */
+static void test_offline_owner(void)
+{
+	assert(dl_owner_usable("alice", "", false));
+	assert(dl_owner_usable("alice", NULL, false));
+	assert(dl_owner_usable("alice", "alice", false));
+	assert(!dl_owner_usable("alice", "bob", false));
+	assert(!dl_owner_usable("alice", "", true));
+	assert(!dl_owner_usable("alice", "bob", true));
+	assert(dl_owner_usable("alice", "alice", true));
+	assert(dl_owner_usable("", "bob", true));
+}
+
+static void test_download_buttons(void)
+{
+	assert(dl_track_button(false, DL_DONE, true) == DL_BUTTON_DOWNLOAD);
+	assert(dl_track_button(true, DL_QUEUED, true) == DL_BUTTON_QUEUED);
+	assert(dl_track_button(true, DL_ACTIVE, false) == DL_BUTTON_PROGRESS);
+	assert(dl_track_button(true, DL_FAILED, true) == DL_BUTTON_RETRY);
+	assert(dl_track_button(true, DL_DONE, true) == DL_BUTTON_REMOVE);
+	/* On the card for an album only: removed with the album. */
+	assert(dl_track_button(true, DL_DONE, false) == DL_BUTTON_HELD);
+	assert(dl_button_enabled(DL_BUTTON_DOWNLOAD));
+	assert(dl_button_enabled(DL_BUTTON_RETRY));
+	assert(dl_button_enabled(DL_BUTTON_REMOVE));
+	assert(!dl_button_enabled(DL_BUTTON_QUEUED));
+	assert(!dl_button_enabled(DL_BUTTON_PROGRESS));
+	assert(!dl_button_enabled(DL_BUTTON_HELD));
+
+	assert(dl_collection_button(false, false, 0, 0) ==
+	       DL_COLL_BUTTON_DOWNLOAD);
+	assert(dl_collection_button(true, false, 0, 0) ==
+	       DL_COLL_BUTTON_WAITING);
+	/* Waiting to be resolved again wins over what the index holds. */
+	assert(dl_collection_button(true, true, 12, 12) ==
+	       DL_COLL_BUTTON_WAITING);
+	assert(dl_collection_button(false, true, 8, 12) ==
+	       DL_COLL_BUTTON_PROGRESS);
+	assert(dl_collection_button(false, true, 12, 12) ==
+	       DL_COLL_BUTTON_DONE);
+	assert(dl_collection_button(false, true, 0, 0) == DL_COLL_BUTTON_DONE);
+
+	/* The player's icon: right of the album link, a TOUCH_MIN square
+	 * SP_1 from it, ending at the margin, on the links' second row. */
+	ui_rect icon = player_download_rect();
+	ui_rect album = player_link_rect(PLAYER_LINK_ALBUM);
+	assert(icon.w == TOUCH_MIN && icon.h == TOUCH_MIN);
+	assert(icon.y == album.y && icon.x == album.x + album.w + SP_1);
+	assert(icon.x + icon.w == SCREEN_BOTTOM_W - SP_2);
+	bool links_all[PLAYER_LINK_COUNT] = { true, true, true };
+	assert(player_link_hit(icon.x + 1, icon.y + 1, links_all) ==
+	       PLAYER_LINK_NONE);
 }
 
 static void test_detail_pool(void)
@@ -1103,12 +1533,16 @@ static void test_queue_drop_known(void)
 }
 
 /* The conversion specifiers of a printf format, flags and widths included,
- * so "%02d" in one language and "%2d" in another count as different. */
+ * so "%02d" in one language and "%2d" in another count as different. A
+ * '%' before a space or at the end is a plain percent sign ("100%") in a
+ * text that is drawn as it is, never formatted. */
 static void format_signature(const char *text, char *out, size_t outlen)
 {
 	size_t n = 0;
 	for (const char *p = text; *p; p++) {
 		if (*p != '%')
+			continue;
+		if (p[1] == ' ' || p[1] == '\0')
 			continue;
 		p++;
 		if (*p == '%')
@@ -2102,7 +2536,7 @@ static void test_settings_layout(void)
 		assert(r.h == TOUCH_MIN);
 		assert(r.x + r.w + PRESS_SHIFT <= SCREEN_BOTTOM_W);
 		if (i == 0)
-			assert(r.y == TAB_H + SP_4);
+			assert(r.y == TAB_H + SP_3);
 		else {
 			ui_rect prev = settings_item_rect(i - 1);
 			/* Focus borders and shadows stay SP_1 apart at least. */
@@ -2116,17 +2550,23 @@ static void test_settings_layout(void)
 	assert(last.y + last.h + below + PRESS_SHIFT <= hints.y);
 	/* The tab bar, the gaps and the bars are not buttons. */
 	assert(settings_hit_test(10, 10) == SETTINGS_ITEM_NONE);
-	assert(settings_hit_test(10, TAB_H + SP_4 - 1) == SETTINGS_ITEM_NONE);
+	assert(settings_hit_test(10, TAB_H + SP_3 - 1) == SETTINGS_ITEM_NONE);
 	assert(settings_hit_test(10, 230) == SETTINGS_ITEM_NONE);
 
+	/* Four buttons, the downloads second; the last clear of the bar. */
+	assert(SETTINGS_ITEM_COUNT == 4 && SETTINGS_ITEM_DOWNLOADS == 1);
+	assert(settings_item_rect(SETTINGS_ITEM_DOWNLOADS).y == 88);
+	assert(settings_item_rect(SETTINGS_ITEM_PAIR).y == 176);
 	/* Focus stops at the ends; anything else falls back to the first. */
 	assert(settings_focus_move(SETTINGS_ITEM_LANGUAGE, 1) ==
+	       SETTINGS_ITEM_DOWNLOADS);
+	assert(settings_focus_move(SETTINGS_ITEM_DOWNLOADS, 1) ==
 	       SETTINGS_ITEM_RECONNECT);
 	assert(settings_focus_move(SETTINGS_ITEM_PAIR, 1) == SETTINGS_ITEM_PAIR);
 	assert(settings_focus_move(SETTINGS_ITEM_LANGUAGE, -1) ==
 	       SETTINGS_ITEM_LANGUAGE);
 	assert(settings_focus_move(SETTINGS_ITEM_NONE, 1) ==
-	       SETTINGS_ITEM_RECONNECT);
+	       SETTINGS_ITEM_DOWNLOADS);
 }
 
 static void test_player_layout(void)
@@ -2161,11 +2601,13 @@ static void test_player_layout(void)
 	assert(link_track.x == SP_2 && link_track.y == 36 &&
 	       link_track.w == SCREEN_BOTTOM_W - 2 * SP_2 &&
 	       link_track.h == TOUCH_MIN);
+	/* The second row leaves its right end to the download icon. */
 	assert(link_artist.x == 8 && link_artist.y == 72 &&
-	       link_artist.w == 150 && link_artist.h == TOUCH_MIN);
-	assert(link_album.x == 162 && link_album.y == 72 &&
-	       link_album.w == 150 && link_album.h == TOUCH_MIN);
-	assert(link_album.x + link_album.w == SCREEN_BOTTOM_W - SP_2);
+	       link_artist.w == 132 && link_artist.h == TOUCH_MIN);
+	assert(link_album.x == 144 && link_album.y == 72 &&
+	       link_album.w == 132 && link_album.h == TOUCH_MIN);
+	assert(link_album.x + link_album.w + SP_1 + TOUCH_MIN ==
+	       SCREEN_BOTTOM_W - SP_2);
 	assert(link_track.y >= TAB_H);
 	assert(link_artist.y - (link_track.y + link_track.h) == SP_1);
 	/* The links end above the controls, with room to spare. */
@@ -3018,6 +3460,454 @@ static void test_about_layout(void)
 	assert(about_notice_w() == card.w);
 }
 
+/* The downloads index is big: one, static, for every test below. */
+static dl_index dl_test_idx, dl_test_back;
+
+static dl_track dl_test_track(const char *uri, const char *name)
+{
+	dl_track t;
+	memset(&t, 0, sizeof(t));
+	snprintf(t.uri, sizeof(t.uri), "%s", uri);
+	snprintf(t.name, sizeof(t.name), "%s", name);
+	return t;
+}
+
+static dl_collection dl_test_coll(const char *uri, dl_coll_kind kind)
+{
+	dl_collection c;
+	memset(&c, 0, sizeof(c));
+	snprintf(c.uri, sizeof(c.uri), "%s", uri);
+	c.kind = kind;
+	return c;
+}
+
+/* Serializes `idx` the way dl_store.c does, one line after another. */
+static size_t dl_test_serialize(const dl_index *idx, char *out, size_t cap)
+{
+	char line[DL_LINE_MAX];
+	int cursor = 0;
+	size_t n = 0;
+	while (dl_index_line(idx, &cursor, line, sizeof(line))) {
+		size_t len = strlen(line);
+		assert(n + len + 1 < cap);
+		memcpy(out + n, line, len);
+		n += len;
+		out[n++] = '\n';
+	}
+	out[n] = '\0';
+	return n;
+}
+
+static void test_downloads_index_round_trip(void)
+{
+	static char text[64 * 1024], again[64 * 1024];
+	dl_index *idx = &dl_test_idx, *back = &dl_test_back;
+	dl_index_clear(idx);
+	snprintf(idx->owner, sizeof(idx->owner), "someone");
+	idx->has_salt = true;
+	for (int i = 0; i < DL_SALT_LEN; i++)
+		idx->salt[i] = (uint8_t)(i * 17);
+
+	dl_track full = dl_test_track("spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+	                              "Song");
+	snprintf(full.artist, sizeof(full.artist), "Artist");
+	snprintf(full.album, sizeof(full.album), "Album");
+	snprintf(full.art_small, sizeof(full.art_small), "https://i.scdn.co/a");
+	snprintf(full.art_large, sizeof(full.art_large), "https://i.scdn.co/b");
+	snprintf(full.album_uri, sizeof(full.album_uri), "spotify:album:x");
+	snprintf(full.artist_uri, sizeof(full.artist_uri), "spotify:artist:y");
+	full.duration_ms = 215000;
+	full.track_number = 3;
+	full.disc_number = 1;
+	full.year = 2004;
+	full.is_explicit = true;
+	full.format = 1;
+	full.size = 4321000;
+	for (int i = 0; i < 20; i++)
+		full.file_id[i] = (uint8_t)(0xA0 + i);
+	int a = dl_add_track(idx, &full, true, 100);
+	assert(a == 0);
+	idx->tracks[a].has_key = true;
+	for (int i = 0; i < DL_WRAPPED_LEN; i++)
+		idx->tracks[a].wrapped_key[i] = (uint8_t)(255 - i);
+	idx->tracks[a].state = DL_DONE;
+
+	/* Empty fields, and a name carrying the separator and a newline: they
+	 * come back as spaces, never as extra fields or lines. */
+	dl_track bare = dl_test_track("spotify:track:0000000000000000000002",
+	                              "Bad\x1fname\nhere");
+	int b = dl_add_track(idx, &bare, false, 200);
+	idx->tracks[b].state = DL_FAILED;
+	snprintf(idx->tracks[b].error, sizeof(idx->tracks[b].error), "No key");
+
+	dl_collection pl = dl_test_coll("spotify:playlist:p1", DL_COLL_PLAYLIST);
+	snprintf(pl.name, sizeof(pl.name), "Mix");
+	pl.total = 40;
+	int c = dl_add_collection(idx, &pl, 300);
+	assert(dl_add_ref(idx, c, b) && dl_add_ref(idx, c, a));
+
+	size_t len = dl_test_serialize(idx, text, sizeof(text));
+	assert(strncmp(text, "3dspotify-dl\x1f" "1\n", 15) == 0);
+	assert(text[len - 2] == 'E' && text[len - 3] == '\n');
+
+	bool whole = false;
+	assert(dl_index_parse(text, len, back, &whole) && whole);
+	assert(strcmp(back->owner, "someone") == 0);
+	assert(back->has_salt && memcmp(back->salt, idx->salt, DL_SALT_LEN) == 0);
+	assert(back->track_count == 2 && back->coll_count == 1 &&
+	       back->ref_count == 2);
+	const dl_track *t = &back->tracks[0];
+	assert(strcmp(t->uri, full.uri) == 0 && strcmp(t->name, "Song") == 0);
+	assert(strcmp(t->artist, "Artist") == 0 && strcmp(t->album, "Album") == 0);
+	assert(strcmp(t->art_large, "https://i.scdn.co/b") == 0);
+	assert(strcmp(t->artist_uri, "spotify:artist:y") == 0);
+	assert(t->duration_ms == 215000 && t->track_number == 3 &&
+	       t->disc_number == 1 && t->year == 2004 && t->is_explicit);
+	assert(t->format == 1 && t->size == 4321000);
+	assert(memcmp(t->file_id, full.file_id, 20) == 0);
+	assert(t->has_key &&
+	       memcmp(t->wrapped_key, idx->tracks[0].wrapped_key,
+	              DL_WRAPPED_LEN) == 0);
+	assert(t->state == DL_DONE && t->standalone && t->added_at == 100);
+	assert(strcmp(back->tracks[1].name, "Bad name here") == 0);
+	assert(back->tracks[1].state == DL_FAILED && !back->tracks[1].has_key);
+	assert(strcmp(back->tracks[1].error, "No key") == 0);
+	assert(back->tracks[1].artist[0] == '\0');
+	assert(back->colls[0].kind == DL_COLL_PLAYLIST &&
+	       strcmp(back->colls[0].name, "Mix") == 0 &&
+	       back->colls[0].total == 40 && back->colls[0].added_at == 300);
+	/* The refs keep the collection's order. */
+	int order[4];
+	assert(dl_collection_tracks(back, 0, order, 4) == 2);
+	assert(order[0] == 1 && order[1] == 0);
+	assert(back->next_seq == idx->next_seq);
+
+	/* Serializing what was read gives the same bytes. */
+	size_t len2 = dl_test_serialize(back, again, sizeof(again));
+	assert(len2 == len && memcmp(text, again, len) == 0);
+}
+
+static void test_downloads_index_damage(void)
+{
+	dl_index *idx = &dl_test_idx;
+	bool whole = true;
+
+	/* Another version, or not this file at all: refused whole. */
+	const char *v2 = "3dspotify-dl\x1f" "2\nT\x1fspotify:track:a\nE\n";
+	assert(!dl_index_parse(v2, strlen(v2), idx, &whole));
+	assert(idx->track_count == 0 && !whole);
+	const char *junk = "hello\nE\n";
+	assert(!dl_index_parse(junk, strlen(junk), idx, &whole));
+	assert(!dl_index_parse("", 0, idx, &whole));
+
+	/* Lines not understood are skipped; the rest stays. A line without the
+	 * separator, an unknown kind, a track with no URI, a ref to nothing, a
+	 * repeated track, and a bad hex key (the track stays, keyless). */
+	const char *text =
+		"3dspotify-dl\x1f" "1\r\n"
+		"garbage\n"
+		"X\x1f" "what\n"
+		"T\x1f\x1f" "No uri\n"
+		"T\x1fspotify:track:a\x1f" "A\n"
+		"T\x1fspotify:track:a\x1f" "Again\n"
+		"T\x1fspotify:track:b\x1f" "B\x1f\x1f\x1f\x1f\x1f\x1f\x1f"
+		"1\x1f" "2\x1f" "3\x1f" "4\x1f" "0\x1f" "1\x1f" "99\x1f"
+		"zz\x1fnothex\x1f" "3\x1f" "0\x1f" "5\x1f" "7\x1f\n"
+		"R\x1fspotify:album:none\x1fspotify:track:a\n"
+		"C\x1fspotify:album:c\x1f" "a\x1f" "Album\n"
+		"R\x1fspotify:album:c\x1fspotify:track:b\n"
+		"R\x1fspotify:album:c\x1fspotify:track:missing\n";
+	assert(dl_index_parse(text, strlen(text), idx, &whole));
+	assert(!whole);              /* no E line: written only in part */
+	assert(idx->track_count == 2 && idx->coll_count == 1 &&
+	       idx->ref_count == 1);
+	assert(strcmp(idx->tracks[0].name, "A") == 0);
+	assert(idx->tracks[0].state == DL_QUEUED);
+	/* A done track without its key cannot play: back to the queue. */
+	assert(!idx->tracks[1].has_key && idx->tracks[1].state == DL_QUEUED);
+	assert(idx->tracks[1].size == 99 && idx->tracks[1].seq == 7);
+	assert(idx->next_seq == 8);
+	assert(idx->colls[0].kind == DL_COLL_ALBUM);
+
+	/* A download that was running when the app stopped is queued again;
+	 * nothing after the end marker is read. */
+	const char *active =
+		"3dspotify-dl\x1f" "1\n"
+		"T\x1fspotify:track:a\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f"
+		"\x1f\x1f\x1f\x1f\x1f\x1f" "1\n"
+		"E\n"
+		"T\x1fspotify:track:after-end\n";
+	assert(dl_index_parse(active, strlen(active), idx, &whole) && whole);
+	assert(idx->track_count == 1 && idx->tracks[0].state == DL_QUEUED);
+}
+
+static void test_downloads_refs(void)
+{
+	dl_index *idx = &dl_test_idx;
+	dl_index_clear(idx);
+	dl_track t1 = dl_test_track("spotify:track:1", "1");
+	dl_track t2 = dl_test_track("spotify:track:2", "2");
+	dl_track t3 = dl_test_track("spotify:track:3", "3");
+	dl_track t4 = dl_test_track("spotify:track:4", "4");
+	dl_collection album = dl_test_coll("spotify:album:a", DL_COLL_ALBUM);
+	dl_collection list = dl_test_coll("spotify:playlist:p", DL_COLL_PLAYLIST);
+	int ca = dl_add_collection(idx, &album, 1);
+	int cp = dl_add_collection(idx, &list, 2);
+	/* 1 only in the album; 2 in both; 3 in the album and on its own; 4
+	 * only in the playlist. */
+	int a1 = dl_add_track(idx, &t1, false, 1);
+	int a2 = dl_add_track(idx, &t2, false, 1);
+	int a3 = dl_add_track(idx, &t3, false, 1);
+	int a4 = dl_add_track(idx, &t4, false, 1);
+	assert(dl_add_track(idx, &t3, true, 9) == a3);    /* already there */
+	assert(idx->tracks[a3].standalone && idx->tracks[a3].added_at == 1);
+	assert(dl_add_ref(idx, ca, a1) && dl_add_ref(idx, ca, a2) &&
+	       dl_add_ref(idx, ca, a3));
+	assert(dl_add_ref(idx, cp, a2) && dl_add_ref(idx, cp, a4));
+	assert(dl_add_ref(idx, cp, a4) && idx->ref_count == 5);   /* once */
+	assert(dl_track_refs(idx, a2) == 2 && dl_track_refs(idx, a3) == 1);
+
+	idx->tracks[a1].state = DL_DONE;
+	idx->tracks[a2].state = DL_DONE;
+	int done, count;
+	dl_collection_progress(idx, ca, &done, &count);
+	assert(done == 2 && count == 3);
+
+	/* Removing the album drops track 1 only: 2 is in the playlist, 3 was
+	 * downloaded on its own. */
+	char orphans[4][SP_URI_MAX];
+	assert(dl_remove_collection(idx, ca, orphans, 4) == 1);
+	assert(strcmp(orphans[0], "spotify:track:1") == 0);
+	assert(idx->coll_count == 1 && idx->track_count == 3);
+	assert(dl_find_track(idx, "spotify:track:1") < 0);
+	/* The refs still point at the right tracks after the shift. */
+	cp = dl_find_collection(idx, "spotify:playlist:p");
+	assert(cp == 0);
+	int order[4];
+	assert(dl_collection_tracks(idx, cp, order, 4) == 2);
+	assert(strcmp(idx->tracks[order[0]].uri, "spotify:track:2") == 0);
+	assert(strcmp(idx->tracks[order[1]].uri, "spotify:track:4") == 0);
+
+	/* Then the playlist: 2 and 4 go, 3 stays on its own. */
+	assert(dl_remove_collection(idx, cp, orphans, 4) == 2);
+	assert(idx->coll_count == 0 && idx->ref_count == 0);
+	assert(idx->track_count == 1 &&
+	       strcmp(idx->tracks[0].uri, "spotify:track:3") == 0);
+	assert(dl_remove_collection(idx, 5, orphans, 4) == 0);
+}
+
+static void test_downloads_queue_order(void)
+{
+	dl_index *idx = &dl_test_idx;
+	dl_index_clear(idx);
+	assert(dl_next_queued(idx) == -1);
+	dl_track a = dl_test_track("spotify:track:a", "a");
+	dl_track b = dl_test_track("spotify:track:b", "b");
+	dl_track c = dl_test_track("spotify:track:c", "c");
+	int ia = dl_add_track(idx, &a, true, 1);
+	int ib = dl_add_track(idx, &b, true, 1);
+	int ic = dl_add_track(idx, &c, true, 1);
+	assert(idx->tracks[ia].state == DL_QUEUED);
+	assert(dl_next_queued(idx) == ia);
+
+	/* Active and failed are not picked; the next in order is. */
+	idx->tracks[ia].state = DL_ACTIVE;
+	assert(dl_next_queued(idx) == ib);
+	idx->tracks[ib].state = DL_FAILED;
+	assert(dl_next_queued(idx) == ic);
+
+	/* A retry goes to the end of the queue. */
+	dl_requeue(idx, ib);
+	assert(idx->tracks[ib].state == DL_QUEUED);
+	assert(dl_next_queued(idx) == ic);
+	idx->tracks[ic].state = DL_DONE;
+	assert(dl_next_queued(idx) == ib);
+	idx->tracks[ib].state = DL_DONE;
+	idx->tracks[ia].state = DL_DONE;
+	assert(dl_next_queued(idx) == -1);
+}
+
+static void test_downloads_owner(void)
+{
+	assert(dl_owner_matches("", "me"));
+	assert(dl_owner_matches(NULL, NULL));
+	assert(dl_owner_matches("me", "me"));
+	assert(!dl_owner_matches("me", "someone"));
+	assert(!dl_owner_matches("me", ""));
+	assert(!dl_owner_matches("me", NULL));
+}
+
+static void test_downloads_engine_states(void)
+{
+	dl_index *idx = &dl_test_idx;
+	dl_index_clear(idx);
+	dl_track a = dl_test_track("spotify:track:a", "a");
+	dl_track b = dl_test_track("spotify:track:b", "b");
+	int ia = dl_add_track(idx, &a, true, 1);
+	int ib = dl_add_track(idx, &b, true, 1);
+
+	/* queued -> active -> done */
+	dl_mark_active(idx, ia);
+	assert(idx->tracks[ia].state == DL_ACTIVE);
+	assert(dl_next_queued(idx) == ib);
+	/* A real download is done with its key, or it would be fetched again
+	 * on the next load. */
+	idx->tracks[ia].has_key = true;
+	dl_mark_done(idx, ia, 4000000);
+	assert(idx->tracks[ia].state == DL_DONE && idx->tracks[ia].size == 4000000);
+
+	/* active -> stopped: queued again in its place, ahead of later ones. */
+	dl_track c = dl_test_track("spotify:track:c", "c");
+	int ic = dl_add_track(idx, &c, true, 1);
+	dl_mark_active(idx, ib);
+	dl_mark_paused(idx, ib);
+	assert(idx->tracks[ib].state == DL_QUEUED);
+	assert(dl_next_queued(idx) == ib);
+	/* Pausing leaves anything not running alone. */
+	dl_mark_paused(idx, ia);
+	assert(idx->tracks[ia].state == DL_DONE);
+
+	/* The key is kept as soon as it comes, before the file is whole. */
+	uint8_t wrapped[DL_WRAPPED_LEN], file_id[20];
+	memset(wrapped, 0x5A, sizeof(wrapped));
+	memset(file_id, 0x11, sizeof(file_id));
+	dl_mark_active(idx, ib);
+	dl_set_key(idx, ib, wrapped, file_id, 1);
+	dl_mark_paused(idx, ib);
+	assert(idx->tracks[ib].has_key && idx->tracks[ib].format == 1);
+	assert(memcmp(idx->tracks[ib].file_id, file_id, 20) == 0);
+
+	/* active -> failed, then a retry sends it to the end of the queue. */
+	dl_mark_active(idx, ib);
+	dl_mark_failed(idx, ib, "Network");
+	assert(idx->tracks[ib].state == DL_FAILED &&
+	       strcmp(idx->tracks[ib].error, "Network") == 0);
+	assert(dl_next_queued(idx) == ic);
+	dl_requeue(idx, ib);
+	assert(idx->tracks[ib].error[0] == '\0');
+	dl_mark_active(idx, ic);
+	idx->tracks[ic].has_key = true;
+	dl_mark_done(idx, ic, 1);
+	assert(dl_next_queued(idx) == ib);
+
+	/* A restart in the middle: active is queued again, with its key. */
+	static char text[16 * 1024];
+	dl_mark_active(idx, ib);
+	dl_test_serialize(idx, text, sizeof(text));
+	bool whole = false;
+	assert(dl_index_parse(text, strlen(text), &dl_test_back, &whole) && whole);
+	int rb = dl_find_track(&dl_test_back, "spotify:track:b");
+	assert(dl_test_back.tracks[rb].state == DL_QUEUED);
+	assert(dl_test_back.tracks[rb].has_key);
+	assert(dl_next_queued(&dl_test_back) == rb);
+
+	/* Cancelling: a track only wanted on its own leaves; one a collection
+	 * holds stays for it. */
+	dl_collection al = dl_test_coll("spotify:album:x", DL_COLL_ALBUM);
+	int cx = dl_add_collection(idx, &al, 1);
+	assert(dl_add_ref(idx, cx, ic));
+	assert(!dl_unwant_track(idx, ic));
+	assert(!idx->tracks[ic].standalone && dl_find_track(idx, c.uri) == ic);
+	assert(dl_unwant_track(idx, ia));
+	assert(dl_find_track(idx, "spotify:track:a") < 0);
+	/* The positions moved down; the ref still names c. */
+	int order[2];
+	assert(dl_collection_tracks(idx, 0, order, 2) == 1);
+	assert(strcmp(idx->tracks[order[0]].uri, "spotify:track:c") == 0);
+	assert(!dl_unwant_track(idx, -1) && !dl_unwant_track(idx, 99));
+}
+
+static void test_downloads_key_bucket(void)
+{
+	dl_bucket b;
+	uint64_t t = 1000;
+	dl_bucket_init(&b, t);
+	assert(b.tokens == DL_KEY_BUCKET);
+
+	/* The engine takes down to the reserve, then waits. */
+	int taken = 0;
+	while (dl_bucket_engine_may_take(&b, t)) {
+		dl_bucket_take(&b, t);
+		taken++;
+	}
+	assert(taken == DL_KEY_BUCKET - DL_KEY_RESERVE);
+	assert(b.tokens == DL_KEY_RESERVE);
+	/* The player still has the reserve; its keys count too. */
+	dl_bucket_take(&b, t);
+	assert(b.tokens == DL_KEY_RESERVE - 1);
+
+	/* One comes back every DL_KEY_REFILL_MS, whole ones only. */
+	dl_bucket_refill(&b, t + DL_KEY_REFILL_MS - 1);
+	assert(b.tokens == DL_KEY_RESERVE - 1);
+	dl_bucket_refill(&b, t + DL_KEY_REFILL_MS);
+	assert(b.tokens == DL_KEY_RESERVE);
+	assert(!dl_bucket_engine_may_take(&b, t + DL_KEY_REFILL_MS));
+	/* The remainder carries: 1.5 periods later, one more at 2. */
+	dl_bucket_refill(&b, t + DL_KEY_REFILL_MS + DL_KEY_REFILL_MS / 2);
+	assert(b.tokens == DL_KEY_RESERVE);
+	dl_bucket_refill(&b, t + 2 * DL_KEY_REFILL_MS);
+	assert(b.tokens == DL_KEY_RESERVE + 1);
+	assert(dl_bucket_engine_may_take(&b, t + 2 * DL_KEY_REFILL_MS));
+	/* Never above the capacity, however long it rests. */
+	dl_bucket_refill(&b, t + 1000ull * DL_KEY_REFILL_MS);
+	assert(b.tokens == DL_KEY_BUCKET);
+
+	/* A 0x0002 empties it and blocks the engine for the backoff, even once
+	 * the model would have refilled. */
+	uint64_t r = t + 2000ull * DL_KEY_REFILL_MS;
+	dl_bucket_refused(&b, r);
+	assert(b.tokens == 0);
+	assert(!dl_bucket_engine_may_take(&b, r + DL_KEY_BACKOFF_MS - 1));
+	uint64_t later = r + (uint64_t)(DL_KEY_RESERVE + 1) * DL_KEY_REFILL_MS;
+	assert(later >= r + DL_KEY_BACKOFF_MS);
+	assert(dl_bucket_engine_may_take(&b, later));
+	/* Taking from an empty one stays at zero. */
+	dl_bucket_refused(&b, later);
+	dl_bucket_take(&b, later);
+	assert(b.tokens == 0);
+}
+
+static void test_downloads_retry_and_busy(void)
+{
+	assert(dl_net_retry_ms(0) == 0);
+	assert(dl_net_retry_ms(1) == 5000);
+	assert(dl_net_retry_ms(2) == 15000);
+	assert(dl_net_retry_ms(3) == 60000);
+	assert(dl_net_retry_ms(4) == 0);       /* given up: DL_FAILED */
+
+	/* Preparing a track, or downloading the one that plays: busy. */
+	assert(dl_player_busy(true, false, false));
+	assert(dl_player_busy(true, true, true));
+	assert(dl_player_busy(false, true, false));
+	/* Its file whole, or nothing playing: the engine may go on. */
+	assert(!dl_player_busy(false, true, true));
+	assert(!dl_player_busy(false, false, false));
+}
+
+static void test_playback_next_playable(void)
+{
+	/* Five tracks played in a shuffled order; only 1 and 3 downloaded. */
+	const int order[5] = { 4, 1, 0, 3, 2 };
+	const bool playable[5] = { false, true, false, true, false };
+	/* From the start: position 1 (track 1), then 3 (track 3), then none. */
+	assert(playback_next_playable(-1, 5, 1, order, playable) == 1);
+	assert(playback_next_playable(1, 5, 1, order, playable) == 3);
+	assert(playback_next_playable(3, 5, 1, order, playable) == -1);
+	/* Backwards the same, and no wrapping at the start. */
+	assert(playback_next_playable(4, 5, -1, order, playable) == 3);
+	assert(playback_next_playable(3, 5, -1, order, playable) == 1);
+	assert(playback_next_playable(1, 5, -1, order, playable) == -1);
+	assert(playback_next_playable(0, 5, -1, order, playable) == -1);
+	/* From past the end backwards: the last playable one. */
+	assert(playback_next_playable(5, 5, -1, order, playable) == 3);
+	/* Nothing playable, or nonsense in: none. */
+	const bool none[5] = { false };
+	assert(playback_next_playable(-1, 5, 1, order, none) == -1);
+	assert(playback_next_playable(0, 0, 1, order, playable) == -1);
+	assert(playback_next_playable(0, 5, 0, order, playable) == -1);
+	assert(playback_next_playable(9, 5, -1, order, playable) == -1);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -3075,6 +3965,7 @@ int main(void)
 	test_detail_stack();
 	test_detail_pool();
 	test_detail_buttons();
+	test_list_frames();
 	test_http_redirects();
 	test_download_retry_delay();
 	test_power_policy();
@@ -3083,5 +3974,19 @@ int main(void)
 	test_queue_drop_known();
 	test_language_tables();
 	test_language_switching();
+	test_downloads_index_round_trip();
+	test_downloads_index_damage();
+	test_downloads_refs();
+	test_downloads_queue_order();
+	test_downloads_owner();
+	test_downloads_engine_states();
+	test_downloads_key_bucket();
+	test_downloads_retry_and_busy();
+	test_download_buttons();
+	test_downloads_manager_list();
+	test_offline_rows();
+	test_offline_start();
+	test_offline_owner();
+	test_playback_next_playable();
 	return 0;
 }

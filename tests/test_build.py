@@ -227,9 +227,11 @@ class BuildTests(unittest.TestCase):
         ask = app[app.index("static bool ask_search_query("):
                   app.index("static void keyboard_search(")]
         self.assertIn("if (confirmed)", ask)
-        # Reconnecting and pairing moved to the Settings tab.
+        # Reconnecting and pairing moved to the Settings tab; Home only
+        # offers to reconnect while it runs without a connection.
         home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
-        self.assertNotIn("HOME_ACTION_RECONNECT", home)
+        self.assertEqual(home.count("HOME_ACTION_RECONNECT"), 1)
+        self.assertIn("if (offline)\n\t\t\tqueue(HOME_ACTION_RECONNECT", home)
         self.assertNotIn("HOME_ACTION_PAIR", home)
 
     def test_home_playlists_follow_style_guide_and_docs(self):
@@ -263,7 +265,8 @@ class BuildTests(unittest.TestCase):
             self.assertIn("secure_clear(job.username", body)
         self.assertIn("background_priority()", feed)
         self.assertNotIn("api.spotify.com", feed)
-        # Every new string in both languages; Spanish without accents.
+        # Every new string in both languages (Spanish with its accents and
+        # ñ since ef1e295: the native tests check the text is valid UTF-8).
         keys = ("STR_HOME_RECENT", "STR_HOME_YOUR_PLAYLISTS",
                 "STR_HOME_SHOW_MORE", "STR_HOME_EMPTY",
                 "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE",
@@ -273,9 +276,6 @@ class BuildTests(unittest.TestCase):
             for key in keys:
                 match = re.search(r"\[" + key + r"\] = \"([^\"]+)\"", table)
                 self.assertIsNotNone(match, (name, key))
-                if name == "lang_es.c":
-                    self.assertIsNone(re.search(r"[áéíóúñÁÉÍÓÚÑ]",
-                                                match.group(1)), key)
         # The focused tile previews on the top screen through the detail
         # card, and Liked Songs leads the tiles with its heart.
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
@@ -391,9 +391,12 @@ class BuildTests(unittest.TestCase):
         self.assertIn('#include "track_list.h"', results)
         self.assertIn("track_list_update_touch(&list", results)
         self.assertIn("track_list_navigate(&list, down)", results)
-        self.assertIn("move_focus(l, RESULTS_PER_PAGE)", rows)
+        # Left and right jump a page: the rows of the list's frame
+        # (RESULTS_PER_PAGE, or fewer under an album's download button).
+        self.assertIn("move_focus(l, l->frame.rows)", rows)
         self.assertIn("else if (down & KEY_RIGHT)\n\t\tmove_focus(l, "
-                      "RESULTS_PER_PAGE);", rows)
+                      "l->frame.rows);", rows)
+        self.assertIn("l->frame = list_frame_full();", rows)
         for source in (results, rows):
             self.assertNotIn("KEY_L)", source)
             self.assertNotIn("KEY_R)", source)
@@ -545,25 +548,29 @@ class BuildTests(unittest.TestCase):
         rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
         self.assertIn("list_drag_begin(&l->drag", rows)
         # A drag starts on the list, never on the tab bar.
-        self.assertIn("list_area_contains(pos.px, pos.py)", rows)
+        self.assertIn("list_area_contains_in(l->frame, pos.px, pos.py)",
+                      rows)
         self.assertIn("!tabbar_touching()", rows)
         self.assertIn("list_drag_update(&l->drag", rows)
         self.assertIn("press_cancel(&l->press)", rows)
         # A drag may leave rows cut; the buttons align to whole rows.
-        self.assertIn("list_align(l->scroll, l->selected, l->count)", rows)
+        self.assertIn("list_align_in(l->frame, l->scroll, l->selected, "
+                      "l->count)", rows)
         # The focus survives a drag (6.9), and the first button press with
         # it out of view only brings the list back to it (6.6).
         drag_end = rows[rows.index("static void drag_end(track_list *l)"):]
         drag_end = drag_end[:drag_end.index("\n}\n")]
         for change in ("list_snap", "scroll =", "selected ="):
             self.assertNotIn(change, drag_end)
-        self.assertIn("list_row_whole(l->selected, l->scroll, l->count)", rows)
+        self.assertIn("list_row_whole_in(l->frame, l->selected, l->scroll, "
+                      "l->count)", rows)
         self.assertIn("track_list_realign(&list, down, KEY_A | KEY_X)",
                       results)
         for source in (results, rows):
             self.assertNotIn("list_keep_visible", source)
-        self.assertIn("list_scroll_thumb(look->scroll, l->count)", rows)
-        self.assertIn("list_hit_row(pos.px, pos.py, l->scroll, l->count)",
+        self.assertIn("list_scroll_thumb_in(l->frame, look->scroll, "
+                      "l->count)", rows)
+        self.assertIn("list_hit_row_in(l->frame, pos.px, pos.py, l->scroll,",
                       rows)
         style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
             encoding="utf-8")
@@ -644,7 +651,8 @@ class BuildTests(unittest.TestCase):
             self.assertIn(wired, detail_in)
         view = (ui_dir / "view_detail.c").read_text(encoding="utf-8")
         # An album's rows share its cover: they show their position.
-        self.assertIn("doc->kind == DETAIL_ALBUM ? TRACK_LIST_NUMBERS", view)
+        self.assertIn("bool numbers = doc->kind == DETAIL_ALBUM ||", view)
+        self.assertIn("list.style = numbers ? TRACK_LIST_NUMBERS", view)
         self.assertIn("track_list_scroll_to(&list, doc->first);", view)
         self.assertIn("doc->selected = list.selected;", view)
         # The Playing tab's title, artist and album open their details on
@@ -732,6 +740,340 @@ class BuildTests(unittest.TestCase):
             text = (build.ROOT.parent / readme).read_text(encoding="utf-8")
             self.assertIn(heading, text, readme)
             self.assertIn("#3FA2FF", text, readme)
+
+    def test_download_keys_are_only_stored_wrapped(self):
+        import re
+        store = (build.ROOT / "platform3ds" / "dl_store.c").read_text(
+            encoding="utf-8")
+        # Nothing in the store prints or logs: a key cannot leak through a
+        # line that is not there.
+        self.assertIsNone(re.search(r"(?<![A-Za-z_])(f|v|)printf\(", store))
+        self.assertNotIn("fputs(", store.replace("fputs(line, f)", ""))
+        self.assertNotIn("say(", store)
+        self.assertNotIn("native_log", store)
+        # The key goes in and out through AES-GCM, authenticated by the
+        # track's URI, under a key derived from this console.
+        self.assertIn("mbedtls_gcm_crypt_and_tag", store)
+        self.assertIn("mbedtls_gcm_auth_decrypt", store)
+        self.assertIn("mbedtls_hkdf(", store)
+        self.assertIn("PS_GetLocalFriendCodeSeed", store)
+        self.assertIn("PS_GetDeviceId", store)
+        # The KEK is wiped after every use, on every path.
+        for fn in ("bool dl_store_wrap_key(", "bool dl_store_unwrap_key("):
+            body = store[store.index(fn):]
+            body = body[:body.index("\n}\n") + 2]
+            self.assertIn("mbedtls_platform_zeroize(kek, sizeof(kek));", body)
+            self.assertLess(body.index("mbedtls_gcm_free(&gcm);"),
+                            body.index("return ok;"))
+        # The index keeps only the wrapped form.
+        logic = (build.ROOT / "ui" / "downloads_logic.h").read_text(
+            encoding="utf-8")
+        self.assertIn("wrapped_key[DL_WRAPPED_LEN]", logic)
+        self.assertIsNone(re.search(r"uint8_t\s+key\[", logic))
+
+    def test_downloads_engine_keeps_out_of_the_players_way(self):
+        import re
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        engine = (build.ROOT / "ui" / "downloads.c").read_text(
+            encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Leaving the tabs: the engine stops with the TLS abort on, before
+        # the session, TLS and sockets go (thumbs_wait is the last join).
+        stop = body(app, "static void stop_tabs(void)")
+        self.assertLess(stop.index("tls_set_abort(true);"),
+                        stop.index("downloads_stop();"))
+        self.assertLess(stop.index("downloads_stop();"),
+                        stop.index("thumbs_wait();"))
+        # Each frame after the audio, told when the player is busy; and the
+        # player waits for the engine before preparing a track.
+        tabs = body(app, "static tabs_exit run_tabs(")
+        self.assertLess(tabs.index("player_pump();"),
+                        tabs.index("downloads_poll(dl_player_busy("))
+        self.assertIn("downloads_busy()",
+                      body(app, "static void player_start_prepare(void)"))
+        # The player's keys count against the allowance the engine models.
+        self.assertIn("downloads_note_player_key(",
+                      body(app, "static void prepare_reap(void)"))
+        # Two workers share the session: the lock covers the OAuth renewal
+        # and the copy, never a login to the access point.
+        ap = body(app, "static ap_session *open_playback_ap(")
+        self.assertLess(ap.index("LightLock_Lock(&session_lock);"),
+                        ap.index("ensure_oauth_token("))
+        self.assertLess(ap.index("ensure_oauth_token("),
+                        ap.index("LightLock_Unlock(&session_lock);"))
+        self.assertLess(ap.index("LightLock_Unlock(&session_lock);"),
+                        ap.index("ap_login_any("))
+        self.assertNotIn("session->oauth_token, device_id", ap)
+        # The engine's worker runs below the decoder and drops its token.
+        self.assertIn("background_priority()", engine)
+        self.assertIn("secure_clear(j->token, sizeof(j->token));",
+                      body(engine, "static void job_worker(void *arg)"))
+        self.assertIn("secure_clear(token, sizeof(token));",
+                      body(engine, "void downloads_stop(void)"))
+        # Its log names tracks and outcomes, never a key or a token.
+        for call in re.findall(r"dlog\((.*?)\);", engine, re.S):
+            args = re.sub(r'"[^"]*"', '""', call)   # the words, not the text
+            for secret in (r"\btoken\b", r"\bkey\b", "wrapped", "salt",
+                           "urls"):
+                self.assertIsNone(re.search(secret, args), call)
+        # The audio is written as it came: the save path never decrypts.
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8")
+        save = body(track, "static bool save_cb(")
+        self.assertNotIn("crypt", save)
+        self.assertIn("fwrite(data, 1, n, c->f)", save)
+
+    def test_downloads_play_from_the_card(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # The network path is still the network's; a download takes the
+        # card's, chosen by the stream itself.
+        worker = body(app, "static void download_worker(void *arg)")
+        self.assertIn("track_stream_download(&job->stream, &job->stop)",
+                      worker)
+        self.assertIn("track_stream_load_local(&job->stream, &job->stop)",
+                      worker)
+        # A downloaded track opens before any access point, with its key
+        # unwrapped in the worker and wiped there; the network stays as the
+        # fallback.
+        prep = body(app, "static void prepare_worker(void *arg)")
+        self.assertLess(prep.index("track_stream_open_local("),
+                        prep.index("open_playback_ap("))
+        self.assertIn("secure_clear(key, sizeof(key));", prep)
+        self.assertIn("secure_clear(&job->local_src", prep)
+        self.assertIn("downloads_local_track(prep.track.uri, &prep.local_src)",
+                      body(app, "static void player_start_prepare(void)"))
+        # The card is read through the download's own callback: one place
+        # decrypts and publishes chunks, whatever the source.
+        local = body(track, "int track_stream_load_local(")
+        self.assertIn("stream_cb(ts, (const char *)buf, got);", local)
+        self.assertIn("ts->dl_restart_at >= 0", local)
+        self.assertNotIn("decrypt(", local)
+        # Covers: the cache, then the card, then the network.
+        for name, fetch, net in (
+                ("artwork.c", "static void artwork_worker(", "http_get_url("),
+                ("thumbs.c", "static bool fetch(", "http_session_request(")):
+            source = (build.ROOT / "ui" / name).read_text(encoding="utf-8")
+            text = body(source, fetch)
+            self.assertLess(text.index("art_cache_get("),
+                            text.index("dl_store_art_read("))
+            self.assertLess(text.index("dl_store_art_read("),
+                            text.index(net))
+
+    def test_download_buttons_are_wired(self):
+        import re
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        view = (root / "ui" / "view_detail.c").read_text(encoding="utf-8")
+        player = (root / "ui" / "view_player.c").read_text(encoding="utf-8")
+        header = (root / "lang" / "lang.h").read_text(encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Every download text in both languages, the Spanish one accented
+        # where the word is ("álbum"), and the formats as in English.
+        ids = re.findall(r"\b(STR_DL_\w+|STR_HINT_DOWNLOAD)\b,", header)
+        self.assertIn("STR_DL_REMOVE_CONFIRM", ids)
+        for name in ("lang_en.c", "lang_es.c"):
+            table = (root / "lang" / name).read_text(encoding="utf-8")
+            for sid in ids:
+                self.assertIn("[%s] = \"" % sid, table, (name, sid))
+        es = (root / "lang" / "lang_es.c").read_text(encoding="utf-8")
+        self.assertIn('[STR_DL_ALL_ALBUM] = "Descargar álbum"', es)
+        # The detail's button does what its state says; removing needs the
+        # second A that "Press A again" asks for.
+        detail = body(app, "static void download_from_detail(")
+        self.assertIn("dl_track_button(known, state, alone)", detail)
+        self.assertIn("downloads_remove(t->uri);", detail)
+        self.assertIn("download_track(t);", detail)
+        confirm = body(view, "static detail_action download_action(void)")
+        self.assertLess(confirm.index("remove_armed()"),
+                        confirm.rindex("return DETAIL_ACTION_DOWNLOAD;"))
+        self.assertIn("view_detail_notice(STR_DL_REMOVE_CONFIRM", confirm)
+        # The button over an album or a playlist, never an artist's list.
+        place = body(view, "static bool has_header(")
+        self.assertIn("DETAIL_ALBUM", place)
+        self.assertIn("DETAIL_PLAYLIST", place)
+        self.assertIn("DETAIL_OFFLINE_COLLECTION", place)
+        self.assertNotIn("DETAIL_ARTIST", place)
+        self.assertNotIn("DETAIL_DOWNLOADS", place)
+        self.assertIn("downloads_add_collection(",
+                      body(app, "static void download_collection("))
+        # The track that plays goes with the player's key, from X or from
+        # the detail alike.
+        self.assertIn("downloads_add_track_keyed(",
+                      body(app, "static str_id download_track("))
+        # The player's X shows its press before it acts (6.5).
+        update = body(player, "player_action view_player_update(")
+        self.assertIn("queue(PLAYER_ACTION_DOWNLOAD, &press_glyph[GLYPH_X]);",
+                      update)
+        # The share is read with the clock, not every frame (9).
+        self.assertIn("DL_SAMPLE_FRAMES", view)
+
+    def test_downloads_manager_is_wired(self):
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        view = (root / "ui" / "view_downloads.c").read_text(encoding="utf-8")
+        top = (root / "ui" / "top.c").read_text(encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Settings opens it, and B comes back to the Downloads button.
+        self.assertIn("case SETTINGS_ACTION_DOWNLOADS:", app)
+        self.assertIn("view_settings_focus(SETTINGS_ITEM_DOWNLOADS);", app)
+        self.assertIn("view_settings_set_waiting(downloads_waiting());", app)
+        self.assertIn("top_set_manager(manager_open);", app)
+        self.assertIn("case TOP_DOWNLOADS:", top)
+        # Cancelling and removing take a second press of the same button
+        # on the same row.
+        act = body(view, "static dlv_action activate(void)")
+        self.assertLess(act.index("armed(KEY_A, uri)"),
+                        act.index("downloads_cancel(uri);"))
+        rem = body(view, "static void remove_focused(void)")
+        self.assertLess(rem.index("armed(KEY_X, uri)"),
+                        rem.index("downloads_remove(uri);"))
+        # Rebuilt only when the downloads change; the share and the free
+        # space on their own clocks, never every frame (9).
+        self.assertIn("if (built != downloads_generation())", view)
+        tick = body(view, "static void tick(void)")
+        self.assertIn("share_frames >= SHARE_FRAMES", tick)
+        self.assertIn("free_frames >= FREE_FRAMES", tick)
+        self.assertIn("dl_store_free_bytes()", tick)
+        # Its covers come through the thumbnail pool like any list's.
+        self.assertIn("thumbs_client_frame(&thumbs);", view)
+
+    def test_home_downloads_never_reach_the_service(self):
+        root = build.ROOT
+        logic = (root / "ui" / "offline_logic.h").read_text(encoding="utf-8")
+        self.assertIn('#define DL_HOME_URI "3dspotify:downloads"', logic)
+        # The pseudo-URI is the app's own: nothing that talks to Spotify
+        # names it, and the Home tile opens the card's list instead.
+        for name in ("spclient.c", "http3ds.c", "ap3ds.c"):
+            text = (root / "platform3ds" / name).read_text(encoding="utf-8")
+            self.assertNotIn("DL_HOME_URI", text, name)
+            self.assertNotIn("3dspotify:downloads", text, name)
+        app = (root / "main.c").read_text(encoding="utf-8")
+        self.assertIn("if (strcmp(view_home_selected_uri(), DL_HOME_URI) == 0)\n"
+                      "\t\t\t\t\tdetails_open_downloads(TAB_HOME);", app)
+        # The offline levels never start a load: READY as they open.
+        details = (root / "ui" / "details.c").read_text(encoding="utf-8")
+        text = details[details.index("static void open_offline("):]
+        text = text[:text.index("\n}\n")]
+        self.assertIn("d->state = DETAIL_READY;", text)
+        self.assertNotIn("DETAIL_LOADING", text)
+        # Playing from the downloads queues only the tracks on the card.
+        play = app[app.index("static void queue_play_offline("):]
+        play = play[:play.index("\n}\n")]
+        self.assertIn("r->kind != TRACK_ROW_TRACK || r->off", play)
+
+    def test_offline_start_keeps_off_the_network(self):
+        import re
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+
+        def body(signature):
+            text = app[app.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # The tabs start the feed only with a connection, and every search
+        # they start is behind it.
+        tabs = body("static tabs_exit run_tabs(")
+        start = tabs.index("home_feed_start(")
+        self.assertIn("if (net_online) {", tabs[start - 40:start])
+        for m in re.finditer(r"(keyboard_search|search_start)\(session", tabs):
+            before = tabs[max(0, m.start() - 160):m.start()]
+            self.assertIn("net_online", before, tabs[m.start():m.start() + 60])
+        self.assertIn("if (net_online)\n\t\t\tqueue_feed_tick(session);", tabs)
+        # Offline, a track that is not on the card does not reach for an
+        # access point: it fails at once.
+        prep = body("static void prepare_worker(void *arg)")
+        self.assertLess(prep.index("if (!job->session->online) {"),
+                        prep.index("open_playback_ap("))
+        # No profile request without a connection.
+        self.assertIn("!session->online", body(
+            "static void account_start(const spotify_session *session)\n{"))
+        # A start-up that failed for the network, with a credential, goes
+        # on with the downloads; one that failed for the account does not
+        # (login_error_allows_offline decides), and pairing never does.
+        loop = app[app.index("bool reconnecting = false;"):]
+        loop = loop[:loop.index("failed:")]
+        self.assertIn("login_error_allows_offline(error.category, "
+                      "error.transport)", loop)
+        self.assertIn("!force_pair && credential_stored()", loop)
+        self.assertIn("wifi_down()", loop)
+        # The username is kept for that start, and nothing else of the
+        # session.
+        self.assertIn('cfg_set_async("username", session.username);', loop)
+
+    def test_losing_the_connection_goes_offline(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+
+        def body(signature):
+            text = app[app.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Online, the tabs watch the Wi-Fi and turn offline when it goes,
+        # as after an offline start, without stopping what plays.
+        self.assertIn("if (connection_lost())\n\t\t\tgo_offline(session);",
+                      body("static tabs_exit run_tabs("))
+        self.assertIn("wifi_down()", body("static bool connection_lost(void)"))
+        lost = body("static void go_offline(spotify_session *session)")
+        for call in ("session->online = false;", "tabbar_set_offline(true);",
+                     "view_home_set_offline(true);",
+                     "view_detail_set_offline(true);",
+                     "view_results_error(STR_OFFLINE_SEARCH);",
+                     "downloads_stop();"):
+            self.assertIn(call, lost)
+        self.assertNotIn("player_stop", lost)
+        # Back online, a feed that failed meanwhile is fetched again.
+        self.assertIn("home_feed_retry(",
+                      body("static void go_online(spotify_session *session)"))
+
+    def test_reconnecting_keeps_the_music(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+
+        def body(signature):
+            text = app[app.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Offline, retrying never leaves the tabs: no Wi-Fi says so at once,
+        # with Wi-Fi the start-up runs in the background.
+        retry = body("static void try_reconnect(void)")
+        self.assertLess(retry.index("wifi_down()"),
+                        retry.index("reconnect_start();"))
+        self.assertNotIn("TABS_RECONNECT", retry)
+        tabs = body("static tabs_exit run_tabs(")
+        self.assertIn("case HOME_ACTION_RECONNECT:\n\t\t\t\ttry_reconnect();",
+                      tabs)
+        # A background start-up cannot pair: it has no screen for a code.
+        self.assertIn("login.no_pair = true;",
+                      body("static void reconnect_start(void)\n{"))
+        self.assertIn('strstr(detail, "invalid_grant") && !login.no_pair', app)
+        # The new session replaces the offline one only between two
+        # preparations of the player, and under the session lock.
+        poll = body("static reconnect_result reconnect_poll(spotify_session "
+                    "*session)\n{")
+        self.assertIn("prep.thread || player_preparing()", poll)
+        self.assertLess(poll.index("LightLock_Lock(&session_lock);"),
+                        poll.index("*session = reconnect_session;"))
+        self.assertIn("secure_clear(&reconnect_session", poll)
+        # Leaving the tabs cuts it short first.
+        stop = body("static void stop_tabs(void)")
+        self.assertLess(stop.index("reconnect_stop();"),
+                        stop.index("player_stop();"))
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
@@ -962,7 +1304,7 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("static void format_time(", player)
         self.assertNotIn("static float measure(", player)
         artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
-        self.assertIn("ui_art(box,", artwork)
+        self.assertIn("ui_art_or(box,", artwork)
         theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
         self.assertIn("ART_BIG = 216", theme)
 
@@ -1209,7 +1551,15 @@ class BuildTests(unittest.TestCase):
                      app.index("static void prepare_reap(")]
         self.assertIn("open_playback_ap(job->session", worker)
         self.assertIn("track_stream_begin_cached(", worker)
-        self.assertEqual(app.count("open_playback_ap("), 2)  # def + worker
+        # The definition, the preparation and the downloads' callback, which
+        # only their worker calls (downloads.h, downloads_ap_fn).
+        self.assertEqual(app.count("open_playback_ap("), 3)
+        callback = app[app.index("static ap_session *downloads_open_ap("):]
+        self.assertIn("open_playback_ap(downloads_session",
+                      callback[:callback.index("\n}\n")])
+        # The definition, and the engine's start: with the tabs, and when
+        # they come back online.
+        self.assertEqual(app.count("downloads_open_ap"), 3)
         self.assertEqual(app.count("track_stream_begin_cached("), 1)
         self.assertIn("threadCreate(prepare_worker, &prep, PREPARE_STACK,", app)
         pump = app[app.index("static void player_pump(void)"):
@@ -1230,11 +1580,12 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("download_stop_join", app)
         self.assertIn("if (dl_abandoned && dl.done)\n\t\tdownload_reap();",
                       pump)
-        # The next track only prepares once the old download is gone.
+        # The next track only prepares once the old download is gone, and
+        # the thumbnails' and the downloads' requests are over.
         start = app[app.index("static void player_start_prepare(void)"):
                     app.index("static void player_begin_audio(void)")]
-        self.assertIn("if (prep.thread || dl.thread || thumbs_stopping())",
-                      start)
+        self.assertIn("if (prep.thread || dl.thread || thumbs_stopping() || "
+                      "downloads_busy())", start)
         stop = app[app.index("static void player_stop(void)"):
                    app.index("static bool player_preparing(void)")]
         self.assertIn("prepare_wait();", stop)
@@ -1310,7 +1661,8 @@ class BuildTests(unittest.TestCase):
         self.assertIn("down & KEY_SELECT", login)
         self.assertIn("if (action == LOGIN_ACTION_LANGUAGE)\n"
                       "\t\t\tswitch_language();", app)
-        self.assertIn('cfg_set("language", lang_code(lang_get()))', app)
+        # Saved in the background: rewriting the config stalls a frame.
+        self.assertIn('cfg_set_async("language", lang_code(lang_get()))', app)
         for spanish in ("Reproduccion local", "Resultados de Spotify",
                         "Sesion Spotify lista", "emparejamiento"):
             self.assertNotIn(spanish, app)

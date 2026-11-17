@@ -17,6 +17,8 @@
 /* Shows `tab` as the active one, with no press in progress. */
 void tabbar_reset(app_tab tab);
 void tabbar_set_active(app_tab tab);
+/* Without a connection the Search tab carries a still mark. */
+void tabbar_set_offline(bool on);
 app_tab tabbar_active(void);
 
 /* Once per frame, after hidScanInput. Returns the tab to switch to, or -1.

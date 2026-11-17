@@ -1,6 +1,7 @@
 #include "top_now.h"
 
 #include "draw.h"
+#include "icons.h"
 #include "lang.h"
 #include "now_layout.h"
 #include "player_logic.h"
@@ -216,7 +217,7 @@ static void header_text(const C2D_Text *text, int x, int cy, float scale,
 
 void top_now_draw_header(artwork_state *art, bool centred,
                          const C2D_Text *title, const C2D_Text *const *lines,
-                         int count, const int *rolls)
+                         int count, const int *rolls, int icon)
 {
 	int title_h = ui_line_height(TXT_TITULO);
 	int body_h = ui_line_height(TXT_CUERPO);
@@ -224,7 +225,7 @@ void top_now_draw_header(artwork_state *art, bool centred,
 		count = NOW_LINES;
 	int dy = centred ? now_detail_text_dy(title_h, body_h, count) : 0;
 	if (centred)
-		artwork_draw_in(art, now_detail_art_rect(), ART_SHADOW_OFF);
+		artwork_draw_or(art, now_detail_art_rect(), ART_SHADOW_OFF, icon);
 	else
 		artwork_draw_in(art, now_art_rect(), ART_SHADOW_OFF);
 	int x = now_text_x();
@@ -242,7 +243,7 @@ void top_now_draw_card(artwork_state *art)
 
 	const C2D_Text *lines[] = { &artist_text, &album_text };
 	top_now_draw_header(art, false, &title_text, lines, has_album ? 2 : 1,
-	                    NULL);
+	                    NULL, ICON_NOTE);
 	draw_bar(&look);
 
 	drawn = look;

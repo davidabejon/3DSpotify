@@ -126,7 +126,8 @@ To add or change a string:
    order in every language.
 4. `STR_KEYS_` entries are button hints and must fit on one line of the
    40-column bottom-screen console.
-5. The console font is ASCII only: write Spanish text without accents or `ñ`.
+5. Write Spanish text with its accents and `ñ` (UTF-8): the app draws it with
+   the system font.
 
 If you don't speak one of the languages, add your best attempt and say so in the
 pull request so someone can review it.
@@ -176,6 +177,15 @@ Reviews may ask for changes; push them as new commits to the same branch.
 - 3DSpotify requires a Spotify Premium account. Contributions that bypass
   Premium checks, remove DRM, save decrypted audio to the SD card or otherwise
   enable piracy will not be accepted.
+- Downloads follow the same rule. Keep these invariants when you touch them:
+  - the audio stays encrypted on the SD card, under `sdmc:/3ds/3DSpotify/downloads/`;
+  - audio keys are stored only wrapped with the console-bound key, never in
+    clear, and no feature exports or decrypts downloaded files to the card;
+  - the download engine never runs while the player prepares a track or
+    downloads the one that plays;
+  - the Home tile's `3dspotify:downloads` pseudo-URI never reaches the network.
+- Never log or display secrets (tokens, keys, signed URLs). The username is only
+  shown in Settings and stored in the config, never logged.
 - Do not add Spotify logos or other trademarked assets.
 - Code in `source/platform3ds/`, `source/probe_*/` and `source/build.py` is
   derived from [SpotiBacan](https://github.com/ohquebacan/spotibacan). Keep the

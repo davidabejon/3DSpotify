@@ -137,10 +137,10 @@ pestañas, cada una con su icono:
 
 | Icono | Pestaña | Qué contiene |
 |---|---|---|
-| Casa | **Inicio** | Tus playlists recientes y un atajo a la búsqueda. |
+| Casa | **Inicio** | Tus playlists recientes, tus descargas y un atajo a la búsqueda. |
 | Lupa | **Búsqueda** | Los últimos resultados, la búsqueda en curso o su error. |
 | Ecualizador | **Reproducción** | La canción que suena, con sus controles. |
-| Engranaje | **Ajustes** | Idioma, volver a conectar y emparejar otra cuenta. |
+| Engranaje | **Ajustes** | Idioma, descargas, volver a conectar y emparejar otra cuenta. |
 
 - Toca una pestaña para abrirla (se activa al levantar el lápiz dentro de ella).
 - **L/R** pasan a la pestaña anterior o siguiente desde cualquier pantalla; **ZL/ZR** (solo
@@ -177,6 +177,7 @@ de canciones que este cliente pueda reproducir.
 
 - La primera tesela es siempre **Canciones que te gustan** (un corazón donde iría la
   portada), de la más reciente a la más antigua, cargadas de 50 en 50 como una playlist.
+- La segunda tesela es siempre **Descargas** ([Descargas](#descargas)).
 - Con una tesela resaltada, la pantalla superior muestra una vista previa: portada,
   nombre, número de canciones y lo último que sonó en ella. La portada se carga cuando el
   resaltado se queda quieto un momento.
@@ -236,6 +237,11 @@ La canción elegida se reproduce localmente y sigue sonando aunque cambies de pe
 - La **pantalla superior** muestra la carátula en grande (con el marcador de la nota hasta que llega).
 - La **pantalla inferior** muestra el título, el artista, el álbum y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
 - Toca el **título**, el **artista** o el **álbum** para abrir su detalle ([Detalles](#detalles)). Funcionan mientras la pista carga, suena o ha terminado; al pulsarlos, el texto pasa a color lima y se subraya.
+- El icono a la derecha del artista y el álbum dice si la canción está en la SD: una flecha
+  (sin descargar), un reloj (en cola), su porcentaje (descargándose) o un check
+  (descargada). Toca la flecha, o pulsa
+  <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>,
+  para descargarla.
 
 **Controles de reproducción:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda; con la pista terminada, la vuelve a empezar; con un error, reintenta
@@ -263,10 +269,17 @@ La cola no envuelve en sus extremos: en ellos, el botón anterior o siguiente ap
 
 Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su álbum:
 
-- **Canción:** botones **Reproducir**, **Artista: …** y **Album: …** (arriba/abajo y
-  **A**, o tocando). Reproducir empieza la canción con la lista de la que salió como
-  cola; si es una canción de los resultados de búsqueda, o de la radio que suena, una
-  radio a partir de ella.
+- **Canción:** botones **Reproducir**, **Descargar**, **Artista: …** y **Album: …**
+  (arriba/abajo y **A**, o tocando). Reproducir empieza la canción con la lista de la que
+  salió como cola; si es una canción de los resultados de búsqueda, o de la radio que
+  suena, una radio a partir de ella. El botón de descarga dice dónde está la canción:
+  **Descargar**, **En cola**, **Descargando 42%**, **Reintentar descarga**, **Borrar
+  descarga** (pulsa **A** dos veces) o **Descargado** si llegó con un álbum o una playlist
+  (se borra con ellos).
+- **Álbum y playlist:** encima de la lista, el botón **Descargar álbum** / **Descargar
+  playlist** los descarga enteros; se llega subiendo desde la primera canción. Después
+  muestra el progreso («Descargando 8 de 12») y **Descargado**, que abre la copia
+  descargada.
 - **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares, con
   miniaturas. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
   siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
@@ -289,13 +302,63 @@ Los detalles se abren desde **Inicio** (una tesela de playlist), desde **Búsque
 (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> sobre un resultado) y desde **Reproducción** (tocando el título, el artista o el
 álbum). Una búsqueda nueva cierra los detalles abiertos en **Búsqueda**.
 
+### Descargas
+
+Las canciones, álbumes y playlists (también Canciones que te gustan) se pueden guardar en
+la SD y escuchar sin conexión.
+
+- **Descargar:** el botón **Descargar** en el detalle de una canción, un álbum o una
+  playlist, o
+  <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>
+  en la pestaña **Reproducción**. Las descargas van en segundo plano, una canción cada vez,
+  mientras sigues escuchando; esperan mientras el reproductor carga una pista.
+- **Ritmo:** Spotify limita cuántas claves de audio puede pedir una cuenta: unas 15
+  seguidas y luego una cada 30 segundos. Por eso una playlist grande tarda un rato; la cola
+  espera y sigue sola, y siempre deja claves para la música que pones.
+- **Reproducir:** una canción descargada suena desde la SD la elijas donde la elijas, sin
+  usar la red para su audio.
+- **Inicio → Descargas:** tus álbumes y playlists descargados y después las canciones
+  sueltas, lo más reciente primero. Abre un álbum o una playlist para reproducirlo; las
+  canciones que aún no están descargadas salen atenuadas y se saltan. Su botón **Borrar
+  descarga** (pulsa **A** dos veces) lo borra.
+- **Ajustes → Descargas** (el gestor): todas las descargas por estado (en curso, en cola,
+  con error, descargadas), con el espacio ocupado y el libre en la SD.
+  - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span>
+    cancela una descarga en cola o en curso, reintenta una con error o abre una descargada.
+  - <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>
+    borra la fila resaltada.
+  - Cancelar y borrar piden una segunda pulsación del mismo botón.
+  - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+    pausa o reanuda toda la cola.
+- **Dónde están:** en `SD:/3ds/3DSpotify/downloads/`. El audio sigue cifrado tal como lo
+  envía Spotify, y sus claves se guardan cifradas con una clave ligada a esta consola: los
+  archivos no se pueden reproducir en otra consola ni con otro programa, y copiarlos a otro
+  sitio no sirve de nada. Son de la cuenta que los descargó; tras emparejar otra cuenta no
+  se muestran.
+
+**Sin conexión:** con una credencial guardada, la app arranca sin conexión: al momento si
+el Wi-Fi está apagado, o cuando no llega a Spotify. También pasa sola a sin conexión si el
+Wi-Fi se va mientras la usas, sin cortar lo que suena desde la SD.
+
+- Junto al icono de la pestaña **Búsqueda** aparece un icono de Wi-Fi tachado.
+- **Inicio** muestra solo la tesela **Descargas**, y **Búsqueda** avisa de que hace falta
+  conexión.
+- Solo suena lo descargado: al pasar a una canción que no está en la SD, salta a la
+  siguiente descargada. Los enlaces de artista y álbum y las descargas nuevas no están
+  disponibles; las descargas en cola esperan a la conexión.
+- **Reintentar conexión** (Inicio), **Reintentar** (Búsqueda) o **Volver a conectar**
+  (Ajustes) conectan sin salir de la app, y la música sigue sonando. Si Spotify rechaza la
+  cuenta, el inicio de sesión empieza de nuevo como al abrir la app.
+
 ### Ajustes
 
 - **Idioma** — muestra el idioma actual y lo cambia (también con **SELECT** desde cualquier pestaña).
+- **Descargas** — abre el gestor de descargas ([Descargas](#descargas)); dice cuántas
+  esperan.
 - **Volver a conectar** — vuelve a abrir la sesión con la credencial guardada.
 - **Emparejar otra cuenta** — empieza el emparejamiento con un código nuevo.
 
-Elige con arriba/abajo y **A**, o tocando el botón. Volver a conectar y emparejar detienen la reproducción. **B** vuelve a la pestaña Inicio.
+Elige con arriba/abajo y **A**, o tocando el botón. Volver a conectar con conexión y emparejar detienen la reproducción. **B** vuelve a la pestaña Inicio.
 
 ## Probes
 

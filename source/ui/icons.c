@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-#define ATLAS_SIZE 64
+#define ATLAS_SIZE 128
 #define PER_ROW (ATLAS_SIZE / ICON_MASK_SIZE)
 
 _Static_assert(ICON_MASK_SIZE == ICON_S, "icons are 16 px (STYLES.md 5.10)");

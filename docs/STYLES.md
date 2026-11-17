@@ -227,6 +227,15 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
   (1, 2, 3…, continua entre discos) en `t_meta` · `texto_2`, centrada. También en la fila en
   foco: el cuadrado sigue siendo `capa_alta` y `tinta` sobre él apenas se leería. Sin
   descarga de miniaturas.
+- Variante de colección (Descargas, §7.14): un álbum o una playlist entre canciones. Con
+  portada, en su esquina inferior izquierda una insignia: el icono de disco o de líneas
+  (16 px, `texto` sobre `tinta`); sin portada, la nota de siempre y sin insignia. La segunda
+  línea dice «Álbum · Canciones: 12» o «Playlist · 8 de 40», y a la derecha va un chevron
+  `>` en lugar de la duración: A la abre, no la reproduce. Se distingue de una canción sin
+  depender del color, y los estados de foco no cambian.
+- Variante sin descargar (colección descargada, §7.14): título, artista y número en
+  `texto_off`, y a la derecha, en lugar de la duración, el icono de su estado (reloj en
+  cola, error si falló). No toma el foco ni responde al toque.
 
 ### 5.4 Barra de progreso
 
@@ -301,7 +310,9 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
   `texto`.
 - Conjunto: reproducir, pausa, anterior, siguiente, volumen, buscar, cuenta, Wi-Fi, error,
   aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador), ajustes
-  (engranaje) y aleatorio (dos flechas cruzadas).
+  (engranaje), aleatorio (dos flechas cruzadas) y, para las descargas, descargar (flecha a
+  una bandeja), descargada (check), en cola (reloj), álbum (disco), playlist (líneas) y
+  sin conexión (Wi-Fi tachado).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 - El logotipo no es un icono: se carga en tiempo de ejecución desde `romfs:/gfx/logo.png`
   (directorio `romfs/` del repositorio, empaquetado en el `.3dsx` y el `.cia`). PNG RGBA de
@@ -421,7 +432,8 @@ La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 
 - Alto 32 px: el mínimo táctil (§4.4), así que cada tesela es un objetivo válido.
 - Portada 24×24 (`TILE_COVER`) a 4 px de los bordes izquierdo, superior e inferior, con
   contorno 1 px `tinta`; sin imagen, cuadrado `capa_alta` con el icono de nota centrado,
-  como la fila. El layout no cambia al llegar la imagen.
+  como la fila (corazón para «Canciones que te gustan», flecha para «Descargas»). El layout
+  no cambia al llegar la imagen.
 - Nombre en `t_cuerpo` · `texto`, una línea, recortado con `...` (§3.3), a `e2` de la
   portada y con `e2` de margen derecho. Sin nombre: «(sin titulo)».
 - Estados idénticos a la fila (§5.3, §6.3): reposo `capa` con contorno; en foco `clorofila`
@@ -699,7 +711,7 @@ Error:
  ┌────────────────────────────────┐        ┌──────────────────────────┐
  │ ┌──────────┐                   │        │ [⌂] [⌕] [▓▮▮▮▓] [⚙]      │ 0..32
  │ │          │  Título canción   │        │ Título canción   3 de 24 │ 36..68   enlace
- │ │ carátula │  Artista          │        │ Artista     │ Álbum      │ 72..104  2 enlaces
+ │ │ carátula │  Artista          │        │ Artista   │ Álbum    [↓] │ 72..104  2 enlaces + icono
  │ │ 160×160  │  Álbum            │        │   [◀◀]   [ ▶ ]   [▶▶]    │ 108..156
  │ │          │                   │        │ 1:24               3:42  │ 163..177
  │ └──────────┘                   │        │ ███████▌░░░░░░░░░░░░░░░░ │ 180..188
@@ -719,7 +731,8 @@ Error:
   centrada, a `e3` arriba y abajo.
 - Inferior, bajo la barra de pestañas: título `t_cabeza` · `texto` con la posición en la cola
   («3 de 24») en `t_meta` · `texto_2` a la derecha; debajo, artista y álbum en `t_cuerpo` ·
-  `texto_2`, cada uno en su mitad (150 px, separadas 4 px) y recortado a ella; botón central
+  `texto_2`, cada uno en su mitad (132 px, separadas 4 px) y recortado a ella, y a su
+  derecha, a 4 px, el icono de descarga en un cuadrado de 32 px; botón central
   primario 48×48 y anterior y siguiente secundarios 40×40, centrados a 16 px; tiempo
   transcurrido y duración en `t_meta` · `texto_2`; barras de progreso y volumen debajo. La
   tabla de píxeles está en `player_logic.h`.
@@ -727,6 +740,12 @@ Error:
   (§7.10, con la cola como lista), del artista o del álbum (§7.11) en la pila de
   «Reproducción». Solo mientras la pista carga, suena o ha terminado; sin URI de artista o de
   álbum, ese enlace no responde. «3 de 24» no forma parte del enlace.
+- El icono de descarga dice dónde está la pista: flecha (no descargada, o falló), reloj (en
+  cola), su porcentaje en `t_meta` (descargándose, tomado con el reloj: una vez por segundo)
+  o check en `lima` (en la SD). Es estático: nada se anima en el reproductor (§9). Tocarlo
+  con flecha, o pulsar X, la descarga; una burbuja (§5.9) dice lo que pasó. La barra añade
+  `[X] Descargar` mientras la flecha se ve. Borrar una descarga no se hace aquí: se hace en
+  el detalle de canción (§7.10).
 - Los iconos de los controles son de 16 px mientras no exista el juego de 24 px (§5.10).
 - Anterior y siguiente se deshabilitan (§6.1) en los extremos de la cola.
 - La cola depende de dónde se eligió la canción:
@@ -792,6 +811,9 @@ Error:
 - «Mostrar más» es la misma pestaña en otro modo, no un nivel de detalle: 5 filas de
   teselas entre las barras, con indicador de desplazamiento. B vuelve a la rejilla de 6 con
   el foco en «Mostrar más».
+- La segunda tesela es siempre «Descargas» (sin conexión, la única: §7.15), con el icono
+  de descarga donde iría la portada: no viene del feed, así que la primera fila es `[Canciones que te gustan]
+  [Descargas]`. Su vista previa dice cuántas canciones y colecciones hay en la SD.
 - La primera tesela es siempre «Canciones que te gustan», con el icono del corazón
   (§5.10) donde iría la portada. Se abre como una playlist más, por páginas (§7.11); la
   lista entera llega en una petición (`context-resolve`, de la más reciente a la más
@@ -823,17 +845,22 @@ Error:
  ┌──────────────────────────┐
  │ [⌂] [⌕] [▮▮▮] [▓⚙▓]      │ 32 px
  │                          │
- │ [ (o) Idioma: Español  ] │ 48..80
- │ [  Volver a conectar   ] │ 96..128
- │ [Emparejar otra cuenta ] │ 144..176
+ │ [ (o) Idioma: Español  ] │ 44..76
+ │ [ (↓) Descargas (3)    ] │ 88..120
+ │ [  Volver a conectar   ] │ 132..164
+ │ [Emparejar otra cuenta ] │ 176..208
  │──────────────────────────│
  │ [A] Elegir  [B] Volver   │
  └──────────────────────────┘
 ```
 
-- Tres botones secundarios a todo el ancho útil, 32 px de alto y 16 px de separación, el
-  primero a 16 px de la barra de pestañas. Foco con la cruceta (§6.2) y toque (§6.4).
+- Botones secundarios a todo el ancho útil, 32 px de alto y `e3` (12 px) de separación, el
+  primero a `e3` de la barra de pestañas: caben cuatro con su anillo de foco y su sombra
+  separados ≥ 4 px (§4.4) y sin tocar la barra de botones. Foco con la cruceta (§6.2) y
+  toque (§6.4).
 - Idioma: el botón muestra el idioma actual y lo cambia al pulsarlo, sin burbuja.
+- Descargas: abre el gestor (§7.13). Mientras algo espera (canciones en cola o
+  descargándose, y álbumes o playlists por preparar) lo cuenta: «Descargas (3 en cola)».
 - Volver a conectar y emparejar detienen la reproducción y vuelven a la pantalla de sesión.
 - Superior: el logotipo en su sitio, oscurecido junto con el fondo por el velo de §2.7, y
   encima, con márgenes de 16 px (`about_layout.h`):
@@ -890,15 +917,29 @@ Error:
  ┌──────────────────────────┐
  │ [⌂] [▓⌕▓] [▮▮▮] [⚙]      │ 32 px
  │                          │
- │ [▶  Reproducir         ] │ 48..80   primario
- │ [   Artista: Nombre    ] │ 96..128  secundario
- │ [   Album: Nombre      ] │ 144..176 secundario
+ │ [▶  Reproducir         ] │ 44..76   primario
+ │ [↓  Descargar          ] │ 88..120  secundario
+ │ [   Artista: Nombre    ] │ 132..164 secundario
+ │ [   Album: Nombre      ] │ 176..208 secundario
  │──────────────────────────│
  │ [A] Elegir  [B] Volver   │
  └──────────────────────────┘
 ```
 
 - Misma geometría que Ajustes (§7.8). El foco empieza en «Reproducir».
+- El botón de descarga dice dónde está la pista, con su icono (§5.10):
+
+  | Estado | Texto | A |
+  |--------|-------|---|
+  | no descargada | «Descargar» | la pone en cola |
+  | en cola | «En cola» | deshabilitado (§6.1) |
+  | descargando | «Descargando 42%» (una vez por segundo) | deshabilitado |
+  | falló | «Reintentar descarga» | la vuelve a poner en cola |
+  | en la SD | «Borrar descarga» | burbuja «Pulsa A otra vez para borrar»; otra A en 2 s la borra |
+  | en la SD por un álbum o playlist | «Descargado» | deshabilitado: se quita con ellos |
+
+  Una burbuja (§5.9) dice lo que pasó («Añadida a descargas», o por qué no). Si el botón se
+  deshabilita con el foco encima (al ponerla en cola), el foco vuelve a «Reproducir».
 - «Reproducir» reproduce la canción con la lista de la que salió como cola. Si salió de
   una canción suelta (un resultado de búsqueda, o la radio que suena), empieza una radio a
   partir de ella (§7.5).
@@ -908,13 +949,36 @@ Error:
 
 ### 7.11 Detalle de álbum, de artista y de playlist
 
-- Lista de 4 filas como resultados (§7.4), con su arrastre (§6.9) e indicador (§5.11). Álbum:
+- Lista como resultados (§7.4), con su arrastre (§6.9) e indicador (§5.11). Álbum:
   filas con número (§5.3), en orden de disco; de más de 24 pistas se muestran las 24
   primeras. Artista: sus canciones populares, con miniatura. Playlist: sus pistas con
   miniatura (cada una es de un álbum distinto), por páginas de 50: la siguiente se pide sola
   cuando la lista muestra una fila a 8 o menos de la última cargada, con la burbuja de
   espera «Cargando...» (§5.9) mientras llega; la lista sigue respondiendo. Hasta 500 pistas.
   Los episodios y archivos locales se omiten.
+- Artista: 4 filas, como resultados. Álbum y playlist: un botón secundario a todo el ancho
+  a `e1` de la barra de pestañas (36..68) que los descarga enteros, y debajo 3 filas
+  (76..207); las filas arrastradas pasan por debajo del botón, como por debajo de las barras:
+
+```
+ INFERIOR
+ ┌──────────────────────────┐
+ │ [⌂] [▓⌕▓] [▮▮▮] [⚙]      │ 0..32
+ │ [↓  Descargar álbum    ] │ 36..68
+ │ ┌──┐ Canción             │ 76..117
+ │ ┌──┐ Canción             │ 121..162
+ │ ┌──┐ Canción             │ 166..207
+ │──────────────────────────│
+ │ [A] Reproducir ... [B]   │ 216..240
+ └──────────────────────────┘
+```
+
+  El botón dice «Descargar álbum» o «Descargar playlist» (también «Canciones que te
+  gustan»), «Preparando la descarga...» mientras se resuelve en pistas, «Descargando 8 de
+  12» y «Descargado»; solo el primero responde (§6.1). El foco empieza en la primera fila;
+  arriba desde ella llega al botón (si responde) y abajo vuelve a la lista, donde estaba.
+  Con el foco en el botón ninguna fila lo muestra, A descarga y la barra es
+  `[A] Elegir [Y] ... [B] Volver`. Tocar una fila devuelve el foco a la lista sin reproducir.
 - A, o tocar la fila en foco, reproduce desde ella con la lista como cola; X abre el detalle
   de canción. Barra: `[A] Reproducir [X] Detalle [Y] Aleatorio [B] Volver`.
 - Y alterna el aleatorio. Es un ajuste de la app, el mismo para todas las listas, y se
@@ -924,7 +988,8 @@ Error:
 - Con aleatorio, la pista elegida suena primero y el resto de la lista le sigue en orden
   aleatorio; sin él, la lista suena en su orden desde la elegida. Si lo que suena es una
   lista, cambiarlo la reordena al momento sin cortar la pista.
-- Cargando: filas esqueleto y burbuja de espera «Cargando...» (§5.9). B cancela y cierra.
+- Cargando: filas esqueleto, donde irán (3 bajo el sitio del botón en álbum y playlist), y
+  burbuja de espera «Cargando...» (§5.9). B cancela y cierra.
 - Error: aviso (§5.8) con el detalle y botón primario «Reintentar»; A reintenta.
 - Sin pistas: mensaje centrado «No hay canciones».
 
@@ -932,7 +997,8 @@ Error:
 
 - Carátula, portada o retrato a 160×160 con contorno y sombra dura de 3 px, como la ficha de
   §7.5, pero sin tiempos ni barra: la carátula va centrada en la altura (y 40) y el bloque de
-  textos, centrado junto a ella.
+  textos, centrado junto a ella. Sin imagen, o mientras llega, el icono de nota (la flecha
+  para «Descargas»).
 - Título en `t_titulo` · `texto` y hasta 4 líneas en `t_cuerpo` · `texto_2`:
   - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
     año.
@@ -946,6 +1012,118 @@ Error:
 - La imagen es la del detalle, nunca la de la pista que suena.
 
 ---
+
+### 7.13 Gestor de descargas
+
+Ajustes en otro modo, como «Mostrar más» en Inicio: no es un nivel de detalle. B vuelve a los
+botones con el foco en «Descargas».
+
+```
+ INFERIOR
+ ┌──────────────────────────┐
+ │ [⌂] [⌕] [▮▮▮] [▓⚙▓]      │ 0..32
+ │ EN CURSO                 │ cabecera, 24 px, t_meta · texto_2
+ │ [▢ Canción         42% ] │ fila §5.3; el artista comparte línea
+ │ [  Artista  ▬▬▬▬░░░░░  ] │   con una barra fina de 2 px
+ │ EN COLA (3)              │
+ │ [▢ Álbum             ◷ ] │ «Descargando 8 de 12»
+ │ CON ERROR (1)            │
+ │ [▢ Canción           ! ] │ el motivo en la segunda línea
+ │ DESCARGADAS (48)         │ lo más reciente primero
+ │ [▢ Canción           ✓ ] │
+ │──────────────────────────│
+ │ [A] Cancelar [X] Borrar  │ y [Y] Pausar [B] Volver
+ └──────────────────────────┘
+```
+
+- Una sola lista que se desplaza por píxeles, con arrastre (§6.9) e indicador (§5.11). Las
+  cabeceras no toman el foco; la primera fila de una sección trae su cabecera a la vista.
+  Una sección vacía no sale.
+- Secciones:
+  - En curso: la canción que se descarga, con su porcentaje (leído una vez por segundo) y
+    una barra fina como la del volumen (§5.5): 6 px, contorno `tinta`, `capa_alta` y
+    relleno `clorofila`, que se ve igual en la fila en foco.
+  - En cola: los álbumes y playlists que aún se están preparando («Preparando la
+    descarga...»), los que tienen canciones esperando («Descargando 8 de 12»), y después
+    las canciones sueltas, en el orden de la cola. Las de un álbum o playlist en cola no
+    salen sueltas: las representa su fila.
+  - Con error: todas las que fallaron, con el motivo.
+  - Descargadas: álbumes y playlists sin nada en cola («Canciones: 12»; también los que se
+    quedaron cortos por canciones con error), y las canciones en la SD que ninguno de ellos
+    contiene, de la más reciente a la más antigua.
+- Miniatura: la portada de la SD o de la red (§5.3); sin ella, la nota (el corazón para
+  Canciones que te gustan). A la derecha, el estado: reloj, error o
+  check, en el color secundario de la fila.
+- A: en curso o en cola, cancelar; con error, reintentar; descargada, abrir su detalle en
+  «Inicio» (cambia a esa pestaña). X: borrar cualquier fila (en cola, cancelarla). Cancelar
+  y borrar piden una segunda pulsación del mismo botón sobre la misma fila mientras la
+  burbuja «Pulsa A otra vez para cancelar» / «Pulsa X otra vez para borrar» se ve (2 s).
+  Y: pausar o reanudar toda la cola; la etiqueta dice lo que hará y una burbuja confirma.
+- Táctil: tocar una fila la enfoca; tocar la enfocada hace lo de A.
+- Vacío: mensaje centrado «Todavía no hay descargas».
+- Superior: panel `capa` a `e4` de los bordes con «Descargas» en `t_titulo` y, en
+  `t_cuerpo` · `texto`, «Canciones: 48 · Álbumes: 3 · Playlists: 2», «Ocupado: 312 MB»
+  y «Libre en la SD: 5,1 GB»; debajo, en `t_cabeza` · `texto_2`, el estado de la cola:
+  «Descargando», «Nada pendiente», «En pausa», «La tarjeta SD está llena» o «Sin
+  conexión». El espacio libre se lee al abrir y cada 10 s, no en cada frame.
+- Solo pide frame al pulsar, al cambiar las descargas y con el porcentaje (§9).
+
+### 7.14 Descargas en Inicio
+
+- La tesela «Descargas» (§7.7) abre un nivel de detalle en la pila de «Inicio» que sale del
+  índice de descargas, sin red: lista como la de §7.11 con, primero, los álbumes y
+  playlists descargados (completos o en curso, lo más reciente primero) con la variante de
+  colección (§5.3), y después las canciones descargadas sueltas, lo más reciente primero.
+- A en una canción la reproduce con las canciones sueltas como cola (respeta el aleatorio);
+  A en una colección la abre. X en una canción, su detalle (con «Borrar descarga»); en una
+  colección no hace nada. Barra: `[A] Reproducir` o `[A] Abrir` según la fila,
+  `[X] Detalle`, `[Y] Aleatorio`, `[B] Volver`.
+- Colección descargada: como el detalle de álbum o playlist (§7.11, filas con número para
+  un álbum y con miniatura para una playlist), con todas sus pistas; las que aún no están en
+  la SD van con la variante sin descargar (§5.3) y la cruceta las salta. Reproducir pone en
+  la cola solo las que están en la SD. Encima, el botón fijo de §7.11 dice «Borrar descarga»
+  y pide una segunda A («Pulsa A otra vez para borrar»); al borrar se vuelve al nivel
+  anterior. «Descargado» en el detalle de un álbum o playlist abre esta vista.
+- Las dos vistas se actualizan solas cuando cambian las descargas.
+- Sin nada descargado: «Todavía no hay nada descargado».
+- Superior (§7.12): «Descargas» con «Canciones: N · Álbumes y playlists: M»; una colección,
+  su portada (desde la SD), «Álbum - artista» y «Canciones: 12 · 48 MB».
+
+### 7.15 Sin conexión
+
+- Con una credencial guardada, la app entra en las pestañas aunque no llegue a Spotify, y
+  funciona con lo descargado:
+  - sin Wi-Fi al arrancar, al instante (sin esperar a ningún timeout);
+  - con Wi-Fi pero sin respuesta, cuando el arranque falla por la red (no encontrar el
+    punto de acceso o el servidor, o no recibir respuesta al renovar la credencial o al
+    abrir la biblioteca). Si Spotify contesta que no (credencial revocada, acceso
+    rechazado), se va a la pantalla de error o a emparejar, como siempre.
+  Sin credencial guardada, se empareja como siempre.
+- Indicador fijo: el icono de Wi-Fi tachado junto a la lupa de la pestaña «Búsqueda», en
+  el color del icono de la pestaña. No se anima (§9).
+- Inicio: solo la tesela «Descargas», bajo la etiqueta «Sin conexión: tus descargas», y en
+  el sitio de «Mostrar más» el botón «Reintentar conexión».
+- Búsqueda: el aviso de error con «Para buscar hace falta conexión...» y «Reintentar», que
+  reintenta la conexión.
+- Detalle de canción: «Artista», «Álbum» y «Descargar» deshabilitados (§6.1); «Borrar
+  descarga» sigue. Reproductor: los enlaces de artista y álbum no responden y X no
+  descarga; el icono de estado sigue.
+- Reproducción: solo lo descargado. Al pasar a una pista que no está en la SD, salta a la
+  siguiente descargada en la dirección en que iba la cola; si no queda ninguna, el
+  reproductor muestra «Sin conexión, y nada de esta cola está descargado.».
+- «Reintentar conexión» (Inicio, Búsqueda) y «Volver a conectar» (Ajustes) conectan sin
+  salir de las pestañas, y lo que suena sigue sonando:
+  - sin Wi-Fi, al instante, la burbuja «Sigue sin conexión» (icono de Wi-Fi tachado);
+  - con Wi-Fi, «Conectando...» y el arranque en segundo plano. Si llega, «Conectado de
+    nuevo»: el indicador se va, Inicio carga sus playlists y todo vuelve a funcionar, sin
+    cortar la canción. Si falla por la red, «Sigue sin conexión». Si Spotify dice que no a
+    la cuenta, la sesión arranca de nuevo como al abrir la app (pantalla de error o
+    emparejar), y ahí sí se para la música.
+  Las burbujas salen en la vista que esté en pantalla (Inicio, Reproducción o un detalle).
+- Si el Wi-Fi se va con la app ya conectada (se mira una vez por segundo), las pestañas
+  pasan a verse y comportarse como tras un arranque sin conexión, con la burbuja «Se perdió
+  la conexión» y sin parar lo que suena desde la SD. La descarga en curso vuelve a la cola.
+- Las descargas en cola esperan: el motor no descarga sin conexión.
 
 ## 8. Movimiento
 
@@ -1005,6 +1183,16 @@ Error:
     descargado se conserva.
   - No pararlo al salir de la pestaña «Búsqueda»: esperar a su petición en curso bloquearía
     el hilo principal, y con él el audio. Solo pide las filas visibles y las 4 siguientes.
+- Motor de descargas:
+  - Un solo hilo por debajo del decodificador, una pista (o una colección por resolver) a
+    la vez. Las escrituras en la SD y el índice van en hilos de fondo, nunca en el bucle
+    principal.
+  - El reproductor manda: mientras prepara una pista o descarga la que suena, el motor no
+    empieza nada, y la pista que estuviera bajando se para y vuelve a la cola.
+  - Las claves de audio salen de un cupo que Spotify limita por cuenta y consola (unas 15
+    seguidas, luego una cada 30 s). El motor deja siempre una reserva para el reproductor,
+    y un rechazo por cupo pausa toda la cola un rato en vez de marcar la pista con error.
+  - Las vistas leen el porcentaje como mucho una vez por segundo.
 
 ---
 

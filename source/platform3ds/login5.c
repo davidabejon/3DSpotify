@@ -166,7 +166,7 @@ int login5_from_credentials(const char *username,
 		http_reply r;
 		if (http_post_proto(LOGIN5_HOST, LOGIN5_PATH, req.p, req.len, &r) != 0) {
 			snprintf(err, errlen, "login5: %s", r.err);
-			return -1;
+			return LOGIN5_ERR_TRANSPORT;
 		}
 		if (r.status != 200) {
 			snprintf(err, errlen, "login5 returned HTTP %d", r.status);

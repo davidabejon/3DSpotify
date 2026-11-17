@@ -5,8 +5,10 @@
  * Bottom screen, 320 x 240:
  *   tabs       0..32   the tab bar (tabs_logic.h)
  *   track     36..68   link zone: the title, "3/24" on the right
- *   artist    72..104  link zone, x 8..158  } 150 px each,
- *   album     72..104  link zone, x 162..312} SP_1 apart
+ *   artist    72..104  link zone, x 8..140  } 132 px each,
+ *   album     72..104  link zone, x 144..276} SP_1 apart
+ *   download  72..104  x 280..312: where the track is in the downloads,
+ *                      a TOUCH_MIN square, SP_1 right of the album
  *   controls 108..156  previous 40x40, play/pause 48x48, next 40x40,
  *                      centred, SP_4 apart
  *   times    163..177  elapsed on the left, duration on the right
@@ -69,7 +71,8 @@ static inline ui_rect player_link_rect(int link)
 {
 	int top = TAB_H + SP_1;
 	int width = SCREEN_BOTTOM_W - 2 * SP_2;
-	int half = (width - SP_1) / 2;
+	/* The second row leaves the download square at its right end. */
+	int half = (width - TOUCH_MIN - SP_1 - SP_1) / 2;
 	int second = top + TOUCH_MIN + SP_1;
 	switch (link) {
 	case PLAYER_LINK_ARTIST:
@@ -79,6 +82,14 @@ static inline ui_rect player_link_rect(int link)
 	default:
 		return (ui_rect){ SP_2, top, width, TOUCH_MIN };
 	}
+}
+
+/* The track's download: an icon of where it is, touched like X. */
+static inline ui_rect player_download_rect(void)
+{
+	ui_rect r = { SCREEN_BOTTOM_W - SP_2 - TOUCH_MIN,
+	              TAB_H + SP_1 + TOUCH_MIN + SP_1, TOUCH_MIN, TOUCH_MIN };
+	return r;
 }
 
 /* The link under (x, y) among the `enabled` ones, or PLAYER_LINK_NONE. */
@@ -249,6 +260,24 @@ static inline void player_sample_download(player_download_sample *sample,
 		sample->shown = pct;
 		sample->frames = 0;
 	}
+}
+
+/* Without a connection only downloaded tracks play: from position `pos`
+ * of the play order, the next one `direction` (-1 or +1) away whose track
+ * `playable` says can play, or -1. `order` maps positions to the queue's
+ * indexes, as playback_order does. Like queue_step, it never wraps around
+ * the ends: a queue played through stops instead of starting over. */
+static inline int playback_next_playable(int pos, int count, int direction,
+                                         const int *order,
+                                         const bool *playable)
+{
+	if (count <= 0 || pos < -1 || pos > count ||
+	    (direction != -1 && direction != 1))
+		return -1;
+	for (int p = pos + direction; p >= 0 && p < count; p += direction)
+		if (playable[order[p]])
+			return p;
+	return -1;
 }
 
 #endif

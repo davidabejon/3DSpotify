@@ -4,13 +4,15 @@
  *
  * The same geometry as the Settings tab (STYLES.md 7.8), so the two screens
  * of buttons line up:
- *   tabs      0..32    the tab bar (tabs_logic.h)
- *   play     48..80    primary button
- *   artist   96..128   secondary button: "Artist: <name>"
- *   album   144..176   secondary button: "Album: <name>"
- *   hints   216..240   button bar
- * Artist and album are disabled (6.1) when the track does not name them:
- * the D-pad skips them and touching them does nothing. */
+ *   tabs        0..32    the tab bar (tabs_logic.h)
+ *   play       44..76    primary button
+ *   download   88..120   secondary button: the track's download, as it is
+ *   artist    132..164   secondary button: "Artist: <name>"
+ *   album     176..208   secondary button: "Album: <name>"
+ *   hints     216..240   button bar
+ * Artist and album are disabled (6.1) when the track does not name them,
+ * the download while it is queued or under way: the D-pad skips them and
+ * touching them does nothing. */
 #ifndef DETAIL_LOGIC_H
 #define DETAIL_LOGIC_H
 
@@ -21,6 +23,7 @@
 typedef enum {
 	DETAIL_BUTTON_NONE = -1,
 	DETAIL_BUTTON_PLAY,
+	DETAIL_BUTTON_DOWNLOAD,
 	DETAIL_BUTTON_ARTIST,
 	DETAIL_BUTTON_ALBUM,
 	DETAIL_BUTTON_COUNT
@@ -73,6 +76,22 @@ static inline detail_button detail_focus_move(detail_button focus, int delta,
 		if (enabled[i])
 			return (detail_button)i;
 	return focus;
+}
+
+/* The D-pad between an album's or playlist's list and the button over it
+ * (its download): up from the first row reaches the button, down from the
+ * button goes back to the list, where the focus was. Returns whether the
+ * button has the focus after `delta` (-1 up, +1 down, 0 to check), with
+ * `selected` the focused row. A disabled button (6.1) is never focused:
+ * the focus goes back to the list when it becomes one. */
+static inline bool detail_header_focus(bool on_header, int selected,
+                                       int delta, bool header_enabled)
+{
+	if (!header_enabled)
+		return false;
+	if (on_header)
+		return delta <= 0;
+	return delta < 0 && selected <= 0;
 }
 
 #endif

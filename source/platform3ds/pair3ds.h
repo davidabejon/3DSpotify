@@ -58,6 +58,8 @@ pair_status pair_poll(const pair_request *req, spotify_tokens *out,
 
 /* Trades a stored refresh token for a fresh access token. Spotify may or may
  * not return a new refresh token; when it does not, the old one stays valid. */
+/* token_refresh's result when no answer came at all (no network). */
+#define TOKEN_ERR_TRANSPORT (-2)
 int token_refresh(const char *refresh_token, spotify_tokens *out,
                   char *err, size_t errlen);
 
