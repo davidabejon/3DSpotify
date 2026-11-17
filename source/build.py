@@ -63,6 +63,9 @@ APPS = {
     # Downloads and offline mode, phase 0: what the design assumes, measured.
     "probe_offline": (["probe_offline", "platform3ds"], ["-DPROBE_BUILD"],
                       "probe", []),
+    # Typed search results, phase 0: what searchview answers, measured.
+    "probe_search": (["probe_search", "platform3ds"], ["-DPROBE_BUILD"],
+                     "probe", []),
     # F0 of the citro2d plan: throwaway hardware spike, removed after F1.
     "probe_ui": (["probe_ui", "platform3ds"], ["-DPROBE_BUILD"], "probe",
                  ["deps/stb_vorbis.c"]),
