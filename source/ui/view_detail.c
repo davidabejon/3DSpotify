@@ -52,9 +52,10 @@ typedef enum { BUBBLE_LANGUAGE, BUBBLE_SHUFFLE, BUBBLE_NOTICE } bubble_kind;
 
 /* The download button's state: a dl_button (the track) or a
  * dl_coll_button (the button over an album or playlist), with its share,
- * or how many of how many. */
+ * or how many of how many. `doc_kind` is whose button it is: the same
+ * `kind` says "Download" on a track and "Download playlist" on a list. */
 typedef struct {
-	int kind, a, b;
+	int doc_kind, kind, a, b;
 } dl_label;
 
 /* Parsed text, for `parsed_doc` as it was at `parsed_serial` and
@@ -80,7 +81,7 @@ static bool loading_more;
  * the share changes while the rest stays. */
 static C2D_TextBuf dl_buf;
 static C2D_Text dl_text, notice_text;
-static dl_label dl_now = { -1, 0, 0 }, dl_parsed = { -1, 0, 0 };
+static dl_label dl_now = { -1, -1, 0, 0 }, dl_parsed = { -1, -1, 0, 0 };
 static unsigned dl_seen = ~0u;
 static int dl_frames;
 static lang_id dl_lang = LANG_COUNT;
@@ -270,7 +271,8 @@ static void parse_text(const detail_doc *doc)
 
 static bool same_label(dl_label a, dl_label b)
 {
-	return a.kind == b.kind && a.a == b.a && a.b == b.b;
+	return a.doc_kind == b.doc_kind && a.kind == b.kind && a.a == b.a &&
+	       a.b == b.b;
 }
 
 /* What the download button says now. */
@@ -354,7 +356,7 @@ static void follow_download(const detail_doc *doc, bool force)
 		return;
 	dl_frames = 0;
 	dl_seen = now;
-	dl_label next = { 0, 0, 0 };
+	dl_label next = { (int)doc->kind, 0, 0, 0 };
 	if (mode == MODE_TRACK) {
 		const sp_track *t = &doc->tracks[doc->selected];
 		dl_state state = DL_QUEUED;
