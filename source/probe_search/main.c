@@ -1,22 +1,33 @@
-/* Typed search results: what spclient's searchview answers, measured on the
+/* Typed search results: what Spotify's search answers, measured on the
  * console before any of it is relied on.
  *
- *   S1  GET /searchview/km/v4/search/<q> in three variants (no parameters;
- *       full parameters; without username and country), each with the
- *       space sent as %20 and as '+'. Per reply: status, Retry-After, bytes,
- *       time, and the shape of the JSON -- keys, arrays and their lengths,
- *       totals, a "top hit", how images and non-ASCII names arrive.
- *   S2  The five queries back to back with the best variant of S1, to see
- *       whether a 429 shows up.
+ * The first round asked spclient's searchview and got HTTP 400 for every
+ * variant. This round asks pathfinder (api-partner.spotify.com), the
+ * GraphQL service the mobile web player searches with, with the login5
+ * token the app already holds:
+ *
+ *   H1  The persisted-query hash, found as the app would find it: the
+ *       open.spotify.com page names the mobile player's bundle, the bundle
+ *       (gzip, inflated here) declares the find* operations and their hash.
+ *       Bytes and time of each step, and the hash against the one seen on
+ *       2026-11-17.
+ *   P1  findTopResults for the first query with three sets of headers
+ *       (Bearer only; + App-Platform and spotify-app-version; + a browser
+ *       User-Agent, Origin and Referer). The first that answers is used on.
+ *   P2  For each query, findTopResults and then findArtists, findAlbums,
+ *       findPlaylists and findTracks, back to back: shape, counts, totals,
+ *       top results, images, non-ASCII names, and whether a 429 shows up.
+ *   P3  A made-up hash: what a stale one looks like (412? an "errors" body?).
+ *   P4  findArtists with limit 50: how large a page may be.
  *   S3  Today's path for the same queries: context-resolve plus the
  *       metadata batch, for the times to compare against.
- *   S4  The first 200 body of each query is kept as probe_search_<n>.json,
- *       the raw material for a test fixture.
  *
- * The screen gets the summary; the log gets the full JSON outline. Neither
- * shows the token, the username or a URL that carries it (logged with
- * username=<redacted>). The saved bodies have any occurrence of the
- * username overwritten, but read them before sharing anyway.
+ * Each findTopResults body is kept as probe_search_<n>.json, and the first
+ * query's per-type bodies as probe_search_1_<type>.json: the raw material
+ * for a test fixture. The screen gets the summary; the log gets the full
+ * JSON outline. Neither shows the token or the username; the saved bodies
+ * have any occurrence of the username overwritten, but read them before
+ * sharing anyway.
  */
 #include <3ds.h>
 #include <malloc.h>
@@ -25,13 +36,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "mbedtls/base64.h"
+
 #include "ap3ds.h"
 #include "cfg3ds.h"
 #include "http3ds.h"
+#include "json3ds.h"
 #include "login5.h"
 #include "pair3ds.h"
 #include "spclient.h"
 #include "tls3ds.h"
+
+/* Only the inflater is wanted, for the gzip bundle. */
+#define STBI_NO_STDIO
+#define STB_IMAGE_IMPLEMENTATION
+#include "../../include/stb_image.h"
 
 #define SOC_BUFFER      0x100000
 
@@ -39,12 +58,25 @@
 #define REPLY_LIMIT     (2 * 1024 * 1024)
 #define DEFAULT_CAP     (512 * 1024)
 #define SEARCH_LIMIT    24
-#define PATH_MAX_LEN    1024
+#define PAGE_LIMIT      10
+#define BODY_MAX_LEN    2048
 /* How deep the outline goes, and how much of a string it shows. */
-#define OUTLINE_DEPTH   6
+#define OUTLINE_DEPTH   12
 #define STR_SHOWN       56
 #define ARRAYS_MAX      64
 #define HOSTS_MAX       8
+
+#define PF_HOST         "api-partner.spotify.com"
+#define PF_PATH         "/pathfinder/v2/query"
+#define WEB_PAGE        "https://open.spotify.com/"
+#define BUNDLE_MARK     "/cdn/build/mobile-web-player/mobile-web-player."
+/* What the bundle said on 2026-11-17: used when H1 cannot find its own. */
+#define KNOWN_HASH      "903df2a65d8121e27d73a2be03c01e88ebe6021bb6d4eb82a389e35d87e51d27"
+#define KNOWN_VERSION   "1.3.11.1554.gf4d975765aa5"
+#define BOGUS_HASH      "0000000000000000000000000000000000000000000000000000000000000000"
+#define BROWSER_UA      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " \
+                        "AppleWebKit/537.36 (KHTML, like Gecko) " \
+                        "Chrome/130.0.0.0 Safari/537.36"
 
 static const char *const QUERIES[] = {
 	"the killers",
@@ -55,18 +87,30 @@ static const char *const QUERIES[] = {
 };
 #define NQUERIES ((int)(sizeof(QUERIES) / sizeof(QUERIES[0])))
 
-typedef enum { V_BARE, V_FULL, V_ANON, V_COUNT } variant;
-static const char *const VARIANT_NAME[V_COUNT] = { "bare", "full", "anon" };
+/* The operations, in the order P2 asks them; the first is the overview. */
+static const char *const OPS[] = {
+	"findTopResults", "findArtists", "findAlbums", "findPlaylists",
+	"findTracks",
+};
+static const char *const OP_FILE[] = {
+	NULL, "artists", "albums", "playlists", "tracks",
+};
+#define NOPS ((int)(sizeof(OPS) / sizeof(OPS[0])))
+
+typedef enum { H_BEARER, H_PLATFORM, H_BROWSER, H_COUNT } header_set;
+static const char *const HEADER_NAME[H_COUNT] = {
+	"bearer only", "+platform", "+browser",
+};
 
 typedef struct {
 	char host[128];
 	char token[1024];          /* login5 access token: never printed */
 	char username[128];        /* never printed */
-	char country[8];
-	char locale[8];
+	char hash[72];
+	char version[64];
 } net_ctx;
 
-static FILE *logf;
+static FILE *log_file;
 static net_ctx net;
 
 /* --------------------------------------------------------------- output */
@@ -79,9 +123,9 @@ static void emit(bool screen, const char *fmt, va_list ap)
 		fputs(line, stdout);
 		fputs(line, stderr);
 	}
-	if (logf) {
-		fputs(line, logf);
-		fflush(logf);
+	if (log_file) {
+		fputs(line, log_file);
+		fflush(log_file);
 	}
 }
 
@@ -114,9 +158,9 @@ static void open_log(void)
 {
 	char p[320];
 	data_path("probe_search.log", p, sizeof(p));
-	logf = fopen(p, "w");
-	if (!logf)
-		logf = fopen("sdmc:/probe_search.log", "w");
+	log_file = fopen(p, "w");
+	if (!log_file)
+		log_file = fopen("sdmc:/probe_search.log", "w");
 }
 
 static void frame(void)
@@ -129,70 +173,6 @@ static void frame(void)
 static double now_ms(void)
 {
 	return (double)svcGetSystemTick() / (SYSCLOCK_ARM11 / 1000.0);
-}
-
-/* ------------------------------------------------------------ requests */
-
-/* Percent-encodes `in`, keeping the unreserved set; a space becomes '+' or
- * "%20". False when it does not fit. */
-static bool encode(const char *in, bool plus, char *out, size_t outlen)
-{
-	static const char HEX[] = "0123456789ABCDEF";
-	size_t n = 0;
-	for (const unsigned char *p = (const unsigned char *)in; *p; p++) {
-		unsigned char c = *p;
-		if (c == ' ' && plus) {
-			if (n + 1 >= outlen)
-				return false;
-			out[n++] = '+';
-		} else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-		           (c >= '0' && c <= '9') || c == '-' || c == '_' ||
-		           c == '.' || c == '~') {
-			if (n + 1 >= outlen)
-				return false;
-			out[n++] = (char)c;
-		} else {
-			if (n + 3 >= outlen)
-				return false;
-			out[n++] = '%';
-			out[n++] = HEX[c >> 4];
-			out[n++] = HEX[c & 15];
-		}
-	}
-	out[n] = '\0';
-	return true;
-}
-
-/* The searchview path for `q`. With `redact`, the username is replaced by a
- * placeholder: that is the form that may be logged. */
-static bool searchview_path(const char *q, variant v, bool plus, bool redact,
-                            char *out, size_t outlen)
-{
-	char eq[384], euser[384];
-	if (!encode(q, plus, eq, sizeof(eq)))
-		return false;
-	int n;
-	switch (v) {
-	case V_BARE:
-		n = snprintf(out, outlen, "/searchview/km/v4/search/%s", eq);
-		break;
-	case V_FULL:
-		if (redact)
-			snprintf(euser, sizeof(euser), "<redacted>");
-		else if (!encode(net.username, false, euser, sizeof(euser)))
-			return false;
-		n = snprintf(out, outlen,
-		             "/searchview/km/v4/search/%s?entityVersion=2&limit=10"
-		             "&imageSize=large&catalogue=&country=%s&locale=%s"
-		             "&username=%s", eq, net.country, net.locale, euser);
-		break;
-	default:
-		n = snprintf(out, outlen,
-		             "/searchview/km/v4/search/%s?entityVersion=2&limit=10"
-		             "&imageSize=large&catalogue=&locale=%s", eq, net.locale);
-		break;
-	}
-	return n > 0 && (size_t)n < outlen;
 }
 
 /* ----------------------------------------------------- JSON, generically */
@@ -542,7 +522,8 @@ static int kinds_present(const outline_stats *st, bool present[4])
 	return n;
 }
 
-/* --------------------------------------------------------------- one reply */
+
+/* ------------------------------------------------------------ one reply */
 
 typedef struct {
 	int    status;
@@ -550,118 +531,209 @@ typedef struct {
 	size_t bytes;
 	double ms;
 	int    kinds;           /* how many of the four kinds came */
-	bool   parsed;
-	char  *body;            /* kept for S4; NULL otherwise */
+	bool   ok;              /* 200 with "data" and no "errors" */
+	char  *body;            /* kept when asked; NULL otherwise */
 } reply_info;
 
-/* Asks `q` in variant `v` and writes up what came back. The body is kept in
- * `out->body` when `keep` and the status is 200. */
-static void ask(const char *q, int qi, variant v, bool plus, bool keep,
-                reply_info *out)
+/* The __typename of the first few top results, in order. */
+static void say_top_types(const char *b, size_t len)
 {
-	memset(out, 0, sizeof(*out));
-	char path[PATH_MAX_LEN], shown[PATH_MAX_LEN];
-	if (!searchview_path(q, v, plus, false, path, sizeof(path)) ||
-	    !searchview_path(q, v, plus, true, shown, sizeof(shown))) {
-		say("   q%d %s%s: path too long\n", qi + 1, VARIANT_NAME[v],
-		    plus ? "+" : "%");
+	const char *e = b + len;
+	const char *p = memmem(b, len, "\"topResultsV2\"", 14);
+	if (!p)
 		return;
+	say("      top results:");
+	int shown = 0;
+	static const char MARK[] = "\"data\":{\"__typename\":\"";
+	while (shown < 5) {
+		const char *s = memmem(p, (size_t)(e - p), MARK, sizeof(MARK) - 1);
+		if (!s)
+			break;
+		s += sizeof(MARK) - 1;
+		const char *q = memchr(s, '"', (size_t)(e - s));
+		if (!q || q - s > 40)
+			break;
+		say(" %.*s", (int)(q - s), s);
+		shown++;
+		p = q;
 	}
-	note("\nGET %s\n", shown);
+	say("%s\n", shown ? "" : " none");
+}
 
-	http_reply r;
-	double t0 = now_ms();
-	int rc = http_request(net.host, path, "GET", net.token, NULL,
-	                      "application/json", NULL, 0, REPLY_LIMIT, &r);
-	out->ms = now_ms() - t0;
-	memset(path, 0, sizeof(path));
-	if (rc != 0) {
-		say("   q%d %s%s: %s (%.0f ms)\n", qi + 1, VARIANT_NAME[v],
-		    plus ? "+" : "%", r.err, out->ms);
-		return;
-	}
-	out->status = r.status;
-	out->retry_after = r.retry_after;
-	out->bytes = r.len;
+/* Writes up one reply: the summary on screen, the outline in the log. The
+ * body moves into `out->body` when `keep` and it answered. */
+static void analyze(const char *label, http_reply *r, double ms, bool keep,
+                    reply_info *out)
+{
+	out->status = r->status;
+	out->retry_after = r->retry_after;
+	out->bytes = r->len;
+	out->ms = ms;
 
-	outline_stats *st = calloc(1, sizeof(outline_stats));
-	bool present[4] = { false, false, false, false };
-	if (r.status == 200 && st && r.body) {
-		const char *e = r.body + r.len;
-		const char *p = ws(r.body, e);
-		out->parsed = p < e && *p == '{' && skip_value(p, e) != NULL;
-		note("outline:\n");
-		walk(st, r.body, e, 0, "");
-		out->kinds = kinds_present(st, present);
-	}
+	bool errors = r->body && memmem(r->body, r->len, "\"errors\"", 8);
+	bool data = r->body && memmem(r->body, r->len, "\"data\"", 6);
+	out->ok = r->status == 200 && data && !errors;
 
-	say("   q%d %s%s: HTTP %d, %u B, %.0f ms", qi + 1, VARIANT_NAME[v],
-	    plus ? "+" : "%", r.status, (unsigned)r.len, out->ms);
-	if (r.retry_after)
-		say(", Retry-After %d", r.retry_after);
-	if (r.len > DEFAULT_CAP)
+	say("   %s: HTTP %d, %u B, %.0f ms", label, r->status, (unsigned)r->len,
+	    ms);
+	if (r->retry_after)
+		say(", Retry-After %d", r->retry_after);
+	if (r->len > DEFAULT_CAP)
 		say(", OVER the %u KB cap", DEFAULT_CAP / 1024);
 	say("\n");
 
-	if (r.status != 200) {
+	if (!out->ok) {
 		/* Error bodies say why; they carry nothing personal. */
-		note("body: %.*s\n", (int)(r.len < 300 ? r.len : 300),
-		     r.body ? r.body : "");
-	} else if (st && r.body) {
-		say("      kinds:");
-		for (int k = 0; k < 4; k++)
-			say(" %s%s", KINDS[k], present[k] ? "+" : "-");
-		say("%s\n", out->parsed ? "" : "  (JSON did NOT parse)");
-
-		note("arrays:\n");
-		int sum = 0, most = 0;
-		for (int i = 0; i < st->narrays; i++) {
-			note("   %s = %d\n", st->arrays[i].path, st->arrays[i].len);
-			if (!strchr(st->arrays[i].path, '[')) {
-				sum += st->arrays[i].len;
-				if (st->arrays[i].len > most)
-					most = st->arrays[i].len;
-			}
-		}
-		say("      top-level arrays: largest %d, sum %d\n", most, sum);
-		if (st->ntop) {
-			say("      top hit?");
-			for (int i = 0; i < st->ntop; i++)
-				say(" %s", st->top_keys[i]);
-			say("\n");
-		} else {
-			say("      no key like top/best\n");
-		}
-
-		image_stats im;
-		scan_images(r.body, r.len, &im);
-		say("      images: i.scdn.co %d, spotify:image: %d", im.scdn,
-		    im.spotify_image);
-		for (int i = 0; i < im.nhosts; i++)
-			say(", %s %d", im.host[i], im.host_count[i]);
-		say("\n");
-
-		text_stats t;
-		scan_text(r.body, r.len, &t);
-		say("      text: raw UTF-8 bytes %d, \\u %d (beyond Latin-1 %d, "
-		    "surrogates %d)\n", t.raw_high, t.escapes, t.beyond_latin1,
-		    t.surrogates);
-
-		if (keep) {
-			out->body = r.body;
-			r.body = NULL;
-		}
+		int shown = (int)(r->len < 160 ? r->len : 160);
+		say("      %.*s\n", shown, r->body ? r->body : "");
+		note("body: %.*s\n", (int)(r->len < 1000 ? r->len : 1000),
+		     r->body ? r->body : "");
+		return;
 	}
+
+	outline_stats *st = calloc(1, sizeof(outline_stats));
+	if (!st)
+		return;
+	const char *e = r->body + r->len;
+	bool parsed = skip_value(r->body, e) != NULL;
+	note("outline:\n");
+	walk(st, r->body, e, 0, "");
+	bool present[4];
+	out->kinds = kinds_present(st, present);
+
+	say("      kinds:");
+	for (int k = 0; k < 4; k++)
+		say(" %s%s", KINDS[k], present[k] ? "+" : "-");
+	say("%s\n", parsed ? "" : "  (JSON did NOT parse)");
+	note("arrays:\n");
+	for (int i = 0; i < st->narrays; i++) {
+		note("   %s = %d\n", st->arrays[i].path, st->arrays[i].len);
+		if (!strchr(st->arrays[i].path, '[') && st->arrays[i].len > 0)
+			say("      %s = %d\n", st->arrays[i].path,
+			    st->arrays[i].len);
+	}
+	say_top_types(r->body, r->len);
+
+	image_stats im;
+	scan_images(r->body, r->len, &im);
+	say("      images: i.scdn.co %d, spotify:image: %d", im.scdn,
+	    im.spotify_image);
+	for (int i = 0; i < im.nhosts; i++)
+		say(", %s %d", im.host[i], im.host_count[i]);
+	say("\n");
+
+	text_stats t;
+	scan_text(r->body, r->len, &t);
+	say("      text: raw UTF-8 bytes %d, \\u %d (beyond Latin-1 %d, "
+	    "surrogates %d)\n", t.raw_high, t.escapes, t.beyond_latin1,
+	    t.surrogates);
 	free(st);
+
+	if (keep) {
+		out->body = r->body;
+		r->body = NULL;
+	}
+}
+
+/* ------------------------------------------------------------ pathfinder */
+
+/* `in` as the inside of a JSON string. False when it does not fit. */
+static bool json_escape(const char *in, char *out, size_t outlen)
+{
+	size_t n = 0;
+	for (const unsigned char *p = (const unsigned char *)in; *p; p++) {
+		char esc[8];
+		size_t k;
+		if (*p == '"' || *p == '\\') {
+			esc[0] = '\\';
+			esc[1] = (char)*p;
+			k = 2;
+		} else if (*p < 0x20) {
+			k = (size_t)snprintf(esc, sizeof(esc), "\\u%04x", *p);
+		} else {
+			esc[0] = (char)*p;
+			k = 1;
+		}
+		if (n + k >= outlen)
+			return false;
+		memcpy(out + n, esc, k);
+		n += k;
+	}
+	out[n] = '\0';
+	return true;
+}
+
+/* The header lines of each set; the Bearer goes on its own. */
+static void header_lines(header_set h, char *out, size_t outlen)
+{
+	out[0] = '\0';
+	if (h >= H_PLATFORM)
+		snprintf(out, outlen, "App-Platform: WebPlayer\r\n"
+		         "spotify-app-version: %s\r\n", net.version);
+	if (h >= H_BROWSER) {
+		size_t at = strlen(out);
+		snprintf(out + at, outlen - at, "User-Agent: " BROWSER_UA "\r\n"
+		         "Origin: https://open.spotify.com\r\n"
+		         "Referer: https://open.spotify.com/\r\n");
+	}
+}
+
+/* One operation for `q`. `limit` is numberOfTopResults for the overview
+ * and the page size for the rest. */
+static void pf_ask(const char *op, const char *q, int limit, const char *hash,
+                   header_set h, const char *label, bool keep,
+                   reply_info *out)
+{
+	memset(out, 0, sizeof(*out));
+	char eq[384], body[BODY_MAX_LEN], extra[512];
+	if (!json_escape(q, eq, sizeof(eq))) {
+		say("   %s: query too long\n", label);
+		return;
+	}
+	int n;
+	if (strcmp(op, "findTopResults") == 0)
+		n = snprintf(body, sizeof(body),
+		             "{\"variables\":{\"query\":\"%s\",\"numberOfTopResults\":%d,"
+		             "\"includePreReleases\":false,"
+		             "\"includeAlbumPreReleases\":false},"
+		             "\"operationName\":\"%s\",\"extensions\":{\"persistedQuery\":"
+		             "{\"version\":1,\"sha256Hash\":\"%s\"}}}",
+		             eq, limit, op, hash);
+	else
+		n = snprintf(body, sizeof(body),
+		             "{\"variables\":{\"query\":\"%s\",\"limit\":%d,\"offset\":0},"
+		             "\"operationName\":\"%s\",\"extensions\":{\"persistedQuery\":"
+		             "{\"version\":1,\"sha256Hash\":\"%s\"}}}",
+		             eq, limit, op, hash);
+	if (n < 0 || (size_t)n >= sizeof(body)) {
+		say("   %s: body too long\n", label);
+		return;
+	}
+	header_lines(h, extra, sizeof(extra));
+	note("\nPOST %s%s %s (%s): %s\n", PF_HOST, PF_PATH, op, HEADER_NAME[h],
+	     body);
+
+	http_reply r;
+	double t0 = now_ms();
+	int rc = http_request_ex(PF_HOST, PF_PATH, "POST", net.token,
+	                         "application/json;charset=UTF-8",
+	                         "application/json", extra, body, (size_t)n,
+	                         REPLY_LIMIT, &r);
+	double ms = now_ms() - t0;
+	if (rc != 0) {
+		say("   %s: %s (%.0f ms)\n", label, r.err, ms);
+		return;
+	}
+	analyze(label, &r, ms, keep, out);
 	http_reply_free(&r);
 }
 
-/* S4: the body, with the username blotted out, as probe_search_<n>.json. */
-static void save_body(int qi, const char *body, size_t len)
+/* The body, with the username blotted out, under `name` in the app folder. */
+static void save_body(const char *name, const char *body, size_t len)
 {
 	char *copy = malloc(len);
 	if (!copy) {
-		say("   q%d: out of memory to save\n", qi + 1);
+		say("   %s: out of memory to save\n", name);
 		return;
 	}
 	memcpy(copy, body, len);
@@ -675,80 +747,271 @@ static void save_body(int qi, const char *body, size_t len)
 			blotted++;
 		}
 	}
-	char name[48], path[320];
-	snprintf(name, sizeof(name), "probe_search_%d.json", qi + 1);
+	char path[320];
 	data_path(name, path, sizeof(path));
 	FILE *f = fopen(path, "wb");
 	bool ok = f && fwrite(copy, 1, len, f) == len;
 	if (f)
 		fclose(f);
 	free(copy);
-	say("   saved %s (%u B)%s%s\n", name, (unsigned)len,
-	    ok ? "" : " FAILED", blotted ? ", username blotted" : "");
+	say("      saved %s%s%s\n", name, ok ? "" : " FAILED",
+	    blotted ? ", username blotted" : "");
+}
+
+/* ------------------------------------------------------------- H1: hash */
+
+/* A gzip member inflated, or NULL. The CDN sends the bundle gzipped even
+ * when not asked to; stb_image's inflater takes the raw deflate inside. */
+static char *gunzip(const uint8_t *b, size_t n, size_t *outlen)
+{
+	if (n < 18 || b[0] != 0x1f || b[1] != 0x8b || b[2] != 8)
+		return NULL;
+	uint8_t flg = b[3];
+	size_t p = 10;
+	if (flg & 4)
+		p += 2 + (size_t)(b[10] | b[11] << 8);
+	for (int field = 8; field <= 16; field <<= 1) {
+		if (!(flg & field))
+			continue;
+		while (p < n && b[p])
+			p++;
+		p++;
+	}
+	if (flg & 2)
+		p += 2;
+	if (p + 8 > n)
+		return NULL;
+	size_t isize = (size_t)b[n - 4] | (size_t)b[n - 3] << 8 |
+	               (size_t)b[n - 2] << 16 | (size_t)b[n - 1] << 24;
+	if (isize == 0 || isize > 16 * 1024 * 1024)
+		return NULL;
+	char *out = malloc(isize + 1);
+	if (!out)
+		return NULL;
+	int got = stbi_zlib_decode_noheader_buffer(out, (int)isize,
+	                                           (const char *)b + p,
+	                                           (int)(n - p - 8));
+	if (got != (int)isize) {
+		free(out);
+		return NULL;
+	}
+	out[isize] = '\0';
+	*outlen = isize;
+	return out;
+}
+
+/* The bundle URL and the client version out of the player page. */
+static bool read_page(char *bundle, size_t blen)
+{
+	http_reply r;
+	double t0 = now_ms();
+	if (http_get_url(WEB_PAGE, REPLY_LIMIT, &r) != 0) {
+		say("   page: %s\n", r.err);
+		return false;
+	}
+	say("   page: HTTP %d, %u B, %.0f ms\n", r.status, (unsigned)r.len,
+	    now_ms() - t0);
+	bool ok = false;
+	const char *m = r.body ? strstr(r.body, BUNDLE_MARK) : NULL;
+	if (m) {
+		const char *s = m;
+		while (s > r.body && s[-1] != '"')
+			s--;
+		const char *e = strstr(m, ".js");
+		if (e && (size_t)(e + 3 - s) < blen) {
+			snprintf(bundle, blen, "%.*s", (int)(e + 3 - s), s);
+			ok = strncmp(bundle, "https://", 8) == 0;
+		}
+	}
+	if (!ok)
+		say("   page: no mobile player bundle named%s\n",
+		    r.body && strstr(r.body, "/web-player/web-player.")
+		        ? " (the desktop one is)" : "");
+
+	static const char CFG[] = "<script id=\"appServerConfig\" type=\"text/plain\">";
+	const char *c = r.body ? strstr(r.body, CFG) : NULL;
+	const char *ce = c ? strstr(c, "</script>") : NULL;
+	if (c && ce) {
+		c += sizeof(CFG) - 1;
+		while (c < ce && (*c == ' ' || *c == '\n' || *c == '\r'))
+			c++;
+		size_t clen = (size_t)(ce - c);
+		while (clen && (c[clen - 1] == ' ' || c[clen - 1] == '\n' ||
+		                c[clen - 1] == '\r'))
+			clen--;
+		size_t dlen = 0;
+		unsigned char *dec = malloc(clen + 1);
+		if (dec && mbedtls_base64_decode(dec, clen, &dlen,
+		                                 (const unsigned char *)c,
+		                                 clen) == 0) {
+			dec[dlen] = '\0';
+			char v[64];
+			if (json_str((const char *)dec, "clientVersion", v, sizeof(v)))
+				snprintf(net.version, sizeof(net.version), "%s", v);
+		}
+		free(dec);
+	}
+	say("   client version: %s%s\n", net.version[0] ? net.version : "-",
+	    net.version[0] ? "" : " (not found)");
+	http_reply_free(&r);
+	return ok;
+}
+
+/* H1. Leaves the hash in net.hash: the one found, else the known one. */
+static void step_hash(void)
+{
+	say("H1 persisted-query hash from the mobile player\n");
+	double start = now_ms();
+	char bundle[256] = "";
+	char found[72] = "";
+	if (read_page(bundle, sizeof(bundle))) {
+		const char *name = strrchr(bundle, '/');
+		say("   bundle %s\n", name ? name + 1 : bundle);
+		http_reply r;
+		double t0 = now_ms();
+		if (http_get_url(bundle, REPLY_LIMIT, &r) != 0) {
+			say("   bundle: %s\n", r.err);
+		} else {
+			double t1 = now_ms();
+			say("   bundle: HTTP %d, %u B, %.0f ms\n", r.status,
+			    (unsigned)r.len, t1 - t0);
+			size_t plain_len = r.len;
+			char *plain = gunzip((const uint8_t *)r.body, r.len, &plain_len);
+			if (plain)
+				say("   gunzip: %u B in %.0f ms\n", (unsigned)plain_len,
+				    now_ms() - t1);
+			else if (r.len > 1 && (uint8_t)r.body[0] == 0x1f)
+				say("   gunzip FAILED\n");
+			const char *text = plain ? plain : r.body;
+			size_t tlen = plain ? plain_len : r.len;
+			int same = 0, declared = 0;
+			for (int i = 0; i < NOPS; i++) {
+				char mark[64];
+				int ml = snprintf(mark, sizeof(mark), "\"%s\",\"query\",\"",
+				                  OPS[i]);
+				const char *s = text ? memmem(text, tlen, mark, (size_t)ml)
+				                     : NULL;
+				if (!s || s + ml + 64 > text + tlen) {
+					say("   %s: NOT declared\n", OPS[i]);
+					continue;
+				}
+				declared++;
+				char h[72];
+				snprintf(h, sizeof(h), "%.64s", s + ml);
+				if (!found[0])
+					snprintf(found, sizeof(found), "%s", h);
+				if (strcmp(h, found) == 0)
+					same++;
+				note("   %s %s\n", OPS[i], h);
+			}
+			say("   %d of %d operations declared, %d with the same hash\n",
+			    declared, NOPS, same);
+			free(plain);
+			http_reply_free(&r);
+		}
+	}
+	if (!net.version[0])
+		snprintf(net.version, sizeof(net.version), "%s", KNOWN_VERSION);
+	if (found[0]) {
+		say("   hash %.12s... %s the one of 2026-11-17\n", found,
+		    strcmp(found, KNOWN_HASH) == 0 ? "SAME as" : "DIFFERENT from");
+		snprintf(net.hash, sizeof(net.hash), "%s", found);
+	} else {
+		say("   no hash found: going on with the known one\n");
+		snprintf(net.hash, sizeof(net.hash), "%s", KNOWN_HASH);
+	}
+	say("   VERDICT: %s in %.1f s.\n\n", found[0] ? "found" : "NOT found",
+	    (now_ms() - start) / 1000.0);
 }
 
 /* ------------------------------------------------------------------ steps */
 
-/* S1: every variant on the first query. Returns the best variant (most
- * kinds; on a tie, the one sending the least about the user), or -1 when
- * none answered 200. */
-static int step_variants(bool *plus_out)
+/* P1: the fewest headers pathfinder answers to. -1 when none. */
+static int step_headers(void)
 {
-	say("S1 searchview variants, \"%s\"\n", QUERIES[0]);
-	/* Least to most identifying. */
-	static const variant ORDER[V_COUNT] = { V_BARE, V_ANON, V_FULL };
-	int best = -1, best_kinds = -1;
-	bool best_plus = false;
-	for (int i = 0; i < V_COUNT && aptMainLoop(); i++) {
-		if (ORDER[i] == V_FULL && !net.country[0])
-			note("(no country cached: the full variant goes without)\n");
-		for (int enc = 0; enc < 2; enc++) {
+	say("P1 findTopResults, \"%s\", by header set\n", QUERIES[0]);
+	int best = -1;
+	for (int h = 0; h < H_COUNT && aptMainLoop(); h++) {
+		reply_info ri;
+		pf_ask(OPS[0], QUERIES[0], PAGE_LIMIT, net.hash, (header_set)h,
+		       HEADER_NAME[h], false, &ri);
+		if (ri.ok && best < 0)
+			best = h;
+		frame();
+	}
+	if (best < 0)
+		say("   VERDICT: no header set answered.\n\n");
+	else
+		say("   VERDICT: \"%s\" is enough.\n\n", HEADER_NAME[best]);
+	return best;
+}
+
+/* P2: every operation for every query, back to back. */
+static void step_queries(header_set h)
+{
+	say("P2 five queries x %d operations, back to back (%s)\n", NOPS,
+	    HEADER_NAME[h]);
+	double start = now_ms(), sum = 0, worst = 0, top_sum = 0;
+	int ok = 0, limited = 0, asked = 0, top_ok = 0;
+	for (int q = 0; q < NQUERIES && aptMainLoop(); q++) {
+		say("  q%d\n", q + 1);
+		for (int o = 0; o < NOPS && aptMainLoop(); o++) {
 			reply_info ri;
-			ask(QUERIES[0], 0, ORDER[i], enc == 1, false, &ri);
-			if (ri.status == 200 && ri.kinds > best_kinds) {
-				best = ORDER[i];
-				best_kinds = ri.kinds;
-				best_plus = enc == 1;
+			bool keep = o == 0 || q == 0;
+			pf_ask(OPS[o], QUERIES[q], PAGE_LIMIT, net.hash, h, OPS[o],
+			       keep, &ri);
+			asked++;
+			if (ri.ok) {
+				ok++;
+				sum += ri.ms;
+				if (ri.ms > worst)
+					worst = ri.ms;
+				if (o == 0) {
+					top_ok++;
+					top_sum += ri.ms;
+				}
+			}
+			if (ri.status == 429)
+				limited++;
+			if (ri.body) {
+				char name[48];
+				if (o == 0)
+					snprintf(name, sizeof(name), "probe_search_%d.json",
+					         q + 1);
+				else
+					snprintf(name, sizeof(name), "probe_search_%d_%s.json",
+					         q + 1, OP_FILE[o]);
+				save_body(name, ri.body, ri.bytes);
+				free(ri.body);
 			}
 			frame();
 		}
 	}
-	if (best < 0)
-		say("   VERDICT: no variant answered 200.\n\n");
-	else
-		say("   VERDICT: best is %s with %s for the space (%d kinds).\n\n",
-		    VARIANT_NAME[best], best_plus ? "'+'" : "%20", best_kinds);
-	*plus_out = best_plus;
-	return best;
+	say("   VERDICT: %d of %d ok, %d with 429; average %.0f ms (top "
+	    "results %.0f ms), worst %.0f ms, %.1f s in all.\n\n", ok, asked,
+	    limited, ok ? sum / ok : 0.0, top_ok ? top_sum / top_ok : 0.0, worst,
+	    (now_ms() - start) / 1000.0);
 }
 
-/* S2 and S4: the five queries back to back. */
-static void step_pace(variant v, bool plus)
+/* P3: what a stale hash looks like. */
+static void step_bogus(header_set h)
 {
-	say("S2 five queries back to back (%s, %s)\n", VARIANT_NAME[v],
-	    plus ? "'+'" : "%20");
-	double start = now_ms(), sum = 0, worst = 0;
-	int ok = 0, limited = 0;
-	for (int q = 0; q < NQUERIES && aptMainLoop(); q++) {
-		reply_info ri;
-		ask(QUERIES[q], q, v, plus, true, &ri);
-		if (ri.status == 200) {
-			ok++;
-			sum += ri.ms;
-			if (ri.ms > worst)
-				worst = ri.ms;
-		}
-		if (ri.status == 429)
-			limited++;
-		if (ri.body) {
-			save_body(q, ri.body, ri.bytes);
-			free(ri.body);
-		}
-		frame();
-	}
-	say("   VERDICT: %d of %d ok, %d with 429; average %.0f ms, worst "
-	    "%.0f ms, %.1f s in all.\n\n", ok, NQUERIES, limited,
-	    ok ? sum / ok : 0.0, worst, (now_ms() - start) / 1000.0);
+	say("P3 a made-up hash\n");
+	reply_info ri;
+	pf_ask(OPS[0], QUERIES[0], PAGE_LIMIT, BOGUS_HASH, h, "bogus", false,
+	       &ri);
+	say("   VERDICT: HTTP %d%s.\n\n", ri.status,
+	    ri.ok ? " and data: the hash is NOT checked" : "");
+}
+
+/* P4: a page larger than the web player asks for. */
+static void step_page(header_set h)
+{
+	say("P4 findArtists with limit 50\n");
+	reply_info ri;
+	pf_ask("findArtists", QUERIES[0], 50, net.hash, h, "limit 50", false,
+	       &ri);
+	say("\n");
 }
 
 /* S3: today's two requests for the same queries. */
@@ -791,29 +1054,6 @@ static void step_reference(void)
 }
 
 /* ------------------------------------------------------------------ setup */
-
-/* The language the app runs in, as searchview's locale. */
-static void pick_locale(void)
-{
-	char code[8];
-	if (cfg_get("language", code, sizeof(code)) && strcmp(code, "es") == 0)
-		snprintf(net.locale, sizeof(net.locale), "es");
-	else
-		snprintf(net.locale, sizeof(net.locale), "en");
-}
-
-/* The country the app cached from /v1/me: the third field of "profile". */
-static void pick_country(void)
-{
-	char value[192];
-	net.country[0] = '\0';
-	if (!cfg_get("profile", value, sizeof(value)))
-		return;
-	char *s = strchr(value, '\x1f');
-	s = s ? strchr(s + 1, '\x1f') : NULL;
-	if (s)
-		snprintf(net.country, sizeof(net.country), "%.2s", s + 1);
-}
 
 /* Signs in as the app does: refresh token, OAuth, AP, login5. */
 static bool net_setup(void)
@@ -866,10 +1106,7 @@ static bool net_setup(void)
 	memset(&info, 0, sizeof(info));
 	char ignored[128];
 	sp_resolve(net.host, sizeof(net.host), ignored, sizeof(ignored));
-	pick_locale();
-	pick_country();
-	say("   ok; host %s, locale %s, country %s\n\n", net.host, net.locale,
-	    net.country[0] ? net.country : "(none cached)");
+	say("   ok; spclient %s\n\n", net.host);
 	return true;
 }
 
@@ -882,7 +1119,7 @@ int main(int argc, char **argv)
 	cfg_set_path(argv0);
 	open_log();
 
-	say("3DS Spotify -- search probes\n");
+	say("3DS Spotify -- search probes (pathfinder)\n");
 	say("built %s\n\n", BUILD_STAMP);
 
 	/* TLS and the AP handshake draw their randomness from PS. */
@@ -906,12 +1143,16 @@ int main(int argc, char **argv)
 	}
 
 	if (net_setup()) {
-		bool plus = false;
-		int best = step_variants(&plus);
-		if (best >= 0)
-			step_pace((variant)best, plus);
-		else
-			say("S2 and S4 skipped: nothing to pace.\n\n");
+		step_hash();
+		int h = step_headers();
+		if (h >= 0) {
+			step_queries((header_set)h);
+			step_bogus((header_set)h);
+			step_page((header_set)h);
+		} else {
+			step_bogus(H_BROWSER);
+			say("P2 and P4 skipped: pathfinder did not answer.\n\n");
+		}
 		step_reference();
 	}
 	memset(&net, 0, sizeof(net));
@@ -925,8 +1166,8 @@ hold:
 			break;
 		frame();
 	}
-	if (logf)
-		fclose(logf);
+	if (log_file)
+		fclose(log_file);
 	tls_global_exit();
 	if (ps)
 		psExit();
