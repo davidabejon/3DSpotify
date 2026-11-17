@@ -14,8 +14,8 @@
  *        read back from the SD: can local playback decrypt as it reads?
  *   0.1  two access point sessions with the same device id at once: do they
  *        coexist, or does the second one push the first out?
- *   0.2  how many audio keys in a row before the AP refuses, how long the
- *        refusal lasts, and whether a steady pace stays under the limit.
+ *   0.2  how many audio keys in a row before the AP refuses, how fast that
+ *        allowance refills, and whether a pace derived from it holds.
  *
  * Nothing secret reaches the screen or the log: no token, no key, and the
  * console ids only as a short hash.
@@ -56,12 +56,12 @@
 #define WATCH_MS        60000
 /* 0.2: keys asked back to back, then with a pause if that failed. */
 #define KEY_BURST       60
-/* After a refusal, how often to try again and for how long at most. */
-#define KEY_POLL_MS     10000
-#define KEY_RECOVER_MAX_MS (15 * 60 * 1000)
-/* A steady pace to try once the allowance is back: 20 a minute. */
-#define KEY_STEADY_COUNT 40
-#define KEY_STEADY_MS   3000
+/* The paced round of 0.2: how many keys, the bounds of the gap between
+ * them, and the rest before it so it starts with the bucket refilling. */
+#define KEY_PACE_COUNT  12
+#define KEY_PACE_MIN_MS 3000
+#define KEY_PACE_MAX_MS 60000
+#define KEY_PACE_REST_MS 60000
 
 #define IDS_FILE        "probe_offline_ids.txt"
 
@@ -738,11 +738,12 @@ static int key_tracks(net_ctx *n, const sp_track *sample, sp_track *out,
 	return named;
 }
 
-/* The access point refuses with 0x0002 after a burst (first run: 28 keys in
- * about 5 s), on any track and on a fresh session too, so the limit belongs
- * to the account or the device. These rounds measure its shape: how long
- * the refusal lasts, whether the burst allowance refills whole, and whether
- * a steady pace stays under it. */
+/* The access point refuses with 0x0002 after a burst, on any track and on a
+ * fresh session too, so the limit belongs to the account or the device. On
+ * the console: 15 keys in 0.8 s, then refused for about 30 s, and right
+ * after that one key, then refused again -- a bucket that holds about 15
+ * and refills slowly. This measures the refill: empty it, ask nothing for a
+ * while, and count what came back. Then it tries the pace that follows. */
 
 /* Asks keys back to back, `gap_ms` apart, cycling over `tracks` from
  * `*next`, until `max` came or one fails. Returns how many came; `*rc_out`
@@ -773,8 +774,6 @@ static int key_run(ap_session *s, const sp_track *tracks, int ntracks,
 		sum += ms;
 		if (ms > worst)
 			worst = ms;
-		if ((i + 1) % 10 == 0)
-			say("   %d keys, %.1f s\n", i + 1, (now_ms() - start) / 1000.0);
 		frame();
 	}
 	if (ok)
@@ -783,48 +782,41 @@ static int key_run(ap_session *s, const sp_track *tracks, int ntracks,
 	return ok;
 }
 
-/* After a refusal: one key every KEY_POLL_MS until one comes. Returns the
- * seconds that took, or -1 when it did not within KEY_RECOVER_MAX_MS. A
- * broken session is reopened; `*s` may change. */
-static double key_recover(net_ctx *n, ap_session **s, const sp_track *tracks,
-                          int ntracks, int *next)
+/* Waits `ms` asking nothing, while answering the session's pings so it stays
+ * up. Returns false when START cuts it short or the session drops. */
+static bool idle(ap_session *s, int ms, double since)
 {
-	char err[256];
-	double start = now_ms();
-	say("   one key every %d s until one comes (max %d min, START gives up)\n",
-	    KEY_POLL_MS / 1000, KEY_RECOVER_MAX_MS / 60000);
-	while (now_ms() - start < KEY_RECOVER_MAX_MS && aptMainLoop()) {
-		double end = now_ms() + KEY_POLL_MS;
-		while (now_ms() < end && aptMainLoop()) {
-			hidScanInput();
-			if (hidKeysDown() & KEY_START)
-				return -1;
-			frame();
-		}
-		double ms;
-		int refused = 0;
-		int rc = one_key(*s, &tracks[(*next)++ % ntracks], &ms, &refused,
-		                 err, sizeof(err));
-		double at = (now_ms() - start) / 1000.0;
-		if (rc == 0) {
-			say("   key again at %.0f s\n", at);
-			return at;
-		}
-		say("   %.0f s: %s\n", at, key_result(rc, refused));
-		if (rc == -1) {
-			ap_info info;
-			ap_close(*s);
-			*s = open_ap(n, "reopened", &info);
-			if (!*s)
-				return -1;
-		}
+	say("   %.0f s: %d s asking nothing (START skips the rest)\n",
+	    (now_ms() - since) / 1000.0, ms / 1000);
+	double end = now_ms() + ms;
+	int pings = 0;
+	while (now_ms() < end && aptMainLoop()) {
+		hidScanInput();
+		if (hidKeysDown() & KEY_START)
+			return false;
+		if (!drain(s, "session", since, &pings))
+			return false;
+		frame();
 	}
-	return -1;
+	return true;
+}
+
+/* A burst after a rest: how many came back in `rest_ms`. -1 when cut short
+ * or the session broke. */
+static int refill(ap_session *s, const sp_track *tracks, int ntracks,
+                  int *next, int rest_ms, double since)
+{
+	if (!idle(s, rest_ms, since))
+		return -1;
+	int rc;
+	int got = key_run(s, tracks, ntracks, next, KEY_BURST, 0, &rc);
+	say("   after %d s: %d keys\n", rest_ms / 1000, got);
+	return rc == -1 ? -1 : got;
 }
 
 static void step_key_burst(net_ctx *n, const sp_track *sample)
 {
-	say("0.2 audio keys: the limit and its shape\n");
+	say("0.2 audio keys: the limit and its refill\n");
 	static sp_track tracks[KEY_BURST];
 	int nt = key_tracks(n, sample, tracks, KEY_BURST);
 	ap_info info;
@@ -833,46 +825,62 @@ static void step_key_burst(net_ctx *n, const sp_track *sample)
 		say("\n");
 		return;
 	}
+	double since = now_ms();
 	int next = 0, rc;
 
-	say("   round 1: back to back, up to %d\n", KEY_BURST);
-	int n1 = key_run(s, tracks, nt, &next, KEY_BURST, 0, &rc);
+	say("   empty the bucket: back to back, up to %d\n", KEY_BURST);
+	int cap = key_run(s, tracks, nt, &next, KEY_BURST, 0, &rc);
 	if (rc == 0) {
-		say("   VERDICT: %d keys back to back, no refusal.\n\n", n1);
+		say("   VERDICT: %d keys back to back, no refusal.\n\n", cap);
 		ap_close(s);
 		return;
 	}
-	double r1 = key_recover(n, &s, tracks, nt, &next);
-	if (r1 < 0 || !s) {
-		say("   VERDICT: refused after %d; not back within %d min.\n\n", n1,
-		    KEY_RECOVER_MAX_MS / 60000);
-		if (s)
-			ap_close(s);
-		return;
+
+	static const int RESTS[] = { 60000, 180000 };
+	int got[2] = { -1, -1 };
+	for (int i = 0; i < 2; i++) {
+		got[i] = refill(s, tracks, nt, &next, RESTS[i], since);
+		if (got[i] < 0)
+			break;
 	}
 
-	say("   round 2: back to back again, up to %d\n", KEY_BURST);
-	int n2 = key_run(s, tracks, nt, &next, KEY_BURST, 0, &rc);
-	double r2 = -1;
-	if (rc != 0)
-		r2 = key_recover(n, &s, tracks, nt, &next);
+	/* The pace to try: what came back over the longer rest, spread with a
+	 * margin of a half. Bounded so the round ends in a few minutes. */
+	int gap = KEY_PACE_MAX_MS;
+	if (got[1] > 0)
+		gap = (int)(1.5 * RESTS[1] / got[1]);
+	else if (got[0] > 0)
+		gap = (int)(1.5 * RESTS[0] / got[0]);
+	if (gap < KEY_PACE_MIN_MS)
+		gap = KEY_PACE_MIN_MS;
+	if (gap > KEY_PACE_MAX_MS)
+		gap = KEY_PACE_MAX_MS;
 
-	int n3 = -1;
-	if (s && (rc == 0 || r2 >= 0)) {
-		say("   round 3: %d keys, %d ms apart\n", KEY_STEADY_COUNT,
-		    KEY_STEADY_MS);
-		n3 = key_run(s, tracks, nt, &next, KEY_STEADY_COUNT, KEY_STEADY_MS,
-		             &rc);
+	int paced_ok = 0, paced = 0;
+	if (got[1] >= 0 && idle(s, KEY_PACE_REST_MS, since)) {
+		say("   %.0f s: %d keys %d ms apart, on through refusals\n",
+		    (now_ms() - since) / 1000.0, KEY_PACE_COUNT, gap);
+		char err[256];
+		for (; paced < KEY_PACE_COUNT && aptMainLoop(); paced++) {
+			if (paced && !idle(s, gap, since))
+				break;
+			double ms;
+			int refused = 0;
+			int r = one_key(s, &tracks[next++ % nt], &ms, &refused, err,
+			                sizeof(err));
+			say("   key %d: %s\n", paced + 1, key_result(r, refused));
+			if (r == 0)
+				paced_ok++;
+			else if (r == -1)
+				break;
+		}
 	}
-	if (s)
-		ap_close(s);
+	ap_close(s);
 
-	say("   VERDICT: burst %d, refused for %.0f s; burst after that %d", n1,
-	    r1, n2);
-	if (r2 >= 0)
-		say(", refused for %.0f s", r2);
-	if (n3 >= 0)
-		say("; at %d ms apart %d of %d", KEY_STEADY_MS, n3, KEY_STEADY_COUNT);
+	say("   VERDICT: bucket %d; back after 60 s: %d, after 180 s: %d",
+	    cap, got[0], got[1]);
+	if (paced)
+		say("; at %d ms apart %d of %d", gap, paced_ok, paced);
 	say(".\n\n");
 }
 
