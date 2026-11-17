@@ -67,6 +67,19 @@ str_id downloads_add_track_keyed(const sp_track *t, const uint8_t key[16],
 bool downloads_add_collection(dl_coll_kind kind, const char *uri,
                               const char *name, const char *art);
 
+/* What the player needs to play a download from the card, instead of the
+ * network: the file, its key as stored (wrapped) and the salt that opens
+ * it, and the format. A copy, so the preparation thread can use it. */
+typedef struct {
+	char    path[340];
+	uint8_t wrapped[DL_WRAPPED_LEN];
+	uint8_t salt[DL_SALT_LEN];
+	int     format;
+} downloads_local;
+
+/* True when `uri` is downloaded whole, with `out` filled. */
+bool downloads_local_track(const char *uri, downloads_local *out);
+
 /* Where a track is: false when it is not in the index. `pct` (may be NULL)
  * is the download's progress, while DL_ACTIVE. */
 bool downloads_track_state(const char *uri, dl_state *state, int *pct);

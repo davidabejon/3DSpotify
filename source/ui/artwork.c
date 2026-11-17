@@ -3,6 +3,7 @@
 #include "art_cache.h"
 #include "art_cache_logic.h"
 #include "art_url.h"
+#include "dl_store.h"
 #include "draw.h"
 #include "http3ds.h"
 #include "icons.h"
@@ -67,6 +68,15 @@ static void artwork_worker(void *arg)
 	void *cached = art_cache_get(artwork->url, &cached_len);
 	bool ok = cached && decode(artwork, cached, cached_len);
 	free(cached);
+	/* Then a download's cover, kept on the card: it shows without the
+	 * network. */
+	if (!ok) {
+		void *kept = dl_store_art_read(artwork->url, &cached_len);
+		ok = kept && decode(artwork, kept, cached_len);
+		if (ok)
+			art_cache_put(artwork->url, kept, cached_len);
+		free(kept);
+	}
 	if (!ok) {
 		http_reply reply = {0};
 		int rc = http_get_url(artwork->url, ARTWORK_MAX_BYTES, &reply);

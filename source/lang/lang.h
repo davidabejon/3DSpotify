@@ -210,6 +210,8 @@ typedef enum {
 	STR_DL_UNREADABLE,
 	STR_DL_OTHER_ACCOUNT,
 	STR_DL_FULL,
+	/* The Playing tab while a downloaded track opens from the card. */
+	STR_PLAYER_LOCAL_OPENING,
 
 	STR_COUNT
 } str_id;

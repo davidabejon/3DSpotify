@@ -11,6 +11,7 @@
 #include "artwork.h"
 #include "cfg3ds.h"
 #include "details.h"
+#include "dl_store.h"
 #include "downloads.h"
 #include "home_feed.h"
 #include "icons.h"
@@ -306,7 +307,10 @@ static u32 keys_down(void)
 static void download_worker(void *arg)
 {
 	download_job *job = arg;
-	job->result = track_stream_download(&job->stream, &job->stop);
+	/* A download plays from the card; the same buffer, chunks and seek. */
+	job->result = job->stream.local
+	              ? track_stream_load_local(&job->stream, &job->stop)
+	              : track_stream_download(&job->stream, &job->stop);
 	__sync_synchronize();
 	job->done = true;
 }
@@ -509,6 +513,9 @@ static bool audio_open(void)
 typedef struct {
 	spotify_session *session;
 	sp_track track;          /* a copy: the queue may change meanwhile */
+	/* The track is downloaded: played from the card, with no network. */
+	bool local;
+	downloads_local local_src;
 	track_stream stream;     /* out, taken by the player when it is used */
 	char error[256];
 	int rc;                  /* 0, AP_KEY_REFUSED or -1 */
@@ -578,8 +585,34 @@ static void download_wait(void)
 static void prepare_worker(void *arg)
 {
 	prepare_job *job = arg;
-	job->stage = STR_AP_AUTHENTICATING;
 	job->key_rc = -1;
+	if (job->local) {
+		/* Downloaded: the key is on the card, wrapped, and the file too.
+		 * It also saves the data and the access point's handshake when
+		 * there is a connection. */
+		job->stage = STR_PLAYER_LOCAL_OPENING;
+		uint8_t key[16];
+		bool opened = dl_store_unwrap_key(job->local_src.salt,
+		                                  job->track.uri,
+		                                  job->local_src.wrapped, key) &&
+		              track_stream_open_local(job->local_src.path, key,
+		                                      &job->track,
+		                                      job->local_src.format,
+		                                      &job->stream, job->error,
+		                                      sizeof(job->error)) == 0;
+		secure_clear(key, sizeof(key));
+		secure_clear(&job->local_src, sizeof(job->local_src));
+		if (opened) {
+			job->rc = 0;
+			__sync_synchronize();
+			job->done = true;
+			return;
+		}
+		/* A file that went missing, or a key from another console: the
+		 * network still has the track. */
+		job->error[0] = '\0';
+	}
+	job->stage = STR_AP_AUTHENTICATING;
 	ap_session *ap = open_playback_ap(job->session, job->error,
 	                                  sizeof(job->error));
 	if (!ap) {
@@ -716,6 +749,7 @@ static void player_start_prepare(void)
 	memset(&prep, 0, sizeof(prep));
 	prep.session = player.session;
 	prep.track = playback_queue[player.index];
+	prep.local = downloads_local_track(prep.track.uri, &prep.local_src);
 	prep.stage = STR_PLAYER_AUDIO_PREPARING;
 	prep.thread = threadCreate(prepare_worker, &prep, PREPARE_STACK,
 	                           background_priority(), -2, false);

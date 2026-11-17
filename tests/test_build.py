@@ -817,6 +817,49 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("crypt", save)
         self.assertIn("fwrite(data, 1, n, c->f)", save)
 
+    def test_downloads_play_from_the_card(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # The network path is still the network's; a download takes the
+        # card's, chosen by the stream itself.
+        worker = body(app, "static void download_worker(void *arg)")
+        self.assertIn("track_stream_download(&job->stream, &job->stop)",
+                      worker)
+        self.assertIn("track_stream_load_local(&job->stream, &job->stop)",
+                      worker)
+        # A downloaded track opens before any access point, with its key
+        # unwrapped in the worker and wiped there; the network stays as the
+        # fallback.
+        prep = body(app, "static void prepare_worker(void *arg)")
+        self.assertLess(prep.index("track_stream_open_local("),
+                        prep.index("open_playback_ap("))
+        self.assertIn("secure_clear(key, sizeof(key));", prep)
+        self.assertIn("secure_clear(&job->local_src", prep)
+        self.assertIn("downloads_local_track(prep.track.uri, &prep.local_src)",
+                      body(app, "static void player_start_prepare(void)"))
+        # The card is read through the download's own callback: one place
+        # decrypts and publishes chunks, whatever the source.
+        local = body(track, "int track_stream_load_local(")
+        self.assertIn("stream_cb(ts, (const char *)buf, got);", local)
+        self.assertIn("ts->dl_restart_at >= 0", local)
+        self.assertNotIn("decrypt(", local)
+        # Covers: the cache, then the card, then the network.
+        for name, fetch, net in (
+                ("artwork.c", "static void artwork_worker(", "http_get_url("),
+                ("thumbs.c", "static bool fetch(", "http_session_request(")):
+            source = (build.ROOT / "ui" / name).read_text(encoding="utf-8")
+            text = body(source, fetch)
+            self.assertLess(text.index("art_cache_get("),
+                            text.index("dl_store_art_read("))
+            self.assertLess(text.index("dl_store_art_read("),
+                            text.index(net))
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(

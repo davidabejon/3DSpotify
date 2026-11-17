@@ -251,4 +251,22 @@ static inline void player_sample_download(player_download_sample *sample,
 	}
 }
 
+/* Without a connection only downloaded tracks play: from position `pos`
+ * of the play order, the next one `direction` (-1 or +1) away whose track
+ * `playable` says can play, or -1. `order` maps positions to the queue's
+ * indexes, as playback_order does. Like queue_step, it never wraps around
+ * the ends: a queue played through stops instead of starting over. */
+static inline int playback_next_playable(int pos, int count, int direction,
+                                         const int *order,
+                                         const bool *playable)
+{
+	if (count <= 0 || pos < -1 || pos > count ||
+	    (direction != -1 && direction != 1))
+		return -1;
+	for (int p = pos + direction; p >= 0 && p < count; p += direction)
+		if (playable[order[p]])
+			return p;
+	return -1;
+}
+
 #endif

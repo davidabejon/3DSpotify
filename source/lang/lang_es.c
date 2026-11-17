@@ -170,6 +170,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_DL_UNREADABLE] = "No se puede leer la lista de descargas",
 	[STR_DL_OTHER_ACCOUNT] = "Estas descargas son de otra cuenta",
 	[STR_DL_FULL] = "La lista de descargas está llena",
+	[STR_PLAYER_LOCAL_OPENING] = "Abriendo la descarga...",
 	[STR_ERR_VORBIS_CHANNELS_FMT] = "Formato Vorbis no compatible (%d canales).",
 	[STR_ERR_VORBIS_OPEN_FMT] = "No se pudo abrir el audio Vorbis (error %d).",
 	[STR_ERR_DECODER_BLOCK] = "El decodificador devolvió un bloque no válido.",

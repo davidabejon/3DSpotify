@@ -3447,6 +3447,30 @@ static void test_downloads_retry_and_busy(void)
 	assert(!dl_player_busy(false, false, false));
 }
 
+static void test_playback_next_playable(void)
+{
+	/* Five tracks played in a shuffled order; only 1 and 3 downloaded. */
+	const int order[5] = { 4, 1, 0, 3, 2 };
+	const bool playable[5] = { false, true, false, true, false };
+	/* From the start: position 1 (track 1), then 3 (track 3), then none. */
+	assert(playback_next_playable(-1, 5, 1, order, playable) == 1);
+	assert(playback_next_playable(1, 5, 1, order, playable) == 3);
+	assert(playback_next_playable(3, 5, 1, order, playable) == -1);
+	/* Backwards the same, and no wrapping at the start. */
+	assert(playback_next_playable(4, 5, -1, order, playable) == 3);
+	assert(playback_next_playable(3, 5, -1, order, playable) == 1);
+	assert(playback_next_playable(1, 5, -1, order, playable) == -1);
+	assert(playback_next_playable(0, 5, -1, order, playable) == -1);
+	/* From past the end backwards: the last playable one. */
+	assert(playback_next_playable(5, 5, -1, order, playable) == 3);
+	/* Nothing playable, or nonsense in: none. */
+	const bool none[5] = { false };
+	assert(playback_next_playable(-1, 5, 1, order, none) == -1);
+	assert(playback_next_playable(0, 0, 1, order, playable) == -1);
+	assert(playback_next_playable(0, 5, 0, order, playable) == -1);
+	assert(playback_next_playable(9, 5, -1, order, playable) == -1);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -3520,5 +3544,6 @@ int main(void)
 	test_downloads_engine_states();
 	test_downloads_key_bucket();
 	test_downloads_retry_and_busy();
+	test_playback_next_playable();
 	return 0;
 }

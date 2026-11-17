@@ -499,6 +499,113 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 	return 0;
 }
 
+/* --- Playing a track from the card --------------------------------------- */
+
+/* Read in blocks the card serves at its speed (probe_offline 0.6: reading
+ * dominated decrypting, and 64 KB beat 16 KB). */
+#define LOCAL_READ (64 * 1024)
+
+int track_stream_open_local(const char *path, const uint8_t key[16],
+                            const sp_track *metadata, int format,
+                            track_stream *out, char *err, size_t errlen)
+{
+	memset(out, 0, sizeof(*out));
+	out->dl_restart_at = -1;
+	if (metadata)
+		out->meta = *metadata;
+	out->format = format;
+	FILE *f = fopen(path, "rb");
+	long size = -1;
+	if (f) {
+		if (fseek(f, 0, SEEK_END) == 0)
+			size = ftell(f);
+		fclose(f);
+	}
+	if (size <= SPOTIFY_OGG_HEADER || size > TRACK_STREAM_MAX) {
+		snprintf(err, errlen, size < 0 ? "the downloaded file is missing"
+		                               : "the downloaded file is %ld bytes",
+		         size);
+		return -1;
+	}
+	out->total = (size_t)size;
+	memcpy(out->key, key, sizeof(out->key));
+	out->local = true;
+	snprintf(out->local_path, sizeof(out->local_path), "%s", path);
+	return 0;
+}
+
+int track_stream_load_local(track_stream *ts, volatile bool *stop)
+{
+	ts->stop = stop;
+	mbedtls_aes_context aes;
+	mbedtls_aes_init(&aes);
+	uint8_t *buf = malloc(LOCAL_READ);
+	FILE *f = fopen(ts->local_path, "rb");
+	if (!buf || !f || mbedtls_aes_setkey_enc(&aes, ts->key, 128) != 0) {
+		snprintf(ts->dl_err, sizeof(ts->dl_err), "%s",
+		         !buf ? "out of memory" : !f ? "the downloaded file is missing"
+		                                     : "AES-CTR setup failed");
+		ts->dl_failed = true;
+		free(buf);
+		if (f)
+			fclose(f);
+		mbedtls_aes_free(&aes);
+		return -1;
+	}
+	memcpy(ts->nonce, AUDIO_AESIV, sizeof(ts->nonce));
+	ts->nc_off = 0;
+	ts->aes = &aes;
+
+	/* The download loop with the card for a network: stream_cb decrypts
+	 * and publishes, stops at a chunk already whole or at the end, and a
+	 * seek moves the cursor. Only a read that brings nothing is fatal. */
+	while (!ts->dl_done && !ts->cb_fatal && !(stop && *stop)) {
+		if (ts->dl_restart_at >= 0) {
+			size_t at = stream_chunk_floor((size_t)ts->dl_restart_at);
+			ts->dl_restart_at = -1;
+			ts->relocate = false;
+			stream_rewind(ts, at);
+			continue;
+		}
+		if (ts->relocate || (ts->len && span_blocked(ts))) {
+			ts->relocate = false;
+			size_t next = stream_next_missing(ts->chunk_done, ts->len,
+			                                  ts->read_hint);
+			if (next >= ts->len) {
+				ts->dl_done = true;
+				continue;
+			}
+			if (next != ts->write_pos)
+				stream_rewind(ts, next);
+		}
+		size_t want = ts->total - ts->write_pos;
+		if (want > LOCAL_READ)
+			want = LOCAL_READ;
+		size_t got = fseek(f, (long)ts->write_pos, SEEK_SET) == 0
+		             ? fread(buf, 1, want, f) : 0;
+		if (got == 0) {
+			snprintf(ts->dl_err, sizeof(ts->dl_err),
+			         "the downloaded file ends at %u",
+			         (unsigned)ts->write_pos);
+			break;
+		}
+		stream_cb(ts, (const char *)buf, got);
+	}
+	fclose(f);
+	memset(buf, 0, LOCAL_READ);
+	free(buf);
+	ts->aes = NULL;
+	mbedtls_aes_free(&aes);
+
+	if (stop && *stop)
+		return 0;
+	if (!ts->dl_done) {
+		ts->dl_failed = true;
+		return -1;
+	}
+	return 0;
+}
+
 /* --- Saving a track to the card ------------------------------------------ */
 
 /* The .part is written in blocks the card takes at its speed

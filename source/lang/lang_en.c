@@ -169,6 +169,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_DL_UNREADABLE] = "The downloads list cannot be read",
 	[STR_DL_OTHER_ACCOUNT] = "These downloads belong to another account",
 	[STR_DL_FULL] = "The downloads list is full",
+	[STR_PLAYER_LOCAL_OPENING] = "Opening the download...",
 	[STR_ERR_VORBIS_CHANNELS_FMT] = "Unsupported Vorbis format (%d channels).",
 	[STR_ERR_VORBIS_OPEN_FMT] = "Could not open the Vorbis audio (error %d).",
 	[STR_ERR_DECODER_BLOCK] = "The decoder returned an invalid block.",

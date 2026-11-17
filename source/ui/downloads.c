@@ -919,6 +919,20 @@ bool downloads_track_state(const char *uri, dl_state *state, int *pct)
 	return true;
 }
 
+bool downloads_local_track(const char *uri, downloads_local *out)
+{
+	if (!usable() || !uri || !idx->has_salt)
+		return false;
+	int t = dl_find_track(idx, uri);
+	if (t < 0 || idx->tracks[t].state != DL_DONE || !idx->tracks[t].has_key)
+		return false;
+	dl_store_track_path(uri, false, out->path, sizeof(out->path));
+	memcpy(out->wrapped, idx->tracks[t].wrapped_key, sizeof(out->wrapped));
+	memcpy(out->salt, idx->salt, sizeof(out->salt));
+	out->format = idx->tracks[t].format;
+	return true;
+}
+
 const dl_index *downloads_index(void)
 {
 	return usable() ? idx : NULL;

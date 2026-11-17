@@ -2,6 +2,7 @@
 
 #include "art_cache.h"
 #include "art_url.h"
+#include "dl_store.h"
 #include "http3ds.h"
 #include "image_util.h"
 #include "list_logic.h"
@@ -132,6 +133,16 @@ static bool fetch(http_session **session, const char *url, u8 *texels,
 	if (cached) {
 		bool ok = decode(cached, cached_len, texels, fit_w, fit_h);
 		free(cached);
+		if (ok)
+			return true;
+	}
+	/* A download's cover, kept on the card: no network needed. */
+	void *kept = dl_store_art_read(url, &cached_len);
+	if (kept) {
+		bool ok = decode(kept, cached_len, texels, fit_w, fit_h);
+		if (ok)
+			art_cache_put(url, kept, cached_len);
+		free(kept);
 		if (ok)
 			return true;
 	}
