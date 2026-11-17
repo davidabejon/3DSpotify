@@ -1607,6 +1607,9 @@ static void search_poll(void)
 		/* Cancelled from its tab: back home, as before the tabs. */
 		if (active_tab == TAB_SEARCH)
 			switch_tab(TAB_HOME);
+	} else if (!net_online) {
+		/* The connection went while it searched. */
+		view_results_error(STR_OFFLINE_SEARCH);
 	} else if (search.result == 0) {
 		view_results_show(search.tracks, search.count, 0);
 	} else {
@@ -2155,11 +2158,47 @@ static void go_online(spotify_session *session)
 	view_detail_set_offline(false);
 	cfg_set_async("username", session->username);
 	account_start(session);
+	/* A feed that failed when the connection went is fetched again; one
+	 * that came in before is kept. */
 	home_feed_start(session->host, session->library_token, session->username);
+	home_feed_retry(session->host, session->library_token, session->username);
 	view_results_idle();
 	downloads_start(session->host, session->library_token, session->username,
 	                downloads_open_ap);
 	tabs_notice(STR_ONLINE_AGAIN, true);
+}
+
+/* The connection went while the tabs ran online: they look and behave as
+ * after an offline start, and what plays from the card goes on. */
+static void go_offline(spotify_session *session)
+{
+	LightLock_Lock(&session_lock);
+	session->online = false;
+	LightLock_Unlock(&session_lock);
+	net_online = false;
+	tabbar_set_offline(true);
+	view_home_set_offline(true);
+	view_detail_set_offline(true);
+	/* A search in flight shows the same advice when it ends. */
+	if (!search_thread)
+		view_results_error(STR_OFFLINE_SEARCH);
+	/* The track it was downloading goes back to the queue, to wait. */
+	downloads_stop();
+	downloads_start(session->host, session->library_token, session->username,
+	                NULL);
+	tabs_notice(STR_OFFLINE_LOST, false);
+}
+
+/* Online, Wi-Fi is asked about once a second (ACU answers at once). */
+#define WIFI_CHECK_FRAMES 60
+
+static bool connection_lost(void)
+{
+	static int frames;
+	if (!net_online || ++frames < WIFI_CHECK_FRAMES)
+		return false;
+	frames = 0;
+	return wifi_down();
 }
 
 /* The app once the session is up: one loop for every tab, so the audio
@@ -2212,6 +2251,8 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 		downloads_poll(dl_player_busy(player_preparing(), dl.thread != NULL,
 		                              dl.done));
 		account_poll();
+		if (connection_lost())
+			go_offline(session);
 		switch (reconnect_poll(session)) {
 		case RECONNECT_ONLINE:
 			go_online(session);

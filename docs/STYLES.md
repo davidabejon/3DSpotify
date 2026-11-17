@@ -1120,6 +1120,9 @@ botones con el foco en «Descargas».
     la cuenta, la sesión arranca de nuevo como al abrir la app (pantalla de error o
     emparejar), y ahí sí se para la música.
   Las burbujas salen en la vista que esté en pantalla (Inicio, Reproducción o un detalle).
+- Si el Wi-Fi se va con la app ya conectada (se mira una vez por segundo), las pestañas
+  pasan a verse y comportarse como tras un arranque sin conexión, con la burbuja «Se perdió
+  la conexión» y sin parar lo que suena desde la SD. La descarga en curso vuelve a la cola.
 - Las descargas en cola esperan: el motor no descarga sin conexión.
 
 ## 8. Movimiento

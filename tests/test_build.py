@@ -1018,6 +1018,30 @@ class BuildTests(unittest.TestCase):
         # session.
         self.assertIn('cfg_set_async("username", session.username);', loop)
 
+    def test_losing_the_connection_goes_offline(self):
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+
+        def body(signature):
+            text = app[app.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Online, the tabs watch the Wi-Fi and turn offline when it goes,
+        # as after an offline start, without stopping what plays.
+        self.assertIn("if (connection_lost())\n\t\t\tgo_offline(session);",
+                      body("static tabs_exit run_tabs("))
+        self.assertIn("wifi_down()", body("static bool connection_lost(void)"))
+        lost = body("static void go_offline(spotify_session *session)")
+        for call in ("session->online = false;", "tabbar_set_offline(true);",
+                     "view_home_set_offline(true);",
+                     "view_detail_set_offline(true);",
+                     "view_results_error(STR_OFFLINE_SEARCH);",
+                     "downloads_stop();"):
+            self.assertIn(call, lost)
+        self.assertNotIn("player_stop", lost)
+        # Back online, a feed that failed meanwhile is fetched again.
+        self.assertIn("home_feed_retry(",
+                      body("static void go_online(spotify_session *session)"))
+
     def test_reconnecting_keeps_the_music(self):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
 

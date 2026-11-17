@@ -218,6 +218,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_OFFLINE_NOTICE] = "Sin conexión: tus descargas",
 	[STR_OFFLINE_RETRY] = "Reintentar conexión",
 	[STR_OFFLINE_STILL] = "Sigue sin conexión",
+	[STR_OFFLINE_LOST] = "Se perdió la conexión",
 	[STR_OFFLINE_CONNECTING] = "Conectando...",
 	[STR_ONLINE_AGAIN] = "Conectado de nuevo",
 	[STR_OFFLINE_SEARCH] = "Para buscar hace falta conexión. Conecta el Wi-Fi y pulsa Reintentar.",
