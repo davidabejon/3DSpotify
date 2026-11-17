@@ -63,10 +63,12 @@ static inline int grid_col_x(const grid_geom *g, int col)
 	return x;
 }
 
-/* Where a drag may start and what the bars leave visible. */
+/* Where a drag may start and what the bars leave visible: SP_1 above the
+ * first row and below the last, GRID_GAP between rows. */
 static inline ui_rect grid_area(const grid_geom *g)
 {
-	ui_rect r = { 0, g->top - SP_1, SCREEN_BOTTOM_W, g->rows * GRID_PITCH };
+	ui_rect r = { 0, g->top - SP_1, SCREEN_BOTTOM_W,
+	              g->rows * GRID_PITCH + SP_1 };
 	return r;
 }
 
