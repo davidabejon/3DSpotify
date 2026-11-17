@@ -12,6 +12,8 @@
  *        whether the main loop misses frames while it runs.
  *   0.6  AES-128-CTR in software over ~5 MB in 16 KB blocks, in memory and
  *        read back from the SD: can local playback decrypt as it reads?
+ *   F1   the downloads store (dl_store.c) on the card: a full index saved
+ *        and loaded, keys wrapped and unwrapped, a cut save recovered.
  *   0.1  two access point sessions with the same device id at once: do they
  *        coexist, or does the second one push the first out?
  *   0.2  how many audio keys in a row before the AP refuses, how fast that
@@ -37,6 +39,9 @@
 #include "pair3ds.h"
 #include "spclient.h"
 #include "tls3ds.h"
+#include "dl_store.h"
+
+#include <sys/stat.h>
 
 #define SOC_BUFFER      0x100000
 
@@ -523,6 +528,218 @@ static void step_decrypt(const char *file)
 	say("\n");
 }
 
+/* ------------------------------------------------------- F1: dl_store */
+
+/* A full index of made-up tracks through the real store: how long saving
+ * and loading 1000 take on the card, and whether the keys, the recovery
+ * from a cut save and the covers work. Left alone when there is a real
+ * index in the folder already; everything it writes is removed after. */
+#define STORE_TRACKS DL_TRACKS_MAX
+
+/* A made-up track URI, unique per `i`, in base62 like a real one. */
+static void fake_uri(int i, char *out, size_t outlen)
+{
+	snprintf(out, outlen, "spotify:track:pr%020d", i);
+}
+
+static bool same_file(const char *path, const void *data, size_t len)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f)
+		return false;
+	uint8_t *buf = malloc(len + 1);
+	size_t got = buf ? fread(buf, 1, len + 1, f) : 0;
+	fclose(f);
+	bool same = buf && got == len && memcmp(buf, data, len) == 0;
+	free(buf);
+	return same;
+}
+
+static void step_store(void)
+{
+	say("F1 downloads store, %d tracks\n", STORE_TRACKS);
+	char path[340], tmp[350], err[160];
+	if (!dl_store_init()) {
+		say("   dl_store_init failed\n\n");
+		return;
+	}
+	char dir[256];
+	cfg_dir(dir, sizeof(dir));
+	snprintf(path, sizeof(path), "%sdownloads/index.dat", dir[0] ? dir : "sdmc:/");
+	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+	FILE *probe = fopen(path, "r");
+	if (probe) {
+		fclose(probe);
+		say("   %s exists: not touching real downloads\n\n", path);
+		return;
+	}
+
+	dl_index *idx = malloc(sizeof(dl_index));
+	dl_index *back = malloc(sizeof(dl_index));
+	if (!idx || !back) {
+		say("   out of memory for two indexes (%u KB each)\n\n",
+		    (unsigned)(sizeof(dl_index) / 1024));
+		free(idx);
+		free(back);
+		return;
+	}
+	say("   dl_index is %u KB\n", (unsigned)(sizeof(dl_index) / 1024));
+	dl_index_clear(idx);
+	snprintf(idx->owner, sizeof(idx->owner), "probe");
+
+	/* Long names, so the file is as big as a real full one gets. */
+	uint8_t first_key[16], last_key[16];
+	double wrap_ms = 0;
+	bool wrapped = true;
+	for (int i = 0; i < STORE_TRACKS; i++) {
+		dl_track t;
+		memset(&t, 0, sizeof(t));
+		fake_uri(i, t.uri, sizeof(t.uri));
+		snprintf(t.name, sizeof(t.name), "Track %d with a long enough name "
+		         "to fill a row and then some more", i);
+		snprintf(t.artist, sizeof(t.artist), "Artist number %d", i % 50);
+		snprintf(t.album, sizeof(t.album), "Album number %d", i % 80);
+		snprintf(t.art_small, sizeof(t.art_small),
+		         "https://i.scdn.co/image/ab67616d00004851%024d", i);
+		snprintf(t.art_large, sizeof(t.art_large),
+		         "https://i.scdn.co/image/ab67616d00001e02%024d", i);
+		t.duration_ms = 200000 + i;
+		t.size = 4000000 + (uint32_t)i;
+		int at = dl_add_track(idx, &t, i % 3 == 0, (uint32_t)i);
+		if (at < 0)
+			break;
+		uint8_t key[16];
+		PS_GenerateRandomBytes(key, sizeof(key));
+		double t0 = now_ms();
+		if (!dl_store_wrap_key(idx, idx->tracks[at].uri, key,
+		                       idx->tracks[at].wrapped_key))
+			wrapped = false;
+		wrap_ms += now_ms() - t0;
+		idx->tracks[at].has_key = true;
+		idx->tracks[at].state = DL_DONE;
+		if (i == 0)
+			memcpy(first_key, key, 16);
+		if (i == STORE_TRACKS - 1)
+			memcpy(last_key, key, 16);
+		memset(key, 0, sizeof(key));
+	}
+	say("   wrap %d keys: %s, %.0f ms (%.2f ms each)\n", idx->track_count,
+	    wrapped ? "ok" : "FAILED", wrap_ms, wrap_ms / idx->track_count);
+	dl_collection c;
+	memset(&c, 0, sizeof(c));
+	snprintf(c.uri, sizeof(c.uri), "spotify:playlist:probe");
+	c.kind = DL_COLL_PLAYLIST;
+	snprintf(c.name, sizeof(c.name), "Probe playlist");
+	int ci = dl_add_collection(idx, &c, 1);
+	for (int i = 0; i < 500 && ci >= 0; i++)
+		dl_add_ref(idx, ci, i);
+
+	double t0 = now_ms();
+	int rc = dl_store_save(idx, err, sizeof(err));
+	double save_ms = now_ms() - t0;
+	struct stat st;
+	long size = stat(path, &st) == 0 ? (long)st.st_size : -1;
+	say("   save: %s in %.0f ms, %ld KB\n", rc == 0 ? "ok" : err, save_ms,
+	    size / 1024);
+
+	t0 = now_ms();
+	rc = dl_store_load(back, err, sizeof(err));
+	double load_ms = now_ms() - t0;
+	bool same = rc == 0 && back->track_count == idx->track_count &&
+	            back->coll_count == 1 && back->ref_count == idx->ref_count &&
+	            strcmp(back->owner, "probe") == 0 &&
+	            memcmp(back->salt, idx->salt, DL_SALT_LEN) == 0 &&
+	            strcmp(back->tracks[STORE_TRACKS - 1].name,
+	                   idx->tracks[STORE_TRACKS - 1].name) == 0;
+	say("   load: %s in %.0f ms, %s\n", rc == 0 ? "ok" : err, load_ms,
+	    same ? "same index" : "DIFFERENT");
+
+	uint8_t key[16];
+	bool k0 = dl_store_unwrap_key(back, back->tracks[0].uri,
+	                              back->tracks[0].wrapped_key, key) &&
+	          memcmp(key, first_key, 16) == 0;
+	int last = back->track_count - 1;
+	bool k1 = dl_store_unwrap_key(back, back->tracks[last].uri,
+	                              back->tracks[last].wrapped_key, key) &&
+	          memcmp(key, last_key, 16) == 0;
+	bool moved = dl_store_unwrap_key(back, back->tracks[1].uri,
+	                                 back->tracks[0].wrapped_key, key);
+	memset(key, 0, sizeof(key));
+	memset(first_key, 0, sizeof(first_key));
+	memset(last_key, 0, sizeof(last_key));
+	say("   unwrap first/last: %s/%s; under another track: %s\n",
+	    k0 ? "ok" : "FAILED", k1 ? "ok" : "FAILED",
+	    moved ? "OPENED (wrong)" : "refused (right)");
+
+	/* A cut between writing .tmp and renaming it: only the .tmp is left,
+	 * and it is the index to keep. */
+	remove(tmp);
+	rename(path, tmp);
+	rc = dl_store_load(back, err, sizeof(err));
+	bool restored = stat(path, &st) == 0 && stat(tmp, &st) != 0;
+	say("   only a whole .tmp: %s, %d tracks, index.dat %s\n",
+	    rc == 0 ? "loaded" : err, back->track_count,
+	    restored ? "restored" : "NOT restored");
+
+	/* A cut while writing .tmp: index.dat is still the last whole one. */
+	FILE *f = fopen(tmp, "w");
+	if (f) {
+		fprintf(f, "%s%c%d\nO%cother\n", DL_MAGIC, DL_SEP, DL_VERSION, DL_SEP);
+		fclose(f);
+	}
+	rc = dl_store_load(back, err, sizeof(err));
+	say("   half a .tmp: %s, owner %s, .tmp %s\n", rc == 0 ? "loaded" : err,
+	    back->owner, stat(tmp, &st) != 0 ? "removed" : "STILL THERE");
+
+	/* Another version is refused, and left as it was. */
+	f = fopen(path, "w");
+	if (f) {
+		fprintf(f, "%s%c%d\nE\n", DL_MAGIC, DL_SEP, DL_VERSION + 1);
+		fclose(f);
+	}
+	rc = dl_store_load(back, err, sizeof(err));
+	say("   another version: %s\n", rc < 0 ? "refused (right)" : "LOADED");
+
+	/* A cover in and out. */
+	static uint8_t art[12 * 1024];
+	PS_GenerateRandomBytes(art, sizeof(art));
+	const char *url = "https://i.scdn.co/image/probe";
+	bool aw = dl_store_art_write(url, art, sizeof(art));
+	size_t alen = 0;
+	uint8_t *aread = dl_store_art_read(url, &alen);
+	bool ar = aread && alen == sizeof(art) && memcmp(aread, art, alen) == 0;
+	free(aread);
+	char apath[340];
+	dl_store_art_path(url, apath, sizeof(apath));
+	say("   cover: write %s, has %s, read %s\n", aw ? "ok" : "FAILED",
+	    dl_store_art_has(url) ? "yes" : "NO", ar ? "same" : "DIFFERENT");
+	remove(apath);
+
+	/* A part file and its removal. */
+	char tpath[340];
+	dl_store_track_path(idx->tracks[0].uri, true, tpath, sizeof(tpath));
+	f = fopen(tpath, "wb");
+	if (f) {
+		fwrite(art, 1, 100, f);
+		fclose(f);
+	}
+	bool had = same_file(tpath, art, 100);
+	bool gone = dl_store_remove_track(idx->tracks[0].uri) &&
+	            stat(tpath, &st) != 0;
+	say("   %s: written %s, removed %s\n", strrchr(tpath, '/') + 1,
+	    had ? "ok" : "FAILED", gone ? "ok" : "FAILED");
+
+	say("   free %.1f MB; index says %.1f MB used\n",
+	    dl_store_free_bytes() / 1048576.0,
+	    dl_store_used_bytes(idx) / 1048576.0);
+
+	remove(path);
+	remove(tmp);
+	free(idx);
+	free(back);
+	say("\n");
+}
+
 /* --------------------------------------------------------------- network */
 
 typedef struct {
@@ -982,6 +1199,8 @@ int main(int argc, char **argv)
 		step_decrypt(written);
 	if (written[0])
 		remove(written);
+	if (ps)
+		step_store();
 
 	if (!wifi) {
 		say("No Wi-Fi: 0.1 and 0.2 skipped.\n");

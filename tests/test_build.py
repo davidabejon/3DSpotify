@@ -733,6 +733,36 @@ class BuildTests(unittest.TestCase):
             self.assertIn(heading, text, readme)
             self.assertIn("#3FA2FF", text, readme)
 
+    def test_download_keys_are_only_stored_wrapped(self):
+        import re
+        store = (build.ROOT / "platform3ds" / "dl_store.c").read_text(
+            encoding="utf-8")
+        # Nothing in the store prints or logs: a key cannot leak through a
+        # line that is not there.
+        self.assertIsNone(re.search(r"(?<![A-Za-z_])(f|v|)printf\(", store))
+        self.assertNotIn("fputs(", store.replace("fputs(line, f)", ""))
+        self.assertNotIn("say(", store)
+        self.assertNotIn("native_log", store)
+        # The key goes in and out through AES-GCM, authenticated by the
+        # track's URI, under a key derived from this console.
+        self.assertIn("mbedtls_gcm_crypt_and_tag", store)
+        self.assertIn("mbedtls_gcm_auth_decrypt", store)
+        self.assertIn("mbedtls_hkdf(", store)
+        self.assertIn("PS_GetLocalFriendCodeSeed", store)
+        self.assertIn("PS_GetDeviceId", store)
+        # The KEK is wiped after every use, on every path.
+        for fn in ("bool dl_store_wrap_key(", "bool dl_store_unwrap_key("):
+            body = store[store.index(fn):]
+            body = body[:body.index("\n}\n") + 2]
+            self.assertIn("mbedtls_platform_zeroize(kek, sizeof(kek));", body)
+            self.assertLess(body.index("mbedtls_gcm_free(&gcm);"),
+                            body.index("return ok;"))
+        # The index keeps only the wrapped form.
+        logic = (build.ROOT / "ui" / "downloads_logic.h").read_text(
+            encoding="utf-8")
+        self.assertIn("wrapped_key[DL_WRAPPED_LEN]", logic)
+        self.assertIsNone(re.search(r"uint8_t\s+key\[", logic))
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(

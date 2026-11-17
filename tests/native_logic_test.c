@@ -3,6 +3,7 @@
 #include "art_url.h"
 #include "detail_logic.h"
 #include "detail_nav.h"
+#include "downloads_logic.h"
 #include "grid_logic.h"
 #include "home_feed_logic.h"
 #include "home_logic.h"
@@ -3018,6 +3019,283 @@ static void test_about_layout(void)
 	assert(about_notice_w() == card.w);
 }
 
+/* The downloads index is big: one, static, for every test below. */
+static dl_index dl_test_idx, dl_test_back;
+
+static dl_track dl_test_track(const char *uri, const char *name)
+{
+	dl_track t;
+	memset(&t, 0, sizeof(t));
+	snprintf(t.uri, sizeof(t.uri), "%s", uri);
+	snprintf(t.name, sizeof(t.name), "%s", name);
+	return t;
+}
+
+static dl_collection dl_test_coll(const char *uri, dl_coll_kind kind)
+{
+	dl_collection c;
+	memset(&c, 0, sizeof(c));
+	snprintf(c.uri, sizeof(c.uri), "%s", uri);
+	c.kind = kind;
+	return c;
+}
+
+/* Serializes `idx` the way dl_store.c does, one line after another. */
+static size_t dl_test_serialize(const dl_index *idx, char *out, size_t cap)
+{
+	char line[DL_LINE_MAX];
+	int cursor = 0;
+	size_t n = 0;
+	while (dl_index_line(idx, &cursor, line, sizeof(line))) {
+		size_t len = strlen(line);
+		assert(n + len + 1 < cap);
+		memcpy(out + n, line, len);
+		n += len;
+		out[n++] = '\n';
+	}
+	out[n] = '\0';
+	return n;
+}
+
+static void test_downloads_index_round_trip(void)
+{
+	static char text[64 * 1024], again[64 * 1024];
+	dl_index *idx = &dl_test_idx, *back = &dl_test_back;
+	dl_index_clear(idx);
+	snprintf(idx->owner, sizeof(idx->owner), "someone");
+	idx->has_salt = true;
+	for (int i = 0; i < DL_SALT_LEN; i++)
+		idx->salt[i] = (uint8_t)(i * 17);
+
+	dl_track full = dl_test_track("spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+	                              "Song");
+	snprintf(full.artist, sizeof(full.artist), "Artist");
+	snprintf(full.album, sizeof(full.album), "Album");
+	snprintf(full.art_small, sizeof(full.art_small), "https://i.scdn.co/a");
+	snprintf(full.art_large, sizeof(full.art_large), "https://i.scdn.co/b");
+	snprintf(full.album_uri, sizeof(full.album_uri), "spotify:album:x");
+	snprintf(full.artist_uri, sizeof(full.artist_uri), "spotify:artist:y");
+	full.duration_ms = 215000;
+	full.track_number = 3;
+	full.disc_number = 1;
+	full.year = 2004;
+	full.is_explicit = true;
+	full.format = 1;
+	full.size = 4321000;
+	for (int i = 0; i < 20; i++)
+		full.file_id[i] = (uint8_t)(0xA0 + i);
+	int a = dl_add_track(idx, &full, true, 100);
+	assert(a == 0);
+	idx->tracks[a].has_key = true;
+	for (int i = 0; i < DL_WRAPPED_LEN; i++)
+		idx->tracks[a].wrapped_key[i] = (uint8_t)(255 - i);
+	idx->tracks[a].state = DL_DONE;
+
+	/* Empty fields, and a name carrying the separator and a newline: they
+	 * come back as spaces, never as extra fields or lines. */
+	dl_track bare = dl_test_track("spotify:track:0000000000000000000002",
+	                              "Bad\x1fname\nhere");
+	int b = dl_add_track(idx, &bare, false, 200);
+	idx->tracks[b].state = DL_FAILED;
+	snprintf(idx->tracks[b].error, sizeof(idx->tracks[b].error), "No key");
+
+	dl_collection pl = dl_test_coll("spotify:playlist:p1", DL_COLL_PLAYLIST);
+	snprintf(pl.name, sizeof(pl.name), "Mix");
+	pl.total = 40;
+	int c = dl_add_collection(idx, &pl, 300);
+	assert(dl_add_ref(idx, c, b) && dl_add_ref(idx, c, a));
+
+	size_t len = dl_test_serialize(idx, text, sizeof(text));
+	assert(strncmp(text, "3dspotify-dl\x1f" "1\n", 15) == 0);
+	assert(text[len - 2] == 'E' && text[len - 3] == '\n');
+
+	bool whole = false;
+	assert(dl_index_parse(text, len, back, &whole) && whole);
+	assert(strcmp(back->owner, "someone") == 0);
+	assert(back->has_salt && memcmp(back->salt, idx->salt, DL_SALT_LEN) == 0);
+	assert(back->track_count == 2 && back->coll_count == 1 &&
+	       back->ref_count == 2);
+	const dl_track *t = &back->tracks[0];
+	assert(strcmp(t->uri, full.uri) == 0 && strcmp(t->name, "Song") == 0);
+	assert(strcmp(t->artist, "Artist") == 0 && strcmp(t->album, "Album") == 0);
+	assert(strcmp(t->art_large, "https://i.scdn.co/b") == 0);
+	assert(strcmp(t->artist_uri, "spotify:artist:y") == 0);
+	assert(t->duration_ms == 215000 && t->track_number == 3 &&
+	       t->disc_number == 1 && t->year == 2004 && t->is_explicit);
+	assert(t->format == 1 && t->size == 4321000);
+	assert(memcmp(t->file_id, full.file_id, 20) == 0);
+	assert(t->has_key &&
+	       memcmp(t->wrapped_key, idx->tracks[0].wrapped_key,
+	              DL_WRAPPED_LEN) == 0);
+	assert(t->state == DL_DONE && t->standalone && t->added_at == 100);
+	assert(strcmp(back->tracks[1].name, "Bad name here") == 0);
+	assert(back->tracks[1].state == DL_FAILED && !back->tracks[1].has_key);
+	assert(strcmp(back->tracks[1].error, "No key") == 0);
+	assert(back->tracks[1].artist[0] == '\0');
+	assert(back->colls[0].kind == DL_COLL_PLAYLIST &&
+	       strcmp(back->colls[0].name, "Mix") == 0 &&
+	       back->colls[0].total == 40 && back->colls[0].added_at == 300);
+	/* The refs keep the collection's order. */
+	int order[4];
+	assert(dl_collection_tracks(back, 0, order, 4) == 2);
+	assert(order[0] == 1 && order[1] == 0);
+	assert(back->next_seq == idx->next_seq);
+
+	/* Serializing what was read gives the same bytes. */
+	size_t len2 = dl_test_serialize(back, again, sizeof(again));
+	assert(len2 == len && memcmp(text, again, len) == 0);
+}
+
+static void test_downloads_index_damage(void)
+{
+	dl_index *idx = &dl_test_idx;
+	bool whole = true;
+
+	/* Another version, or not this file at all: refused whole. */
+	const char *v2 = "3dspotify-dl\x1f" "2\nT\x1fspotify:track:a\nE\n";
+	assert(!dl_index_parse(v2, strlen(v2), idx, &whole));
+	assert(idx->track_count == 0 && !whole);
+	const char *junk = "hello\nE\n";
+	assert(!dl_index_parse(junk, strlen(junk), idx, &whole));
+	assert(!dl_index_parse("", 0, idx, &whole));
+
+	/* Lines not understood are skipped; the rest stays. A line without the
+	 * separator, an unknown kind, a track with no URI, a ref to nothing, a
+	 * repeated track, and a bad hex key (the track stays, keyless). */
+	const char *text =
+		"3dspotify-dl\x1f" "1\r\n"
+		"garbage\n"
+		"X\x1f" "what\n"
+		"T\x1f\x1f" "No uri\n"
+		"T\x1fspotify:track:a\x1f" "A\n"
+		"T\x1fspotify:track:a\x1f" "Again\n"
+		"T\x1fspotify:track:b\x1f" "B\x1f\x1f\x1f\x1f\x1f\x1f\x1f"
+		"1\x1f" "2\x1f" "3\x1f" "4\x1f" "0\x1f" "1\x1f" "99\x1f"
+		"zz\x1fnothex\x1f" "3\x1f" "0\x1f" "5\x1f" "7\x1f\n"
+		"R\x1fspotify:album:none\x1fspotify:track:a\n"
+		"C\x1fspotify:album:c\x1f" "a\x1f" "Album\n"
+		"R\x1fspotify:album:c\x1fspotify:track:b\n"
+		"R\x1fspotify:album:c\x1fspotify:track:missing\n";
+	assert(dl_index_parse(text, strlen(text), idx, &whole));
+	assert(!whole);              /* no E line: written only in part */
+	assert(idx->track_count == 2 && idx->coll_count == 1 &&
+	       idx->ref_count == 1);
+	assert(strcmp(idx->tracks[0].name, "A") == 0);
+	assert(idx->tracks[0].state == DL_QUEUED);
+	/* A done track without its key cannot play: back to the queue. */
+	assert(!idx->tracks[1].has_key && idx->tracks[1].state == DL_QUEUED);
+	assert(idx->tracks[1].size == 99 && idx->tracks[1].seq == 7);
+	assert(idx->next_seq == 8);
+	assert(idx->colls[0].kind == DL_COLL_ALBUM);
+
+	/* A download that was running when the app stopped is queued again;
+	 * nothing after the end marker is read. */
+	const char *active =
+		"3dspotify-dl\x1f" "1\n"
+		"T\x1fspotify:track:a\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f"
+		"\x1f\x1f\x1f\x1f\x1f\x1f" "1\n"
+		"E\n"
+		"T\x1fspotify:track:after-end\n";
+	assert(dl_index_parse(active, strlen(active), idx, &whole) && whole);
+	assert(idx->track_count == 1 && idx->tracks[0].state == DL_QUEUED);
+}
+
+static void test_downloads_refs(void)
+{
+	dl_index *idx = &dl_test_idx;
+	dl_index_clear(idx);
+	dl_track t1 = dl_test_track("spotify:track:1", "1");
+	dl_track t2 = dl_test_track("spotify:track:2", "2");
+	dl_track t3 = dl_test_track("spotify:track:3", "3");
+	dl_track t4 = dl_test_track("spotify:track:4", "4");
+	dl_collection album = dl_test_coll("spotify:album:a", DL_COLL_ALBUM);
+	dl_collection list = dl_test_coll("spotify:playlist:p", DL_COLL_PLAYLIST);
+	int ca = dl_add_collection(idx, &album, 1);
+	int cp = dl_add_collection(idx, &list, 2);
+	/* 1 only in the album; 2 in both; 3 in the album and on its own; 4
+	 * only in the playlist. */
+	int a1 = dl_add_track(idx, &t1, false, 1);
+	int a2 = dl_add_track(idx, &t2, false, 1);
+	int a3 = dl_add_track(idx, &t3, false, 1);
+	int a4 = dl_add_track(idx, &t4, false, 1);
+	assert(dl_add_track(idx, &t3, true, 9) == a3);    /* already there */
+	assert(idx->tracks[a3].standalone && idx->tracks[a3].added_at == 1);
+	assert(dl_add_ref(idx, ca, a1) && dl_add_ref(idx, ca, a2) &&
+	       dl_add_ref(idx, ca, a3));
+	assert(dl_add_ref(idx, cp, a2) && dl_add_ref(idx, cp, a4));
+	assert(dl_add_ref(idx, cp, a4) && idx->ref_count == 5);   /* once */
+	assert(dl_track_refs(idx, a2) == 2 && dl_track_refs(idx, a3) == 1);
+
+	idx->tracks[a1].state = DL_DONE;
+	idx->tracks[a2].state = DL_DONE;
+	int done, count;
+	dl_collection_progress(idx, ca, &done, &count);
+	assert(done == 2 && count == 3);
+
+	/* Removing the album drops track 1 only: 2 is in the playlist, 3 was
+	 * downloaded on its own. */
+	char orphans[4][SP_URI_MAX];
+	assert(dl_remove_collection(idx, ca, orphans, 4) == 1);
+	assert(strcmp(orphans[0], "spotify:track:1") == 0);
+	assert(idx->coll_count == 1 && idx->track_count == 3);
+	assert(dl_find_track(idx, "spotify:track:1") < 0);
+	/* The refs still point at the right tracks after the shift. */
+	cp = dl_find_collection(idx, "spotify:playlist:p");
+	assert(cp == 0);
+	int order[4];
+	assert(dl_collection_tracks(idx, cp, order, 4) == 2);
+	assert(strcmp(idx->tracks[order[0]].uri, "spotify:track:2") == 0);
+	assert(strcmp(idx->tracks[order[1]].uri, "spotify:track:4") == 0);
+
+	/* Then the playlist: 2 and 4 go, 3 stays on its own. */
+	assert(dl_remove_collection(idx, cp, orphans, 4) == 2);
+	assert(idx->coll_count == 0 && idx->ref_count == 0);
+	assert(idx->track_count == 1 &&
+	       strcmp(idx->tracks[0].uri, "spotify:track:3") == 0);
+	assert(dl_remove_collection(idx, 5, orphans, 4) == 0);
+}
+
+static void test_downloads_queue_order(void)
+{
+	dl_index *idx = &dl_test_idx;
+	dl_index_clear(idx);
+	assert(dl_next_queued(idx) == -1);
+	dl_track a = dl_test_track("spotify:track:a", "a");
+	dl_track b = dl_test_track("spotify:track:b", "b");
+	dl_track c = dl_test_track("spotify:track:c", "c");
+	int ia = dl_add_track(idx, &a, true, 1);
+	int ib = dl_add_track(idx, &b, true, 1);
+	int ic = dl_add_track(idx, &c, true, 1);
+	assert(idx->tracks[ia].state == DL_QUEUED);
+	assert(dl_next_queued(idx) == ia);
+
+	/* Active and failed are not picked; the next in order is. */
+	idx->tracks[ia].state = DL_ACTIVE;
+	assert(dl_next_queued(idx) == ib);
+	idx->tracks[ib].state = DL_FAILED;
+	assert(dl_next_queued(idx) == ic);
+
+	/* A retry goes to the end of the queue. */
+	dl_requeue(idx, ib);
+	assert(idx->tracks[ib].state == DL_QUEUED);
+	assert(dl_next_queued(idx) == ic);
+	idx->tracks[ic].state = DL_DONE;
+	assert(dl_next_queued(idx) == ib);
+	idx->tracks[ib].state = DL_DONE;
+	idx->tracks[ia].state = DL_DONE;
+	assert(dl_next_queued(idx) == -1);
+}
+
+static void test_downloads_owner(void)
+{
+	assert(dl_owner_matches("", "me"));
+	assert(dl_owner_matches(NULL, NULL));
+	assert(dl_owner_matches("me", "me"));
+	assert(!dl_owner_matches("me", "someone"));
+	assert(!dl_owner_matches("me", ""));
+	assert(!dl_owner_matches("me", NULL));
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -3083,5 +3361,10 @@ int main(void)
 	test_queue_drop_known();
 	test_language_tables();
 	test_language_switching();
+	test_downloads_index_round_trip();
+	test_downloads_index_damage();
+	test_downloads_refs();
+	test_downloads_queue_order();
+	test_downloads_owner();
 	return 0;
 }
