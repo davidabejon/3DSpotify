@@ -885,6 +885,13 @@ int main(int argc, char **argv)
 	say("3DS Spotify -- search probes\n");
 	say("built %s\n\n", BUILD_STAMP);
 
+	/* TLS and the AP handshake draw their randomness from PS. */
+	bool ps = R_SUCCEEDED(psInit());
+	if (!ps) {
+		say("psInit failed; no entropy source.\n");
+		goto hold;
+	}
+
 	u32 *soc = memalign(0x1000, SOC_BUFFER);
 	if (!soc || R_FAILED(socInit(soc, SOC_BUFFER))) {
 		say("socInit failed.\n");
@@ -921,6 +928,8 @@ hold:
 	if (logf)
 		fclose(logf);
 	tls_global_exit();
+	if (ps)
+		psExit();
 	socExit();
 	gfxExit();
 	return 0;
