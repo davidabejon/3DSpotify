@@ -213,9 +213,11 @@ int ap_resolve_list(ap_candidate *out, int max, char *err, size_t errlen)
 			memcpy(entry, q1 + 1, len);
 			entry[len] = '\0';
 			char *colon = strrchr(entry, ':');
-			if (colon) {
-				*colon = '\0';
-				snprintf(out[n].host, sizeof(out[n].host), "%s", entry);
+			size_t host_len = colon ? (size_t)(colon - entry) : 0;
+			/* A host cut short would be another host: skip it. */
+			if (colon && host_len < sizeof(out[n].host)) {
+				memcpy(out[n].host, entry, host_len);
+				out[n].host[host_len] = '\0';
 				out[n].port = (uint16_t)atoi(colon + 1);
 				n++;
 			}

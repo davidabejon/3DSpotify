@@ -371,7 +371,13 @@ void details_open_track(app_tab tab, const sp_track *list, int count,
 	d->count = count;
 	d->selected = index - from;
 	const sp_track *t = &d->tracks[d->selected];
-	snprintf(d->uri, sizeof(d->uri), "%s", t->uri);
+	/* A track URI always fits; a longer one is not a track's, and cut short
+	 * it would name another, so it is left out. */
+	size_t uri_len = strlen(t->uri);
+	if (uri_len < sizeof(d->uri))
+		memcpy(d->uri, t->uri, uri_len + 1);
+	else
+		d->uri[0] = '\0';
 	snprintf(d->title, sizeof(d->title), "%s", t->name);
 	snprintf(d->subtitle, sizeof(d->subtitle), "%s", t->artist);
 	snprintf(d->art, sizeof(d->art), "%s", t->art_large);
