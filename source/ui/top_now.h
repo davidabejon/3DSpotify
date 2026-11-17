@@ -43,7 +43,9 @@ void top_now_draw_card(artwork_state *art);
  * (marquee_logic.h; such a text is the whole string, not fitted). */
 void top_now_draw_header(artwork_state *art, bool centred,
                          const C2D_Text *title, const C2D_Text *const *lines,
-                         int count, const int *rolls);
+                         int count, const int *rolls, int icon);
+/* `icon` shows in the cover's place while it loads, or when there is none
+ * (centred only: the card of what plays shows a note). */
 void top_now_draw_big(artwork_state *art);
 
 #endif

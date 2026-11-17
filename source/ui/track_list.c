@@ -456,7 +456,8 @@ static void draw_number(const track_list *l, ui_rect row, int index)
 
 /* A collection's cover (5.3): two `capa_luz` frames stacked behind it,
  * 2 and 4 px up and to the right, like records in a pile; and a badge, the
- * album or playlist icon, at its bottom left. */
+ * album or playlist icon, at its bottom left. Without a cover the square
+ * shows that icon itself, as the downloads manager does: no badge then. */
 static void draw_stack(const track_list *l, ui_rect row, int index,
                        const track_row *r)
 {
@@ -472,6 +473,8 @@ static void draw_stack(const track_list *l, ui_rect row, int index,
 	bool liked = strcmp(l->tracks[index].uri, SP_LIKED_URI) == 0;
 	ui_art_or(box, shown ? &image : NULL,
 	          liked ? ICON_HEART : album ? ICON_ALBUM : ICON_PLAYLIST);
+	if (!shown)
+		return;
 	ui_rect badge = { box.x, box.y + box.h - ICON_S, ICON_S, ICON_S };
 	ui_fill(badge, COL_TINTA);
 	C2D_Image icon = icon_image(album ? ICON_ALBUM : ICON_PLAYLIST);

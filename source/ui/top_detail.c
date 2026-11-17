@@ -2,6 +2,7 @@
 
 #include "downloads_view_logic.h"
 #include "draw.h"
+#include "icons.h"
 #include "lang.h"
 #include "list_logic.h"
 #include "marquee_logic.h"
@@ -244,6 +245,27 @@ static bool changed(const detail_doc *d)
 
 /* --- State and drawing ------------------------------------------------- */
 
+/* What shows where the cover goes until it comes, or when there is none:
+ * the icon of what it is, as in the lists (an album's disc, a playlist's
+ * lines, Liked Songs' heart, the Downloads' arrow); a note for a track. */
+static int placeholder(const detail_doc *d)
+{
+	bool liked = strcmp(d->uri, SP_LIKED_URI) == 0;
+	switch (d->kind) {
+	case DETAIL_ALBUM:
+		return ICON_ALBUM;
+	case DETAIL_PLAYLIST:
+		return liked ? ICON_HEART : ICON_PLAYLIST;
+	case DETAIL_OFFLINE_COLLECTION:
+		return liked ? ICON_HEART
+		       : d->offline_album ? ICON_ALBUM : ICON_PLAYLIST;
+	case DETAIL_DOWNLOADS:
+		return ICON_DOWNLOAD;
+	default:
+		return ICON_NOTE;
+	}
+}
+
 /* How far every text has rolled by now: -1 for one that fits. */
 static void current_rolls(int *rolls)
 {
@@ -279,6 +301,6 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art)
 		lines[i] = &texts[1 + i];
 	current_rolls(drawn_rolls);
 	top_now_draw_header(art, true, &texts[0], lines, line_count,
-	                    drawn_rolls);
+	                    drawn_rolls, placeholder(doc));
 	drawn_valid = true;
 }

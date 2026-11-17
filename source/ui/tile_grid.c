@@ -307,7 +307,7 @@ static void draw_tile(const tile_grid *g, ui_rect tile, int index,
 	bool saved = g && index >= 0 && strcmp(g->items[index].uri,
 	                                       DL_HOME_URI) == 0;
 	ui_art_or(grid_cover_rect(tile), shown ? &image : NULL,
-	          liked ? ICON_HEART : saved ? ICON_DOWNLOAD : ICON_NOTE);
+	          liked ? ICON_HEART : saved ? ICON_DOWNLOAD : ICON_PLAYLIST);
 	if (index < 0)
 		return;
 	ui_text(&g->name[index], grid_text_x(tile), tile.y + tile.h / 2,

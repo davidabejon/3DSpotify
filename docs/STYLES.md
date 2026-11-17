@@ -431,8 +431,10 @@ La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 
 
 - Alto 32 px: el mínimo táctil (§4.4), así que cada tesela es un objetivo válido.
 - Portada 24×24 (`TILE_COVER`) a 4 px de los bordes izquierdo, superior e inferior, con
-  contorno 1 px `tinta`; sin imagen, cuadrado `capa_alta` con el icono de nota centrado,
-  como la fila. El layout no cambia al llegar la imagen.
+  contorno 1 px `tinta`; sin imagen, cuadrado `capa_alta` con el icono de lo que es
+  centrado: líneas para una playlist (como en el gestor de descargas, §7.13), corazón para
+  «Canciones que te gustan», flecha para «Descargas». El layout no cambia al llegar la
+  imagen.
 - Nombre en `t_cuerpo` · `texto`, una línea, recortado con `...` (§3.3), a `e2` de la
   portada y con `e2` de margen derecho. Sin nombre: «(sin titulo)».
 - Estados idénticos a la fila (§5.3, §6.3): reposo `capa` con contorno; en foco `clorofila`
@@ -996,7 +998,8 @@ Error:
 
 - Carátula, portada o retrato a 160×160 con contorno y sombra dura de 3 px, como la ficha de
   §7.5, pero sin tiempos ni barra: la carátula va centrada en la altura (y 40) y el bloque de
-  textos, centrado junto a ella.
+  textos, centrado junto a ella. Sin imagen, o mientras llega, el icono de lo que es: disco
+  (álbum), líneas (playlist), corazón, flecha (Descargas) o nota (canción, artista).
 - Título en `t_titulo` · `texto` y hasta 4 líneas en `t_cuerpo` · `texto_2`:
   - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
     año.
