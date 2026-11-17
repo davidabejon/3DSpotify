@@ -263,7 +263,8 @@ class BuildTests(unittest.TestCase):
             self.assertIn("secure_clear(job.username", body)
         self.assertIn("background_priority()", feed)
         self.assertNotIn("api.spotify.com", feed)
-        # Every new string in both languages; Spanish without accents.
+        # Every new string in both languages (Spanish with its accents and
+        # ñ since ef1e295: the native tests check the text is valid UTF-8).
         keys = ("STR_HOME_RECENT", "STR_HOME_YOUR_PLAYLISTS",
                 "STR_HOME_SHOW_MORE", "STR_HOME_EMPTY",
                 "STR_HOME_FAILED_TITLE", "STR_HINT_OPEN", "STR_PLAYLIST_TYPE",
@@ -273,9 +274,6 @@ class BuildTests(unittest.TestCase):
             for key in keys:
                 match = re.search(r"\[" + key + r"\] = \"([^\"]+)\"", table)
                 self.assertIsNotNone(match, (name, key))
-                if name == "lang_es.c":
-                    self.assertIsNone(re.search(r"[áéíóúñÁÉÍÓÚÑ]",
-                                                match.group(1)), key)
         # The focused tile previews on the top screen through the detail
         # card, and Liked Songs leads the tiles with its heart.
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
@@ -992,7 +990,7 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("static void format_time(", player)
         self.assertNotIn("static float measure(", player)
         artwork = (ui_dir / "artwork.c").read_text(encoding="utf-8")
-        self.assertIn("ui_art(box,", artwork)
+        self.assertIn("ui_art_or(box,", artwork)
         theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
         self.assertIn("ART_BIG = 216", theme)
 
@@ -1340,7 +1338,8 @@ class BuildTests(unittest.TestCase):
         self.assertIn("down & KEY_SELECT", login)
         self.assertIn("if (action == LOGIN_ACTION_LANGUAGE)\n"
                       "\t\t\tswitch_language();", app)
-        self.assertIn('cfg_set("language", lang_code(lang_get()))', app)
+        # Saved in the background: rewriting the config stalls a frame.
+        self.assertIn('cfg_set_async("language", lang_code(lang_get()))', app)
         for spanish in ("Reproduccion local", "Resultados de Spotify",
                         "Sesion Spotify lista", "emparejamiento"):
             self.assertNotIn(spanish, app)
