@@ -36,6 +36,11 @@
 #define KEK_INFO "3dspotify-dl-v1"
 /* A cover is a few tens of KB; anything this large is not one. */
 #define ART_MAX (1024 * 1024)
+/* The index is read and written a line at a time. With stdio's default
+ * buffer that is one small transfer per line, and a full index took 2-3 s
+ * on the console; in blocks of this size the card goes at its speed
+ * (64 KB was its fastest, probe_offline 0.3). */
+#define INDEX_BUF (64 * 1024)
 
 static void base_dir(char *out, size_t outlen)
 {
@@ -76,6 +81,7 @@ static int read_index(const char *path, dl_index *out, bool *refused)
 	FILE *f = fopen(path, "r");
 	if (!f)
 		return 0;
+	setvbuf(f, NULL, _IOFBF, INDEX_BUF);
 	static char line[DL_LINE_MAX];
 	dl_index_clear(out);
 	dl_parse_state st = {0};
@@ -134,6 +140,7 @@ int dl_store_save(const dl_index *idx, char *err, size_t errlen)
 		snprintf(err, errlen, "cannot write the downloads index");
 		return -1;
 	}
+	setvbuf(f, NULL, _IOFBF, INDEX_BUF);
 	static char line[DL_LINE_MAX];
 	int cursor = 0;
 	bool ok = true;
