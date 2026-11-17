@@ -143,6 +143,33 @@ void track_stream_seek(track_stream *ts, size_t at);
  * filled first; no reposition. */
 void track_stream_hint(track_stream *ts, size_t at);
 
+/* A track kept for later, not played: the file as the CDN serves it,
+ * still encrypted, appended to `part_path` from what it already holds, so
+ * a download stopped anywhere resumes there. `ts` needs the storage URLs,
+ * the file id, the host and the token (track_stream_begin fills them); its
+ * buffer is not used. `done` and `total` follow the progress (total is 0
+ * until the first reply says). `free_bytes` is the card's free space when
+ * it started: a file that would leave less than TRACK_SAVE_MARGIN is not
+ * started.
+ *
+ * Returns 0 when the file is whole, TRACK_SAVE_STOPPED when `stop` went up
+ * (not a failure: the .part stays), TRACK_SAVE_NO_SPACE, TRACK_SAVE_WRITE
+ * when the card refused a write, or -1 when no URL served it; `ts->dl_err`
+ * says why. Never writes a decrypted byte. */
+#define TRACK_SAVE_STOPPED 1
+#define TRACK_SAVE_NO_SPACE (-4)
+#define TRACK_SAVE_WRITE (-5)
+#define TRACK_SAVE_MARGIN (32u * 1024 * 1024)
+int  track_save_download(track_stream *ts, const char *part_path,
+                         volatile bool *stop, volatile uint32_t *done,
+                         volatile uint32_t *total, uint64_t free_bytes);
+
+/* Whether the file at `path` is `size` bytes and `key` opens it: its
+ * first bytes, decrypted in memory, carry the Ogg page that follows the
+ * SPOTIFY_OGG_HEADER decoy. An integrity check of a download, nothing is
+ * skipped or searched for. */
+bool track_verify_file(const char *path, uint32_t size, const uint8_t key[16]);
+
 /* Where the Vorbis stream starts, and how long it is. */
 static inline const uint8_t *track_vorbis(const track_audio *t)
 {

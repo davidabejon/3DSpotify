@@ -603,6 +603,8 @@ player_action view_player_update(u32 down)
 	}
 	if (down & KEY_SELECT)
 		return PLAYER_ACTION_LANGUAGE;
+	if (down & KEY_X)
+		return PLAYER_ACTION_DOWNLOAD;
 	return PLAYER_ACTION_NONE;
 }
 

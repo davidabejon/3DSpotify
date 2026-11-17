@@ -3300,6 +3300,153 @@ static void test_downloads_owner(void)
 	assert(!dl_owner_matches("me", NULL));
 }
 
+static void test_downloads_engine_states(void)
+{
+	dl_index *idx = &dl_test_idx;
+	dl_index_clear(idx);
+	dl_track a = dl_test_track("spotify:track:a", "a");
+	dl_track b = dl_test_track("spotify:track:b", "b");
+	int ia = dl_add_track(idx, &a, true, 1);
+	int ib = dl_add_track(idx, &b, true, 1);
+
+	/* queued -> active -> done */
+	dl_mark_active(idx, ia);
+	assert(idx->tracks[ia].state == DL_ACTIVE);
+	assert(dl_next_queued(idx) == ib);
+	/* A real download is done with its key, or it would be fetched again
+	 * on the next load. */
+	idx->tracks[ia].has_key = true;
+	dl_mark_done(idx, ia, 4000000);
+	assert(idx->tracks[ia].state == DL_DONE && idx->tracks[ia].size == 4000000);
+
+	/* active -> stopped: queued again in its place, ahead of later ones. */
+	dl_track c = dl_test_track("spotify:track:c", "c");
+	int ic = dl_add_track(idx, &c, true, 1);
+	dl_mark_active(idx, ib);
+	dl_mark_paused(idx, ib);
+	assert(idx->tracks[ib].state == DL_QUEUED);
+	assert(dl_next_queued(idx) == ib);
+	/* Pausing leaves anything not running alone. */
+	dl_mark_paused(idx, ia);
+	assert(idx->tracks[ia].state == DL_DONE);
+
+	/* The key is kept as soon as it comes, before the file is whole. */
+	uint8_t wrapped[DL_WRAPPED_LEN], file_id[20];
+	memset(wrapped, 0x5A, sizeof(wrapped));
+	memset(file_id, 0x11, sizeof(file_id));
+	dl_mark_active(idx, ib);
+	dl_set_key(idx, ib, wrapped, file_id, 1);
+	dl_mark_paused(idx, ib);
+	assert(idx->tracks[ib].has_key && idx->tracks[ib].format == 1);
+	assert(memcmp(idx->tracks[ib].file_id, file_id, 20) == 0);
+
+	/* active -> failed, then a retry sends it to the end of the queue. */
+	dl_mark_active(idx, ib);
+	dl_mark_failed(idx, ib, "Network");
+	assert(idx->tracks[ib].state == DL_FAILED &&
+	       strcmp(idx->tracks[ib].error, "Network") == 0);
+	assert(dl_next_queued(idx) == ic);
+	dl_requeue(idx, ib);
+	assert(idx->tracks[ib].error[0] == '\0');
+	dl_mark_active(idx, ic);
+	idx->tracks[ic].has_key = true;
+	dl_mark_done(idx, ic, 1);
+	assert(dl_next_queued(idx) == ib);
+
+	/* A restart in the middle: active is queued again, with its key. */
+	static char text[16 * 1024];
+	dl_mark_active(idx, ib);
+	dl_test_serialize(idx, text, sizeof(text));
+	bool whole = false;
+	assert(dl_index_parse(text, strlen(text), &dl_test_back, &whole) && whole);
+	int rb = dl_find_track(&dl_test_back, "spotify:track:b");
+	assert(dl_test_back.tracks[rb].state == DL_QUEUED);
+	assert(dl_test_back.tracks[rb].has_key);
+	assert(dl_next_queued(&dl_test_back) == rb);
+
+	/* Cancelling: a track only wanted on its own leaves; one a collection
+	 * holds stays for it. */
+	dl_collection al = dl_test_coll("spotify:album:x", DL_COLL_ALBUM);
+	int cx = dl_add_collection(idx, &al, 1);
+	assert(dl_add_ref(idx, cx, ic));
+	assert(!dl_unwant_track(idx, ic));
+	assert(!idx->tracks[ic].standalone && dl_find_track(idx, c.uri) == ic);
+	assert(dl_unwant_track(idx, ia));
+	assert(dl_find_track(idx, "spotify:track:a") < 0);
+	/* The positions moved down; the ref still names c. */
+	int order[2];
+	assert(dl_collection_tracks(idx, 0, order, 2) == 1);
+	assert(strcmp(idx->tracks[order[0]].uri, "spotify:track:c") == 0);
+	assert(!dl_unwant_track(idx, -1) && !dl_unwant_track(idx, 99));
+}
+
+static void test_downloads_key_bucket(void)
+{
+	dl_bucket b;
+	uint64_t t = 1000;
+	dl_bucket_init(&b, t);
+	assert(b.tokens == DL_KEY_BUCKET);
+
+	/* The engine takes down to the reserve, then waits. */
+	int taken = 0;
+	while (dl_bucket_engine_may_take(&b, t)) {
+		dl_bucket_take(&b, t);
+		taken++;
+	}
+	assert(taken == DL_KEY_BUCKET - DL_KEY_RESERVE);
+	assert(b.tokens == DL_KEY_RESERVE);
+	/* The player still has the reserve; its keys count too. */
+	dl_bucket_take(&b, t);
+	assert(b.tokens == DL_KEY_RESERVE - 1);
+
+	/* One comes back every DL_KEY_REFILL_MS, whole ones only. */
+	dl_bucket_refill(&b, t + DL_KEY_REFILL_MS - 1);
+	assert(b.tokens == DL_KEY_RESERVE - 1);
+	dl_bucket_refill(&b, t + DL_KEY_REFILL_MS);
+	assert(b.tokens == DL_KEY_RESERVE);
+	assert(!dl_bucket_engine_may_take(&b, t + DL_KEY_REFILL_MS));
+	/* The remainder carries: 1.5 periods later, one more at 2. */
+	dl_bucket_refill(&b, t + DL_KEY_REFILL_MS + DL_KEY_REFILL_MS / 2);
+	assert(b.tokens == DL_KEY_RESERVE);
+	dl_bucket_refill(&b, t + 2 * DL_KEY_REFILL_MS);
+	assert(b.tokens == DL_KEY_RESERVE + 1);
+	assert(dl_bucket_engine_may_take(&b, t + 2 * DL_KEY_REFILL_MS));
+	/* Never above the capacity, however long it rests. */
+	dl_bucket_refill(&b, t + 1000ull * DL_KEY_REFILL_MS);
+	assert(b.tokens == DL_KEY_BUCKET);
+
+	/* A 0x0002 empties it and blocks the engine for the backoff, even once
+	 * the model would have refilled. */
+	uint64_t r = t + 2000ull * DL_KEY_REFILL_MS;
+	dl_bucket_refused(&b, r);
+	assert(b.tokens == 0);
+	assert(!dl_bucket_engine_may_take(&b, r + DL_KEY_BACKOFF_MS - 1));
+	uint64_t later = r + (uint64_t)(DL_KEY_RESERVE + 1) * DL_KEY_REFILL_MS;
+	assert(later >= r + DL_KEY_BACKOFF_MS);
+	assert(dl_bucket_engine_may_take(&b, later));
+	/* Taking from an empty one stays at zero. */
+	dl_bucket_refused(&b, later);
+	dl_bucket_take(&b, later);
+	assert(b.tokens == 0);
+}
+
+static void test_downloads_retry_and_busy(void)
+{
+	assert(dl_net_retry_ms(0) == 0);
+	assert(dl_net_retry_ms(1) == 5000);
+	assert(dl_net_retry_ms(2) == 15000);
+	assert(dl_net_retry_ms(3) == 60000);
+	assert(dl_net_retry_ms(4) == 0);       /* given up: DL_FAILED */
+
+	/* Preparing a track, or downloading the one that plays: busy. */
+	assert(dl_player_busy(true, false, false));
+	assert(dl_player_busy(true, true, true));
+	assert(dl_player_busy(false, true, false));
+	/* Its file whole, or nothing playing: the engine may go on. */
+	assert(!dl_player_busy(false, true, true));
+	assert(!dl_player_busy(false, false, false));
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -3370,5 +3517,8 @@ int main(void)
 	test_downloads_refs();
 	test_downloads_queue_order();
 	test_downloads_owner();
+	test_downloads_engine_states();
+	test_downloads_key_bucket();
+	test_downloads_retry_and_busy();
 	return 0;
 }

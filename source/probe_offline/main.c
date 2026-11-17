@@ -586,6 +586,8 @@ static void step_store(void)
 	say("   dl_index is %u KB\n", (unsigned)(sizeof(dl_index) / 1024));
 	dl_index_clear(idx);
 	snprintf(idx->owner, sizeof(idx->owner), "probe");
+	if (!dl_store_ensure_salt(idx))
+		say("   no salt: PS_GenerateRandomBytes failed\n");
 
 	/* Long names, so the file is as big as a real full one gets. */
 	uint8_t first_key[16], last_key[16];
@@ -611,7 +613,7 @@ static void step_store(void)
 		uint8_t key[16];
 		PS_GenerateRandomBytes(key, sizeof(key));
 		double t0 = now_ms();
-		if (!dl_store_wrap_key(idx, idx->tracks[at].uri, key,
+		if (!dl_store_wrap_key(idx->salt, idx->tracks[at].uri, key,
 		                       idx->tracks[at].wrapped_key))
 			wrapped = false;
 		wrap_ms += now_ms() - t0;
@@ -655,14 +657,14 @@ static void step_store(void)
 	    same ? "same index" : "DIFFERENT");
 
 	uint8_t key[16];
-	bool k0 = dl_store_unwrap_key(back, back->tracks[0].uri,
+	bool k0 = dl_store_unwrap_key(back->salt, back->tracks[0].uri,
 	                              back->tracks[0].wrapped_key, key) &&
 	          memcmp(key, first_key, 16) == 0;
 	int last = back->track_count - 1;
-	bool k1 = dl_store_unwrap_key(back, back->tracks[last].uri,
+	bool k1 = dl_store_unwrap_key(back->salt, back->tracks[last].uri,
 	                              back->tracks[last].wrapped_key, key) &&
 	          memcmp(key, last_key, 16) == 0;
-	bool moved = dl_store_unwrap_key(back, back->tracks[1].uri,
+	bool moved = dl_store_unwrap_key(back->salt, back->tracks[1].uri,
 	                                 back->tracks[0].wrapped_key, key);
 	memset(key, 0, sizeof(key));
 	memset(first_key, 0, sizeof(first_key));

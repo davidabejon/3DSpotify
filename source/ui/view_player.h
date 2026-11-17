@@ -67,7 +67,9 @@ typedef enum {
 	PLAYER_ACTION_SEEK,
 	/* The stylus on the volume bar: set it to view_player_value()
 	 * thousandths. */
-	PLAYER_ACTION_VOLUME_SET
+	PLAYER_ACTION_VOLUME_SET,
+	/* X: keep the track that plays on the SD card. */
+	PLAYER_ACTION_DOWNLOAD
 } player_action;
 
 bool view_player_init(void);

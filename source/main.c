@@ -11,6 +11,7 @@
 #include "artwork.h"
 #include "cfg3ds.h"
 #include "details.h"
+#include "downloads.h"
 #include "home_feed.h"
 #include "icons.h"
 #include "lang.h"
@@ -350,50 +351,84 @@ static bool ensure_oauth_token(spotify_session *session, char *error,
 	return true;
 }
 
+/* Two workers may log in to an access point at once: the player's
+ * preparation and the downloads' (downloads.h). The session's OAuth token
+ * and its access point list are what they share; this lock is held while
+ * one renews or copies them, never across a login. */
+static LightLock session_lock;
+
 static ap_session *open_playback_ap(spotify_session *session, char *error,
                                     size_t error_size)
 {
-	if (!ensure_oauth_token(session, error, error_size))
+	/* Off the stack of either worker: the token is 1.3 KB. */
+	char *oauth = malloc(sizeof(session->oauth_token));
+	if (!oauth) {
+		snprintf(error, error_size, "%s", tr(STR_ERR_AP_SESSION));
 		return NULL;
-
+	}
 	ap_candidate candidates[AP_MAX_CANDIDATES];
+	LightLock_Lock(&session_lock);
+	bool token_ok = ensure_oauth_token(session, error, error_size);
 	int count = session->ap_candidate_count;
-	if (count > 0)
-		memcpy(candidates, session->ap_candidates,
-		       (size_t)count * sizeof(candidates[0]));
-	else
+	bool had_candidates = count > 0;
+	if (token_ok) {
+		memcpy(oauth, session->oauth_token, sizeof(session->oauth_token));
+		if (count > 0)
+			memcpy(candidates, session->ap_candidates,
+			       (size_t)count * sizeof(candidates[0]));
+	}
+	LightLock_Unlock(&session_lock);
+	if (!token_ok) {
+		free(oauth);
+		return NULL;
+	}
+	if (count < 1)
 		count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
 		                        error, error_size);
-	if (count < 1)
+	if (count < 1) {
+		secure_clear(oauth, sizeof(session->oauth_token));
+		free(oauth);
 		return NULL;
+	}
 
 	char device_id[64];
 	ap_device_id(device_id, sizeof(device_id));
 	ap_info info;
 	memset(&info, 0, sizeof(info));
 	int tried = 0;
-	ap_session *ap = ap_login_any(candidates, count, session->oauth_token,
-	                              device_id, &info, &tried,
-	                              error, error_size);
-	if (!ap && info.login_error == 0 && session->ap_candidate_count > 0) {
+	ap_session *ap = ap_login_any(candidates, count, oauth, device_id, &info,
+	                              &tried, error, error_size);
+	if (!ap && info.login_error == 0 && had_candidates) {
 		count = ap_resolve_list(candidates, AP_MAX_CANDIDATES,
 		                        error, error_size);
 		if (count > 0) {
 			memset(&info, 0, sizeof(info));
-			ap = ap_login_any(candidates, count, session->oauth_token,
-			                  device_id, &info, &tried, error, error_size);
+			ap = ap_login_any(candidates, count, oauth, device_id, &info,
+			                  &tried, error, error_size);
 			if (ap) {
+				LightLock_Lock(&session_lock);
 				memcpy(session->ap_candidates, candidates,
 				       (size_t)count * sizeof(candidates[0]));
 				session->ap_candidate_count = count;
+				LightLock_Unlock(&session_lock);
 			}
 		}
 	}
+	secure_clear(oauth, sizeof(session->oauth_token));
+	free(oauth);
 	secure_clear(device_id, sizeof(device_id));
 	secure_clear(&info, sizeof(info));
 	if (!ap && !error[0])
 		snprintf(error, error_size, "%s", tr(STR_ERR_AP_SESSION));
 	return ap;
+}
+
+/* The session the downloads log in with, while the tabs are open. */
+static spotify_session *downloads_session;
+
+static ap_session *downloads_open_ap(char *error, size_t error_size)
+{
+	return open_playback_ap(downloads_session, error, error_size);
 }
 
 /* --- Player ------------------------------------------------------------
@@ -477,6 +512,8 @@ typedef struct {
 	track_stream stream;     /* out, taken by the player when it is used */
 	char error[256];
 	int rc;                  /* 0, AP_KEY_REFUSED or -1 */
+	int key_rc;              /* the key request's own: -1 when not asked */
+	int key_code;            /* the refusal's code, when refused */
 	volatile str_id stage;   /* what it is doing, for the Playing tab */
 	volatile bool done;
 	bool abandoned;          /* main thread: nobody wants the result */
@@ -542,6 +579,7 @@ static void prepare_worker(void *arg)
 {
 	prepare_job *job = arg;
 	job->stage = STR_AP_AUTHENTICATING;
+	job->key_rc = -1;
 	ap_session *ap = open_playback_ap(job->session, job->error,
 	                                  sizeof(job->error));
 	if (!ap) {
@@ -554,6 +592,11 @@ static void prepare_worker(void *arg)
 		                                    &job->stream, job->error,
 		                                    sizeof(job->error));
 		ap_close(ap);
+		/* The key counts against the allowance the downloads share. */
+		if (job->rc == 0 || job->rc == AP_KEY_REFUSED) {
+			job->key_rc = job->rc;
+			job->key_code = job->stream.key_refused_code;
+		}
 	}
 	__sync_synchronize();
 	job->done = true;
@@ -566,6 +609,7 @@ static void prepare_reap(void)
 	__sync_synchronize();
 	threadJoin(prep.thread, U64_MAX);
 	threadFree(prep.thread);
+	downloads_note_player_key(prep.key_rc, prep.key_code);
 	track_stream_free(&prep.stream);
 	secure_clear(&prep, sizeof(prep));
 }
@@ -661,12 +705,13 @@ static void player_play(spotify_session *session, int pos)
 
 /* Starts the track's preparation thread. Not while a skipped track's is
  * still running, nor a skipped track's download, nor while the thumbnails
- * finish their last request (they must not compete with the preparation,
- * STYLES.md 9): it waits, a frame at a time, without blocking. */
+ * finish their last request or the downloads their current one (they must
+ * not compete with the preparation, STYLES.md 9): it waits, a frame at a
+ * time, without blocking. */
 static void player_start_prepare(void)
 {
 	player.stage = STR_PLAYER_AUDIO_PREPARING;
-	if (prep.thread || dl.thread || thumbs_stopping())
+	if (prep.thread || dl.thread || thumbs_stopping() || downloads_busy())
 		return;
 	memset(&prep, 0, sizeof(prep));
 	prep.session = player.session;
@@ -1707,6 +1752,23 @@ static void open_playing_detail(detail_kind kind)
 }
 
 /* A detail is on top of the active tab: its view has the input. */
+/* X on the Playing tab: the track that plays, kept on the SD card. Once it
+ * plays, the player holds its key and its file: they go with it, so the
+ * download asks the access point for nothing. */
+static void download_playing(void)
+{
+	const sp_track *t = player_track();
+	if (!t)
+		return;
+	const track_stream *ts = &dl.stream;
+	bool keyed = player.phase == PLAYER_PHASE_PLAYING && !dl_abandoned &&
+	             strcmp(ts->meta.uri, t->uri) == 0;
+	if (keyed)
+		downloads_add_track_keyed(t, ts->key, ts->file_id, ts->format);
+	else
+		downloads_add_track(t);
+}
+
 static void detail_input(spotify_session *session, u32 down)
 {
 	detail_doc *doc = details_top(active_tab);
@@ -1805,6 +1867,9 @@ static tabs_exit run_tabs(spotify_session *session)
 	tabbar_reset(TAB_HOME);
 	/* In the background: the home tab shows its skeleton meanwhile. */
 	home_feed_start(session->host, session->library_token, session->username);
+	downloads_session = session;
+	downloads_start(session->host, session->library_token, session->username,
+	                downloads_open_ap);
 	switch_tab(TAB_HOME);
 	for (;;) {
 		hidScanInput();
@@ -1817,6 +1882,10 @@ static tabs_exit run_tabs(spotify_session *session)
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
 		queue_feed_tick(session);
+		/* Below the player: quiet while it prepares a track or downloads
+		 * the one that plays. */
+		downloads_poll(dl_player_busy(player_preparing(), dl.thread != NULL,
+		                              dl.done));
 		account_poll();
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token,
@@ -1940,6 +2009,9 @@ static tabs_exit run_tabs(spotify_session *session)
 				break;
 			case PLAYER_ACTION_OPEN_ALBUM:
 				open_playing_detail(DETAIL_ALBUM);
+				break;
+			case PLAYER_ACTION_DOWNLOAD:
+				download_playing();
 				break;
 			default:
 				break;
@@ -2150,6 +2222,8 @@ static void stop_tabs(void)
 	details_stop();
 	queue_feed_stop();
 	home_feed_stop();
+	downloads_stop();
+	downloads_session = NULL;
 	account_stop();
 	/* Waits: after this the session, TLS and sockets may go away, and a
 	 * thumbnail request still in flight would use them freed. */
@@ -2682,6 +2756,9 @@ int main(int argc, char **argv)
 		goto failed;
 	}
 	ps_ready = true;
+	LightLock_Init(&session_lock);
+	/* The index loads while the session starts. */
+	downloads_init();
 
 	{
 		int rc = tls_global_init();
@@ -2726,6 +2803,9 @@ done:
 	/* The preferences still queued (cfg_set_async) reach the card. */
 	cfg_flush();
 	stop_tabs();
+	/* The downloads index's last changes, before PS (its keys) goes. */
+	if (ps_ready)
+		downloads_exit();
 	artwork_close(&cover_art);
 	artwork_close(&detail_art);
 	artwork_close(&account_art);

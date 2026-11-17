@@ -761,6 +761,62 @@ class BuildTests(unittest.TestCase):
         self.assertIn("wrapped_key[DL_WRAPPED_LEN]", logic)
         self.assertIsNone(re.search(r"uint8_t\s+key\[", logic))
 
+    def test_downloads_engine_keeps_out_of_the_players_way(self):
+        import re
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+        engine = (build.ROOT / "ui" / "downloads.c").read_text(
+            encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Leaving the tabs: the engine stops with the TLS abort on, before
+        # the session, TLS and sockets go (thumbs_wait is the last join).
+        stop = body(app, "static void stop_tabs(void)")
+        self.assertLess(stop.index("tls_set_abort(true);"),
+                        stop.index("downloads_stop();"))
+        self.assertLess(stop.index("downloads_stop();"),
+                        stop.index("thumbs_wait();"))
+        # Each frame after the audio, told when the player is busy; and the
+        # player waits for the engine before preparing a track.
+        tabs = body(app, "static tabs_exit run_tabs(")
+        self.assertLess(tabs.index("player_pump();"),
+                        tabs.index("downloads_poll(dl_player_busy("))
+        self.assertIn("downloads_busy()",
+                      body(app, "static void player_start_prepare(void)"))
+        # The player's keys count against the allowance the engine models.
+        self.assertIn("downloads_note_player_key(",
+                      body(app, "static void prepare_reap(void)"))
+        # Two workers share the session: the lock covers the OAuth renewal
+        # and the copy, never a login to the access point.
+        ap = body(app, "static ap_session *open_playback_ap(")
+        self.assertLess(ap.index("LightLock_Lock(&session_lock);"),
+                        ap.index("ensure_oauth_token("))
+        self.assertLess(ap.index("ensure_oauth_token("),
+                        ap.index("LightLock_Unlock(&session_lock);"))
+        self.assertLess(ap.index("LightLock_Unlock(&session_lock);"),
+                        ap.index("ap_login_any("))
+        self.assertNotIn("session->oauth_token, device_id", ap)
+        # The engine's worker runs below the decoder and drops its token.
+        self.assertIn("background_priority()", engine)
+        self.assertIn("secure_clear(j->token, sizeof(j->token));",
+                      body(engine, "static void job_worker(void *arg)"))
+        self.assertIn("secure_clear(token, sizeof(token));",
+                      body(engine, "void downloads_stop(void)"))
+        # Its log names tracks and outcomes, never a key or a token.
+        for call in re.findall(r"dlog\((.*?)\);", engine, re.S):
+            args = re.sub(r'"[^"]*"', '""', call)   # the words, not the text
+            for secret in (r"\btoken\b", r"\bkey\b", "wrapped", "salt",
+                           "urls"):
+                self.assertIsNone(re.search(secret, args), call)
+        # The audio is written as it came: the save path never decrypts.
+        track = (build.ROOT / "platform3ds" / "track.c").read_text(
+            encoding="utf-8")
+        save = body(track, "static bool save_cb(")
+        self.assertNotIn("crypt", save)
+        self.assertIn("fwrite(data, 1, n, c->f)", save)
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(
@@ -1237,7 +1293,13 @@ class BuildTests(unittest.TestCase):
                      app.index("static void prepare_reap(")]
         self.assertIn("open_playback_ap(job->session", worker)
         self.assertIn("track_stream_begin_cached(", worker)
-        self.assertEqual(app.count("open_playback_ap("), 2)  # def + worker
+        # The definition, the preparation and the downloads' callback, which
+        # only their worker calls (downloads.h, downloads_ap_fn).
+        self.assertEqual(app.count("open_playback_ap("), 3)
+        callback = app[app.index("static ap_session *downloads_open_ap("):]
+        self.assertIn("open_playback_ap(downloads_session",
+                      callback[:callback.index("\n}\n")])
+        self.assertEqual(app.count("downloads_open_ap"), 2)  # def + start
         self.assertEqual(app.count("track_stream_begin_cached("), 1)
         self.assertIn("threadCreate(prepare_worker, &prep, PREPARE_STACK,", app)
         pump = app[app.index("static void player_pump(void)"):
@@ -1258,11 +1320,12 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("download_stop_join", app)
         self.assertIn("if (dl_abandoned && dl.done)\n\t\tdownload_reap();",
                       pump)
-        # The next track only prepares once the old download is gone.
+        # The next track only prepares once the old download is gone, and
+        # the thumbnails' and the downloads' requests are over.
         start = app[app.index("static void player_start_prepare(void)"):
                     app.index("static void player_begin_audio(void)")]
-        self.assertIn("if (prep.thread || dl.thread || thumbs_stopping())",
-                      start)
+        self.assertIn("if (prep.thread || dl.thread || thumbs_stopping() || "
+                      "downloads_busy())", start)
         stop = app[app.index("static void player_stop(void)"):
                    app.index("static bool player_preparing(void)")]
         self.assertIn("prepare_wait();", stop)

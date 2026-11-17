@@ -46,13 +46,25 @@ uint64_t dl_store_free_bytes(void);
 /* What the downloaded audio takes, from the sizes in the index. */
 uint64_t dl_store_used_bytes(const dl_index *idx);
 
-/* Audio keys are only ever stored wrapped. Wrapping gives `idx` a salt
- * when it has none yet (the index must be saved after). Both return false
- * on failure; unwrapping fails too when the key was wrapped on another
- * console or for another track. `key` is the caller's to wipe. */
-bool dl_store_wrap_key(dl_index *idx, const char *uri, const uint8_t key[16],
-                       uint8_t out[DL_WRAPPED_LEN]);
-bool dl_store_unwrap_key(const dl_index *idx, const char *uri,
+/* What a .part holds so far (0 when there is none): where to resume. */
+uint32_t dl_store_part_size(const char *uri);
+/* The .part is whole: it becomes the .enc. */
+bool dl_store_finish_track(const char *uri);
+/* Deletes what t/ holds that `idx` does not name: files of tracks removed
+ * while the app was off, or written by a download the index never saw. */
+void dl_store_sweep(const dl_index *idx);
+
+/* Audio keys are only ever stored wrapped, under a key derived from this
+ * console and the index's salt. dl_store_ensure_salt gives the index one
+ * when it has none (the index must be saved after). Wrapping and
+ * unwrapping take the salt itself, so a worker can do them with a copy.
+ * Both return false on failure; unwrapping fails too when the key was
+ * wrapped on another console or for another track. `key` is the caller's
+ * to wipe. */
+bool dl_store_ensure_salt(dl_index *idx);
+bool dl_store_wrap_key(const uint8_t salt[DL_SALT_LEN], const char *uri,
+                       const uint8_t key[16], uint8_t out[DL_WRAPPED_LEN]);
+bool dl_store_unwrap_key(const uint8_t salt[DL_SALT_LEN], const char *uri,
                          const uint8_t in[DL_WRAPPED_LEN], uint8_t key[16]);
 
 #endif

@@ -21,6 +21,7 @@
 #include "cfg3ds.h"
 
 #include <3ds.h>
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -271,6 +272,61 @@ bool dl_store_remove_track(const char *uri)
 	return ok;
 }
 
+uint32_t dl_store_part_size(const char *uri)
+{
+	char path[340];
+	struct stat st;
+	dl_store_track_path(uri, true, path, sizeof(path));
+	return stat(path, &st) == 0 && st.st_size > 0 ? (uint32_t)st.st_size : 0;
+}
+
+bool dl_store_finish_track(const char *uri)
+{
+	char part[340], enc[340];
+	dl_store_track_path(uri, true, part, sizeof(part));
+	dl_store_track_path(uri, false, enc, sizeof(enc));
+	remove(enc);
+	return rename(part, enc) == 0;
+}
+
+void dl_store_sweep(const dl_index *idx)
+{
+	char base[300], dir[310];
+	base_dir(base, sizeof(base));
+	snprintf(dir, sizeof(dir), "%st", base);
+	DIR *d = opendir(dir);
+	if (!d)
+		return;
+	/* The names to delete first, then deleted: removing while reading the
+	 * directory is not something every FAT driver handles. */
+	static char doomed[64][48];
+	int n = 0;
+	struct dirent *e;
+	while ((e = readdir(d)) != NULL && n < 64) {
+		const char *dot = strrchr(e->d_name, '.');
+		if (!dot || e->d_name[0] == '.')
+			continue;
+		bool part = strcmp(dot, ".part") == 0;
+		if (!part && strcmp(dot, ".enc") != 0)
+			continue;
+		bool known = false;
+		char name[40], mine[340];
+		for (int i = 0; i < idx->track_count && !known; i++) {
+			track_name(idx->tracks[i].uri, name, sizeof(name));
+			snprintf(mine, sizeof(mine), "%s.%s", name, part ? "part" : "enc");
+			known = strcmp(mine, e->d_name) == 0;
+		}
+		if (!known && strlen(e->d_name) < sizeof(doomed[0]))
+			snprintf(doomed[n++], sizeof(doomed[0]), "%s", e->d_name);
+	}
+	closedir(d);
+	for (int i = 0; i < n; i++) {
+		char path[360];
+		snprintf(path, sizeof(path), "%s/%.47s", dir, doomed[i]);
+		remove(path);
+	}
+}
+
 uint64_t dl_store_free_bytes(void)
 {
 	FS_ArchiveResource res;
@@ -312,16 +368,21 @@ static bool derive_kek(const uint8_t salt[DL_SALT_LEN], uint8_t kek[16])
 	return rc == 0;
 }
 
-bool dl_store_wrap_key(dl_index *idx, const char *uri, const uint8_t key[16],
-                       uint8_t out[DL_WRAPPED_LEN])
+bool dl_store_ensure_salt(dl_index *idx)
 {
-	if (!idx->has_salt) {
-		if (R_FAILED(PS_GenerateRandomBytes(idx->salt, DL_SALT_LEN)))
-			return false;
-		idx->has_salt = true;
-	}
+	if (idx->has_salt)
+		return true;
+	if (R_FAILED(PS_GenerateRandomBytes(idx->salt, DL_SALT_LEN)))
+		return false;
+	idx->has_salt = true;
+	return true;
+}
+
+bool dl_store_wrap_key(const uint8_t salt[DL_SALT_LEN], const char *uri,
+                       const uint8_t key[16], uint8_t out[DL_WRAPPED_LEN])
+{
 	uint8_t kek[16];
-	if (!derive_kek(idx->salt, kek))
+	if (!derive_kek(salt, kek))
 		return false;
 	uint8_t *nonce = out;
 	uint8_t *sealed = out + DL_NONCE_LEN;
@@ -342,13 +403,11 @@ bool dl_store_wrap_key(dl_index *idx, const char *uri, const uint8_t key[16],
 	return ok;
 }
 
-bool dl_store_unwrap_key(const dl_index *idx, const char *uri,
+bool dl_store_unwrap_key(const uint8_t salt[DL_SALT_LEN], const char *uri,
                          const uint8_t in[DL_WRAPPED_LEN], uint8_t key[16])
 {
-	if (!idx->has_salt)
-		return false;
 	uint8_t kek[16];
-	if (!derive_kek(idx->salt, kek))
+	if (!derive_kek(salt, kek))
 		return false;
 	mbedtls_gcm_context gcm;
 	mbedtls_gcm_init(&gcm);

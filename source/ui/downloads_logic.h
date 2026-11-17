@@ -666,4 +666,155 @@ static inline bool dl_index_parse(const char *text, size_t len, dl_index *idx,
 	return st.header;
 }
 
+/* ------------------------------------------------- the engine's states */
+
+/* A download starts: its track leaves the queue. */
+static inline void dl_mark_active(dl_index *idx, int t)
+{
+	idx->tracks[t].state = DL_ACTIVE;
+	idx->tracks[t].error[0] = '\0';
+}
+
+/* The file is on the card, whole and checked. */
+static inline void dl_mark_done(dl_index *idx, int t, uint32_t size)
+{
+	idx->tracks[t].state = DL_DONE;
+	idx->tracks[t].size = size;
+	idx->tracks[t].error[0] = '\0';
+}
+
+/* Given up on until the user retries it; `why` is shown. */
+static inline void dl_mark_failed(dl_index *idx, int t, const char *why)
+{
+	idx->tracks[t].state = DL_FAILED;
+	dl_copy(idx->tracks[t].error, sizeof(idx->tracks[t].error), why);
+}
+
+/* A download that was stopped (the player needed the network, the session
+ * ended) waits again, in its place: it resumes from its .part. */
+static inline void dl_mark_paused(dl_index *idx, int t)
+{
+	if (idx->tracks[t].state == DL_ACTIVE)
+		idx->tracks[t].state = DL_QUEUED;
+}
+
+/* The audio key arrived, wrapped, with the file it opens. Kept at once,
+ * even if the download then stops: resuming needs no new key. */
+static inline void dl_set_key(dl_index *idx, int t,
+                              const uint8_t wrapped[DL_WRAPPED_LEN],
+                              const uint8_t file_id[20], int format)
+{
+	dl_track *d = &idx->tracks[t];
+	memcpy(d->wrapped_key, wrapped, DL_WRAPPED_LEN);
+	memcpy(d->file_id, file_id, sizeof(d->file_id));
+	d->format = format;
+	d->has_key = true;
+}
+
+/* The user no longer wants track `t` on its own. It stays while a
+ * collection holds it; otherwise it leaves the index. Returns true when it
+ * left, so its files go too. */
+static inline bool dl_unwant_track(dl_index *idx, int t)
+{
+	if (t < 0 || t >= idx->track_count)
+		return false;
+	idx->tracks[t].standalone = false;
+	if (dl_track_refs(idx, t) > 0)
+		return false;
+	dl_remove_track(idx, t);
+	return true;
+}
+
+/* ---------------------------------------------------- the key allowance
+ *
+ * The access point gives an account about 15 audio keys in a row, then
+ * refuses with 0x0002 on any session until it refills, about one every
+ * 30 s (probe_offline 0.2, on the console). The player draws on the same
+ * allowance, so the engine keeps a model of it, counts the player's keys
+ * too, and never takes it below a reserve the player can still use. */
+#define DL_KEY_BUCKET 15
+#define DL_KEY_REFILL_MS 30000
+#define DL_KEY_RESERVE 5
+/* After a 0x0002: the model was wrong, so the engine waits this long. */
+#define DL_KEY_BACKOFF_MS 60000
+/* The refusal code that means "too many keys", not "not this track". */
+#define DL_KEY_LIMIT_CODE 0x0002
+
+typedef struct {
+	int      tokens;
+	uint64_t refilled_at;     /* when the last whole token came */
+	uint64_t blocked_until;   /* after a refusal */
+} dl_bucket;
+
+static inline void dl_bucket_init(dl_bucket *b, uint64_t now)
+{
+	b->tokens = DL_KEY_BUCKET;
+	b->refilled_at = now;
+	b->blocked_until = 0;
+}
+
+static inline void dl_bucket_refill(dl_bucket *b, uint64_t now)
+{
+	if (b->tokens >= DL_KEY_BUCKET || now <= b->refilled_at) {
+		if (b->tokens >= DL_KEY_BUCKET)
+			b->refilled_at = now;
+		return;
+	}
+	uint64_t whole = (now - b->refilled_at) / DL_KEY_REFILL_MS;
+	if (whole == 0)
+		return;
+	if (whole >= (uint64_t)(DL_KEY_BUCKET - b->tokens)) {
+		b->tokens = DL_KEY_BUCKET;
+		b->refilled_at = now;
+	} else {
+		b->tokens += (int)whole;
+		b->refilled_at += whole * DL_KEY_REFILL_MS;
+	}
+}
+
+/* A key was asked for, by the engine or by the player. */
+static inline void dl_bucket_take(dl_bucket *b, uint64_t now)
+{
+	dl_bucket_refill(b, now);
+	if (b->tokens > 0)
+		b->tokens--;
+}
+
+/* The access point said 0x0002: nothing is left, whatever the model said. */
+static inline void dl_bucket_refused(dl_bucket *b, uint64_t now)
+{
+	b->tokens = 0;
+	b->refilled_at = now;
+	b->blocked_until = now + DL_KEY_BACKOFF_MS;
+}
+
+/* Whether the engine may ask for a key now, leaving the reserve. */
+static inline bool dl_bucket_engine_may_take(dl_bucket *b, uint64_t now)
+{
+	dl_bucket_refill(b, now);
+	return now >= b->blocked_until && b->tokens > DL_KEY_RESERVE;
+}
+
+/* --------------------------------------------------- retries and pauses */
+
+/* Network failures of the same track: wait 5 s, 15 s, 60 s, then give up
+ * on it (0). The first failure is `failures` 1. */
+static inline uint32_t dl_net_retry_ms(int failures)
+{
+	static const uint32_t STEPS[] = { 5000, 15000, 60000 };
+	if (failures < 1)
+		return 0;
+	return failures <= 3 ? STEPS[failures - 1] : 0;
+}
+
+/* The player is using the network for the track that plays: preparing it
+ * (token, access point, key) or still downloading it. The engine then
+ * stops its request and starts none, so two audio downloads never share
+ * the Wi-Fi nor two large buffers the memory. */
+static inline bool dl_player_busy(bool preparing, bool playing,
+                                  bool stream_whole)
+{
+	return preparing || (playing && !stream_whole);
+}
+
 #endif

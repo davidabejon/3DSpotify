@@ -196,6 +196,13 @@ typedef enum {
 	STR_ERR_NO_VORBIS,
 	STR_ERR_VORBIS_TOO_LARGE,
 	STR_ERR_NO_AUDIO,
+	/* Why a download stopped for good, kept with the track in the
+	 * downloads index (in the language of the moment it failed). */
+	STR_DL_ERR_UNAVAILABLE,
+	STR_DL_ERR_NETWORK,
+	STR_DL_ERR_DAMAGED,
+	STR_DL_ERR_WRITE,
+	STR_DL_ERR_NO_SPACE,
 
 	STR_COUNT
 } str_id;
