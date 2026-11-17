@@ -204,6 +204,18 @@ static inline bool dl_owner_matches(const char *index_owner,
 	return strcmp(index_owner, username) == 0;
 }
 
+/* The same, for a session that may not know its username: offline before
+ * any online start had saved it. Then the only account there can be is the
+ * one whose credential is stored, and the keys open on this console only:
+ * the index's owner is taken for it. Online the username is always known. */
+static inline bool dl_owner_usable(const char *index_owner,
+                                   const char *username, bool online)
+{
+	if (!online && (!username || !username[0]))
+		return true;
+	return dl_owner_matches(index_owner, username);
+}
+
 /* ------------------------------------------------------------ changes */
 
 /* Adds track `t` (its metadata; state and order are set here), queued.

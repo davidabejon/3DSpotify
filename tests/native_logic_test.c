@@ -1246,6 +1246,20 @@ static void test_offline_start(void)
 	assert(!login_wifi_down(true, 2, true, 3));
 }
 
+/* Offline before any online start saved the username: the index's own
+ * owner is taken; online, or with a username, it must match. */
+static void test_offline_owner(void)
+{
+	assert(dl_owner_usable("alice", "", false));
+	assert(dl_owner_usable("alice", NULL, false));
+	assert(dl_owner_usable("alice", "alice", false));
+	assert(!dl_owner_usable("alice", "bob", false));
+	assert(!dl_owner_usable("alice", "", true));
+	assert(!dl_owner_usable("alice", "bob", true));
+	assert(dl_owner_usable("alice", "alice", true));
+	assert(dl_owner_usable("", "bob", true));
+}
+
 static void test_download_buttons(void)
 {
 	assert(dl_track_button(false, DL_DONE, true) == DL_BUTTON_DOWNLOAD);
@@ -3972,6 +3986,7 @@ int main(void)
 	test_downloads_manager_list();
 	test_offline_rows();
 	test_offline_start();
+	test_offline_owner();
 	test_playback_next_playable();
 	return 0;
 }

@@ -175,11 +175,11 @@ static void changed(void)
 }
 
 /* The index is shown and used only for the account that made it. The
- * username stays after the session ends: it is not a secret. */
+ * username stays after the session ends: it is not a secret. Offline with
+ * no username saved yet, the index's own owner (dl_owner_usable). */
 static bool usable(void)
 {
-	return loaded && dl_owner_matches(idx->owner, username[0] ? username
-	                                                          : NULL);
+	return loaded && dl_owner_usable(idx->owner, username, online);
 }
 
 /* --- Workers ------------------------------------------------------------- */
