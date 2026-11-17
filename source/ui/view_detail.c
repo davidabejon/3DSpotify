@@ -24,6 +24,10 @@
 #define CONTROL_RETRY  100
 #define CONTROL_HEADER 101
 
+/* The button over an album or playlist on the card: it removes it. Past
+ * the dl_coll_button values. */
+#define DL_COLL_BUTTON_REMOVE 100
+
 /* A download's share is read again once a second (STYLES.md 9). */
 #define DL_SAMPLE_FRAMES 60
 /* "Press A again to remove" shows, and waits for that press, this long. */
@@ -63,6 +67,7 @@ typedef struct {
 static C2D_TextBuf text_buf, scratch_buf;
 static C2D_Text button_text[DETAIL_BUTTON_COUNT];
 static C2D_Text letter_text[GLYPH_COUNT];
+static C2D_Text hint_open;
 static C2D_Text hint_choose, hint_play, hint_detail, hint_back, hint_cancel,
                 hint_retry, hint_shuffle_on, hint_shuffle_off;
 static C2D_Text bubble_text, shuffle_on_text, shuffle_off_text, loading_text,
@@ -90,6 +95,8 @@ static bool notice_ok;
 /* An album's or playlist's list has its download button over it; the
  * D-pad reaches it up from the first row (detail_header_focus). */
 static bool header, header_enabled, header_focus;
+/* What the level on screen is (details.h). */
+static detail_kind shown_kind = DETAIL_TRACK;
 static press_state press_header;
 
 static detail_mode mode = MODE_NONE;
@@ -232,6 +239,7 @@ static void parse_text(const detail_doc *doc)
 	parse(&hint_choose, tr(STR_HINT_CHOOSE));
 	parse(&hint_play, tr(STR_HINT_PLAY));
 	parse(&hint_detail, tr(STR_HINT_DETAIL));
+	parse(&hint_open, tr(STR_HINT_OPEN));
 	parse(&hint_back, tr(STR_HINT_BACK));
 	parse(&hint_cancel, tr(STR_HINT_CANCEL));
 	parse(&hint_retry, tr(STR_HINT_RETRY));
@@ -241,7 +249,8 @@ static void parse_text(const detail_doc *doc)
 	parse(&shuffle_on_text, tr(STR_SHUFFLE_ON));
 	parse(&shuffle_off_text, tr(STR_SHUFFLE_OFF));
 	parse(&loading_text, tr(STR_DETAIL_LOADING));
-	parse(&empty_text, tr(STR_DETAIL_EMPTY));
+	parse(&empty_text, tr(doc && doc->kind == DETAIL_DOWNLOADS
+	                      ? STR_DLH_EMPTY : STR_DETAIL_EMPTY));
 	parse(&retry_text, tr(STR_RESULTS_RETRY));
 	ui_rect notice = list_notice_rect();
 	ui_parse_fitted(&notice_title_text, text_buf, scratch_buf,
@@ -299,6 +308,8 @@ static void label_string(const detail_doc *doc, char *out, size_t len)
 		default:
 			break;
 		}
+	} else if (dl_now.kind == DL_COLL_BUTTON_REMOVE) {
+		id = STR_DL_REMOVE;
 	} else {
 		switch ((dl_coll_button)dl_now.kind) {
 		case DL_COLL_BUTTON_WAITING:
@@ -369,6 +380,9 @@ static void follow_download(const detail_doc *doc, bool force)
 		enabled[DETAIL_BUTTON_DOWNLOAD] = dl_button_enabled(next.kind);
 		/* Queued by its own press: a disabled button holds no focus. */
 		focus = detail_focus_move(focus, 0, enabled);
+	} else if (doc->kind == DETAIL_OFFLINE_COLLECTION) {
+		next.kind = DL_COLL_BUTTON_REMOVE;
+		header_enabled = true;
 	} else {
 		bool pending;
 		int done, count;
@@ -379,19 +393,27 @@ static void follow_download(const detail_doc *doc, bool force)
 			next.a = done;
 			next.b = count;
 		}
-		header_enabled = next.kind == DL_COLL_BUTTON_DOWNLOAD;
+		/* "Downloaded" opens it from the card. */
+		header_enabled = next.kind == DL_COLL_BUTTON_DOWNLOAD ||
+		                 next.kind == DL_COLL_BUTTON_DONE;
 		header_focus = detail_header_focus(header_focus, list.selected, 0,
 		                                   header_enabled);
 	}
 	dl_now = next;
 }
 
-/* An album's or playlist's list goes under its download button; an
- * artist's (popular tracks are no collection to keep) has the screen. */
+static bool has_header(const detail_doc *doc)
+{
+	return doc && (doc->kind == DETAIL_ALBUM || doc->kind == DETAIL_PLAYLIST ||
+	               doc->kind == DETAIL_OFFLINE_COLLECTION);
+}
+
+/* An album's or playlist's list goes under its download button (one on
+ * the card, under the button that removes it); an artist's (popular
+ * tracks are no collection to keep) and the Downloads have the screen. */
 static void place_list(const detail_doc *doc)
 {
-	header = mode == MODE_LIST && doc &&
-	         (doc->kind == DETAIL_ALBUM || doc->kind == DETAIL_PLAYLIST);
+	header = mode == MODE_LIST && has_header(doc);
 	if (!header)
 		header_focus = false;
 	track_list_set_frame(&list, header ? list_frame_under_button()
@@ -400,8 +422,7 @@ static void place_list(const detail_doc *doc)
 
 static list_frame skeleton_frame(const detail_doc *doc)
 {
-	return doc && (doc->kind == DETAIL_ALBUM || doc->kind == DETAIL_PLAYLIST)
-	       ? list_frame_under_button() : list_frame_full();
+	return has_header(doc) ? list_frame_under_button() : list_frame_full();
 }
 
 static bool remove_armed(void)
@@ -425,6 +446,37 @@ static detail_action download_action(void)
 	return DETAIL_ACTION_NONE;
 }
 
+/* A or a tap on the button over the list: download it all, open it from
+ * the card, or (on the card) remove it after a second press. */
+static detail_action header_action(void)
+{
+	if (shown_kind != DETAIL_OFFLINE_COLLECTION)
+		return DETAIL_ACTION_DOWNLOAD_ALL;
+	if (remove_armed()) {
+		bubble_frames = -1;
+		return DETAIL_ACTION_REMOVE_ALL;
+	}
+	view_detail_notice(STR_DL_REMOVE_CONFIRM, true);
+	return DETAIL_ACTION_NONE;
+}
+
+/* The focused row of the Downloads is an album or a playlist. */
+static bool focused_collection(void)
+{
+	return list.rows && list.count > 0 &&
+	       list.rows[list.selected].kind != TRACK_ROW_TRACK;
+}
+
+/* A, or a tap, on the focused row: play from it, or open the collection;
+ * nothing on a track that is not on the card. */
+static detail_action row_action(void)
+{
+	if (list.count <= 0 || !track_row_on(list.rows, list.selected))
+		return DETAIL_ACTION_NONE;
+	return focused_collection() ? DETAIL_ACTION_OPEN_COLLECTION
+	                            : DETAIL_ACTION_PLAY;
+}
+
 /* Follows `doc`: another level starts afresh (focus on Play, no press
  * left over); the same level that finished loading keeps what was going
  * on; either way the text is parsed again, as on a language switch. */
@@ -441,6 +493,7 @@ static void sync(const detail_doc *doc)
 			list.style = TRACK_LIST_THUMBS;
 			place_list(doc);
 			track_list_set(&list, doc->tracks, doc->count, doc->selected);
+			track_list_set_rows(&list, doc->rows);
 			follow_download(doc, true);
 		}
 		parsed_count = doc->count;
@@ -454,12 +507,16 @@ static void sync(const detail_doc *doc)
 			focus = DETAIL_BUTTON_PLAY;
 		}
 		mode = mode_of(doc);
+		shown_kind = doc ? doc->kind : DETAIL_TRACK;
 		place_list(doc);
 		if (mode == MODE_LIST) {
 			/* Where the list was left, if this level was shown before. */
-			list.style = doc->kind == DETAIL_ALBUM ? TRACK_LIST_NUMBERS
-			                                      : TRACK_LIST_THUMBS;
+			bool numbers = doc->kind == DETAIL_ALBUM ||
+			               (doc->kind == DETAIL_OFFLINE_COLLECTION &&
+			                doc->offline_album);
+			list.style = numbers ? TRACK_LIST_NUMBERS : TRACK_LIST_THUMBS;
 			track_list_set(&list, doc->tracks, doc->count, doc->selected);
+			track_list_set_rows(&list, doc->rows);
 			track_list_scroll_to(&list, doc->first);
 		} else {
 			track_list_set(&list, NULL, 0, 0);
@@ -637,7 +694,7 @@ static bool handle_button_touch(u32 down, u32 held, u32 up)
 	case TOUCH_ACTIVATE:
 		press_end(press);
 		queue(control == CONTROL_RETRY ? DETAIL_ACTION_RETRY
-		      : control == CONTROL_HEADER ? DETAIL_ACTION_DOWNLOAD_ALL
+		      : control == CONTROL_HEADER ? header_action()
 		      : button_action((detail_button)control),
 		      press);
 		break;
@@ -677,7 +734,7 @@ static detail_action update(u32 down)
 		/* A row touched while the button over the list has the focus
 		 * takes the focus back first, without playing. */
 		if (event == TRACK_LIST_ACTIVATE && !header_focus)
-			queue(DETAIL_ACTION_PLAY, &list.press);  /* the focused row */
+			queue(row_action(), &list.press);  /* the focused row */
 		if (event != TRACK_LIST_IDLE) {
 			header_focus = false;
 			return DETAIL_ACTION_NONE;
@@ -724,14 +781,14 @@ static detail_action update(u32 down)
 	if ((down & KEY_A) && mode == MODE_TRACK) {
 		press_key(GLYPH_A, button_action(focus), &press_button[focus]);
 	} else if ((down & KEY_A) && mode == MODE_LIST && header_focus) {
-		press_key(GLYPH_A, DETAIL_ACTION_DOWNLOAD_ALL, &press_header);
+		press_key(GLYPH_A, header_action(), &press_header);
 	} else if ((down & KEY_A) && mode == MODE_LIST) {
 		/* The album or artist from this row (plan 8.1). */
-		press_key(GLYPH_A, DETAIL_ACTION_PLAY,
-		          track_list_focused_press(&list));
+		press_key(GLYPH_A, row_action(), track_list_focused_press(&list));
 	} else if ((down & KEY_A) && mode == MODE_FAILED) {
 		press_key(GLYPH_A, DETAIL_ACTION_RETRY, &press_retry);
-	} else if ((down & KEY_X) && mode == MODE_LIST && !header_focus) {
+	} else if ((down & KEY_X) && mode == MODE_LIST && !header_focus &&
+	           !focused_collection() && list.count > 0) {
 		press_key(GLYPH_X, DETAIL_ACTION_OPEN_TRACK, NULL);
 	} else if ((down & KEY_Y) && mode == MODE_LIST) {
 		press_key(GLYPH_Y, DETAIL_ACTION_SHUFFLE, NULL);
@@ -802,6 +859,8 @@ static icon_id download_icon(const detail_look *look)
 			return ICON_DOWNLOAD;
 		}
 	}
+	if (look->dl.kind == DL_COLL_BUTTON_REMOVE)
+		return ICON_DOWNLOADED;
 	switch ((dl_coll_button)look->dl.kind) {
 	case DL_COLL_BUTTON_WAITING:
 		return ICON_QUEUED;
@@ -863,8 +922,14 @@ static void draw_bar(const detail_look *look)
 		if (look->header_focus) {
 			hints[n++] = hint(GLYPH_A, &hint_choose, look);
 		} else {
-			hints[n++] = hint(GLYPH_A, &hint_play, look);
-			hints[n++] = hint(GLYPH_X, &hint_detail, look);
+			/* A collection of the Downloads opens, and has no detail of
+			 * a track to show. */
+			bool coll = list.rows && list.count > 0 &&
+			            list.rows[look->list.selected].kind !=
+			            TRACK_ROW_TRACK;
+			hints[n++] = hint(GLYPH_A, coll ? &hint_open : &hint_play, look);
+			if (!coll)
+				hints[n++] = hint(GLYPH_X, &hint_detail, look);
 		}
 		hints[n++] = hint(GLYPH_Y, look->shuffle ? &hint_shuffle_on
 		                                         : &hint_shuffle_off, look);

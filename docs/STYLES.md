@@ -227,6 +227,16 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
   (1, 2, 3…, continua entre discos) en `t_meta` · `texto_2`, centrada. También en la fila en
   foco: el cuadrado sigue siendo `capa_alta` y `tinta` sobre él apenas se leería. Sin
   descarga de miniaturas.
+- Variante de colección (Descargas, §7.14): un álbum o una playlist entre canciones. Su
+  portada va **apilada**, con dos marcos `capa_luz` de contorno `tinta` asomando detrás,
+  desplazados 2 y 4 px arriba a la derecha, como discos en una pila; en la esquina inferior
+  izquierda de la portada, una insignia: el icono de disco o de líneas (16 px, `texto` sobre
+  `tinta`). La segunda línea dice «Álbum · Canciones: 12» o «Playlist · 8 de 40», y a la
+  derecha va un chevron `>` en lugar de la duración: A la abre, no la reproduce. Se
+  distingue de una canción sin depender del color, y los estados de foco no cambian.
+- Variante sin descargar (colección descargada, §7.14): título, artista y número en
+  `texto_off`, y a la derecha, en lugar de la duración, el icono de su estado (reloj en
+  cola, error si falló). No toma el foco ni responde al toque.
 
 ### 5.4 Barra de progreso
 
@@ -800,6 +810,9 @@ Error:
 - «Mostrar más» es la misma pestaña en otro modo, no un nivel de detalle: 5 filas de
   teselas entre las barras, con indicador de desplazamiento. B vuelve a la rejilla de 6 con
   el foco en «Mostrar más».
+- La segunda tesela es siempre «Descargas», con el icono de descarga donde iría la
+  portada: no viene del feed, así que la primera fila es `[Canciones que te gustan]
+  [Descargas]`. Su vista previa dice cuántas canciones y colecciones hay en la SD.
 - La primera tesela es siempre «Canciones que te gustan», con el icono del corazón
   (§5.10) donde iría la portada. Se abre como una playlist más, por páginas (§7.11); la
   lista entera llega en una petición (`context-resolve`, de la más reciente a la más
@@ -1052,6 +1065,27 @@ botones con el foco en «Descargas».
   «Descargando», «Nada pendiente», «En pausa», «La tarjeta SD está llena» o «Sin
   conexión». El espacio libre se lee al abrir y cada 10 s, no en cada frame.
 - Solo pide frame al pulsar, al cambiar las descargas y con el porcentaje (§9).
+
+### 7.14 Descargas en Inicio
+
+- La tesela «Descargas» (§7.7) abre un nivel de detalle en la pila de «Inicio» que sale del
+  índice de descargas, sin red: lista como la de §7.11 con, primero, los álbumes y
+  playlists descargados (completos o en curso, lo más reciente primero) con la variante de
+  colección (§5.3), y después las canciones descargadas sueltas, lo más reciente primero.
+- A en una canción la reproduce con las canciones sueltas como cola (respeta el aleatorio);
+  A en una colección la abre. X en una canción, su detalle (con «Borrar descarga»); en una
+  colección no hace nada. Barra: `[A] Reproducir` o `[A] Abrir` según la fila,
+  `[X] Detalle`, `[Y] Aleatorio`, `[B] Volver`.
+- Colección descargada: como el detalle de álbum o playlist (§7.11, filas con número para
+  un álbum y con miniatura para una playlist), con todas sus pistas; las que aún no están en
+  la SD van con la variante sin descargar (§5.3) y la cruceta las salta. Reproducir pone en
+  la cola solo las que están en la SD. Encima, el botón fijo de §7.11 dice «Borrar descarga»
+  y pide una segunda A («Pulsa A otra vez para borrar»); al borrar se vuelve al nivel
+  anterior. «Descargado» en el detalle de un álbum o playlist abre esta vista.
+- Las dos vistas se actualizan solas cuando cambian las descargas.
+- Sin nada descargado: «Todavía no hay nada descargado».
+- Superior (§7.12): «Descargas» con «Canciones: N · Álbumes y playlists: M»; una colección,
+  su portada (desde la SD), «Álbum - artista» y «Canciones: 12 · 48 MB».
 
 ## 8. Movimiento
 

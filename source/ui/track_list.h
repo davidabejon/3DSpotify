@@ -24,6 +24,7 @@
 
 #include "lang.h"
 #include "list_logic.h"
+#include "offline_logic.h"
 #include "press_logic.h"
 #include "spclient.h"
 #include "thumbs.h"
@@ -66,6 +67,9 @@ typedef struct {
 	track_list_style style;
 	/* Where the rows go: list_frame_full unless set. */
 	list_frame frame;
+	/* What each row is, for a list that is not only playable tracks (the
+	 * downloads): NULL for one that is. The owner's, like `tracks`. */
+	const track_row *rows;
 	const sp_track *tracks;   /* the owner's; valid while shown */
 	int count;
 	int selected;
@@ -105,6 +109,10 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 /* Where the rows go (list_logic.h): before track_list_set, which places
  * the focus in it. A list starts with list_frame_full. */
 void track_list_set_frame(track_list *l, list_frame frame);
+/* What each row is (offline_logic.h), after track_list_set, which forgets
+ * it: collections draw stacked with a badge and a chevron, rows that are
+ * off draw dimmed, take no focus and answer no tap. NULL for none. */
+void track_list_set_rows(track_list *l, const track_row *rows);
 /* Back to where a list was left: `first` as the first visible row, on
  * whole rows, with the focus kept in view. */
 void track_list_scroll_to(track_list *l, int first);

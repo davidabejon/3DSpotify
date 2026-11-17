@@ -1,6 +1,8 @@
 #include "view_home.h"
 
 #include "art_cache.h"
+#include "downloads.h"
+#include "offline_logic.h"
 #include "draw.h"
 #include "home_feed.h"
 #include "home_logic.h"
@@ -43,6 +45,9 @@ static home_mode mode = MODE_LOADING;
 static unsigned synced_generation = (unsigned)-1;
 static const sp_playlist_ref *items;
 static int item_count;
+/* The feed's playlists with the pinned Downloads tile after Liked Songs
+ * (offline_logic.h): what the grids show. */
+static sp_playlist_ref shown_items[HOME_MAX_PLAYLISTS];
 static tile_grid six, more;
 static home_focus focus = HOME_FOCUS_TILES;
 
@@ -161,10 +166,28 @@ static void sync(void)
 		items = NULL;
 		item_count = 0;
 		break;
-	case HOME_FEED_READY:
-		items = home_feed_items(&item_count);
+	case HOME_FEED_READY: {
+		int feed_count;
+		const sp_playlist_ref *feed = home_feed_items(&feed_count);
+		item_count = 0;
+		for (int i = 0; i < feed_count; i++) {
+			int at = home_tile_of_feed(i);
+			if (at < HOME_MAX_PLAYLISTS)
+				shown_items[at] = feed[i];
+			if (at + 1 > item_count)
+				item_count = at + 1;
+		}
+		if (feed_count > 0) {
+			sp_playlist_ref *d = &shown_items[home_downloads_tile()];
+			memset(d, 0, sizeof(*d));
+			snprintf(d->uri, sizeof(d->uri), "%s", DL_HOME_URI);
+		}
+		if (item_count > HOME_MAX_PLAYLISTS)
+			item_count = HOME_MAX_PLAYLISTS;
+		items = shown_items;
 		mode = item_count > 0 ? MODE_SIX : MODE_EMPTY;
 		break;
+	}
 	}
 	int shown = item_count < HOME_RECENT_SHOWN ? item_count
 	                                           : HOME_RECENT_SHOWN;
@@ -211,6 +234,18 @@ static void follow_preview(void)
 			unsigned serial = preview.serial + 1;
 			memset(&preview, 0, sizeof(preview));
 			preview.serial = serial;
+			if (strcmp(r->uri, DL_HOME_URI) == 0) {
+				/* The Downloads: how much is on the card. */
+				preview.kind = DETAIL_DOWNLOADS;
+				preview.state = DETAIL_READY;
+				snprintf(preview.uri, sizeof(preview.uri), "%s", r->uri);
+				const dl_index *idx = downloads_index();
+				for (int t = 0; idx && t < idx->track_count; t++)
+					preview.track_rows += idx->tracks[t].standalone &&
+					                      idx->tracks[t].state == DL_DONE;
+				preview.coll_rows = idx ? idx->coll_count : 0;
+				return;
+			}
 			preview.kind = DETAIL_PLAYLIST;
 			preview.state = DETAIL_READY;
 			snprintf(preview.uri, sizeof(preview.uri), "%s", r->uri);
@@ -226,6 +261,7 @@ static void follow_preview(void)
 		return;
 	}
 	if (index >= 0 && index < item_count &&
+	    strcmp(items[index].uri, DL_HOME_URI) != 0 &&
 	    ++preview_still == HOME_PREVIEW_DELAY)
 		snprintf(preview.art, sizeof(preview.art), "%s", items[index].art);
 }

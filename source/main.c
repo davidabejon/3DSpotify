@@ -1644,6 +1644,27 @@ static void queue_play_list(spotify_session *session, const detail_doc *doc)
 	}
 }
 
+/* A list from the downloads: its tracks on the card, from the focused
+ * one; the collections and what is not downloaded yet stay out. */
+static void queue_play_offline(spotify_session *session, const detail_doc *doc)
+{
+	sp_track *list = malloc((size_t)doc->count * sizeof(sp_track));
+	if (!list)
+		return;
+	int n = 0, at = 0;
+	for (int i = 0; i < doc->count; i++) {
+		const track_row *r = &doc->rows[i];
+		if (r->kind != TRACK_ROW_TRACK || r->off)
+			continue;
+		if (i == doc->selected)
+			at = n;
+		list[n++] = doc->tracks[i];
+	}
+	if (n > 0)
+		queue_play(session, list, n, at, QUEUE_LIST);
+	free(list);
+}
+
 /* What a load brought, onto the end of the queue: in a shuffled list,
  * among the tracks still to play. */
 static void queue_take(const queue_feed_result *r)
@@ -1762,6 +1783,8 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		view_results_allow_thumbs(false);
 		if (doc->kind == DETAIL_TRACK && doc->single)
 			queue_play_radio(session, pick);
+		else if (doc->rows)
+			queue_play_offline(session, doc);
 		else
 			queue_play_list(session, doc);
 	}
@@ -1862,6 +1885,16 @@ static void download_from_detail(const sp_track *t)
 	view_detail_notice(said, good_news(said));
 }
 
+/* Whether an album or a playlist is on the card whole. */
+static bool downloaded_whole(const char *uri)
+{
+	bool pending;
+	int done, count;
+	return downloads_collection_state(uri, &pending, &done, &count) &&
+	       dl_collection_button(pending, true, done, count) ==
+	       DL_COLL_BUTTON_DONE;
+}
+
 /* An album's or playlist's button over its list. */
 static void download_collection(const detail_doc *doc)
 {
@@ -1899,11 +1932,33 @@ static void detail_input(spotify_session *session, u32 down)
 		break;
 	case DETAIL_ACTION_OPEN_TRACK:
 		/* The list comes along, as from the results: "Play" there queues
-		 * this album or artist. */
-		details_open_track(active_tab, doc->tracks, doc->count,
-		                   doc->selected, false);
+		 * this album or artist. From the Downloads, only its tracks: the
+		 * collections before them are no tracks to play. */
+		if (doc->kind == DETAIL_DOWNLOADS)
+			details_open_track(active_tab, doc->tracks + doc->coll_rows,
+			                   doc->track_rows,
+			                   doc->selected - doc->coll_rows, false);
+		else
+			details_open_track(active_tab, doc->tracks, doc->count,
+			                   doc->selected, false);
 		switch_tab(active_tab);
 		break;
+	case DETAIL_ACTION_OPEN_COLLECTION:
+		if (track)
+			details_open_offline_collection(active_tab, track->uri);
+		switch_tab(active_tab);
+		break;
+	case DETAIL_ACTION_REMOVE_ALL: {
+		char uri[SP_URI_MAX];
+		snprintf(uri, sizeof(uri), "%s", doc->uri);
+		/* The level shows nothing any more: back to where it came from. */
+		details_back(active_tab);
+		downloads_remove(uri);
+		switch_tab(active_tab);
+		if (details_active(active_tab))
+			view_detail_notice(STR_DL_REMOVED, true);
+		break;
+	}
 	case DETAIL_ACTION_RETRY:
 		details_retry(active_tab);
 		break;
@@ -1922,8 +1977,15 @@ static void detail_input(spotify_session *session, u32 down)
 		download_from_detail(track);
 		break;
 	case DETAIL_ACTION_DOWNLOAD_ALL:
-		if (doc->kind == DETAIL_ALBUM || doc->kind == DETAIL_PLAYLIST)
+		if (doc->kind != DETAIL_ALBUM && doc->kind != DETAIL_PLAYLIST)
+			break;
+		if (downloaded_whole(doc->uri)) {
+			/* "Downloaded": the copy on the card, with no network. */
+			details_open_offline_collection(active_tab, doc->uri);
+			switch_tab(active_tab);
+		} else {
 			download_collection(doc);
+		}
 		break;
 	default:
 		break;
@@ -2047,8 +2109,13 @@ static tabs_exit run_tabs(spotify_session *session)
 				keyboard_search(session, home_query);
 				break;
 			case HOME_ACTION_OPEN:
-				/* On Home's own stack: L/R and back find it as left. */
-				details_open_playlist(TAB_HOME, view_home_selected_uri());
+				/* On Home's own stack: L/R and back find it as left. The
+				 * Downloads tile opens the card's, with no network. */
+				if (strcmp(view_home_selected_uri(), DL_HOME_URI) == 0)
+					details_open_downloads(TAB_HOME);
+				else
+					details_open_playlist(TAB_HOME,
+					                      view_home_selected_uri());
 				switch_tab(TAB_HOME);
 				break;
 			case HOME_ACTION_RETRY:

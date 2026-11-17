@@ -61,8 +61,13 @@ typedef enum {
 	/* Track: its download button, confirmed when it removes. The caller
 	 * queues, retries or removes, then says so (view_detail_notice). */
 	DETAIL_ACTION_DOWNLOAD,
-	/* Album or playlist: the button over the list. */
-	DETAIL_ACTION_DOWNLOAD_ALL
+	/* Album or playlist: the button over the list (download it, or once
+	 * downloaded open it from the card). */
+	DETAIL_ACTION_DOWNLOAD_ALL,
+	/* An album or playlist on the card: its button, confirmed. */
+	DETAIL_ACTION_REMOVE_ALL,
+	/* The Downloads: A on an album or playlist, open it from the card. */
+	DETAIL_ACTION_OPEN_COLLECTION
 } detail_action;
 
 /* After ui_init and icons_init. */

@@ -649,7 +649,8 @@ class BuildTests(unittest.TestCase):
             self.assertIn(wired, detail_in)
         view = (ui_dir / "view_detail.c").read_text(encoding="utf-8")
         # An album's rows share its cover: they show their position.
-        self.assertIn("doc->kind == DETAIL_ALBUM ? TRACK_LIST_NUMBERS", view)
+        self.assertIn("bool numbers = doc->kind == DETAIL_ALBUM ||", view)
+        self.assertIn("list.style = numbers ? TRACK_LIST_NUMBERS", view)
         self.assertIn("track_list_scroll_to(&list, doc->first);", view)
         self.assertIn("doc->selected = list.selected;", view)
         # The Playing tab's title, artist and album open their details on
@@ -900,10 +901,12 @@ class BuildTests(unittest.TestCase):
                         confirm.rindex("return DETAIL_ACTION_DOWNLOAD;"))
         self.assertIn("view_detail_notice(STR_DL_REMOVE_CONFIRM", confirm)
         # The button over an album or a playlist, never an artist's list.
-        place = body(view, "static void place_list(")
+        place = body(view, "static bool has_header(")
         self.assertIn("DETAIL_ALBUM", place)
         self.assertIn("DETAIL_PLAYLIST", place)
+        self.assertIn("DETAIL_OFFLINE_COLLECTION", place)
         self.assertNotIn("DETAIL_ARTIST", place)
+        self.assertNotIn("DETAIL_DOWNLOADS", place)
         self.assertIn("downloads_add_collection(",
                       body(app, "static void download_collection("))
         # The track that plays goes with the player's key, from X or from
@@ -950,6 +953,30 @@ class BuildTests(unittest.TestCase):
         self.assertIn("dl_store_free_bytes()", tick)
         # Its covers come through the thumbnail pool like any list's.
         self.assertIn("thumbs_client_frame(&thumbs);", view)
+
+    def test_home_downloads_never_reach_the_service(self):
+        root = build.ROOT
+        logic = (root / "ui" / "offline_logic.h").read_text(encoding="utf-8")
+        self.assertIn('#define DL_HOME_URI "3dspotify:downloads"', logic)
+        # The pseudo-URI is the app's own: nothing that talks to Spotify
+        # names it, and the Home tile opens the card's list instead.
+        for name in ("spclient.c", "http3ds.c", "ap3ds.c"):
+            text = (root / "platform3ds" / name).read_text(encoding="utf-8")
+            self.assertNotIn("DL_HOME_URI", text, name)
+            self.assertNotIn("3dspotify:downloads", text, name)
+        app = (root / "main.c").read_text(encoding="utf-8")
+        self.assertIn("if (strcmp(view_home_selected_uri(), DL_HOME_URI) == 0)\n"
+                      "\t\t\t\t\tdetails_open_downloads(TAB_HOME);", app)
+        # The offline levels never start a load: READY as they open.
+        details = (root / "ui" / "details.c").read_text(encoding="utf-8")
+        text = details[details.index("static void open_offline("):]
+        text = text[:text.index("\n}\n")]
+        self.assertIn("d->state = DETAIL_READY;", text)
+        self.assertNotIn("DETAIL_LOADING", text)
+        # Playing from the downloads queues only the tracks on the card.
+        play = app[app.index("static void queue_play_offline("):]
+        play = play[:play.index("\n}\n")]
+        self.assertIn("r->kind != TRACK_ROW_TRACK || r->off", play)
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT

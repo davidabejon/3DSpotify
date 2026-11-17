@@ -22,6 +22,7 @@
 #define DETAILS_H
 
 #include "detail_nav.h"
+#include "offline_logic.h"
 #include "spclient.h"
 #include "tabs_logic.h"
 
@@ -38,8 +39,13 @@
  * last one loaded. */
 #define DETAIL_MORE_AHEAD 8
 
+/* DETAIL_DOWNLOADS (the Home tab's Downloads) and DETAIL_OFFLINE_COLLECTION
+ * (an album or playlist on the card) come from the downloads index, with
+ * no network: READY as they open, and filled again when the downloads
+ * change. */
 typedef enum {
-	DETAIL_TRACK, DETAIL_ALBUM, DETAIL_ARTIST, DETAIL_PLAYLIST
+	DETAIL_TRACK, DETAIL_ALBUM, DETAIL_ARTIST, DETAIL_PLAYLIST,
+	DETAIL_DOWNLOADS, DETAIL_OFFLINE_COLLECTION
 } detail_kind;
 typedef enum { DETAIL_LOADING, DETAIL_READY, DETAIL_FAILED } detail_state;
 
@@ -78,6 +84,16 @@ typedef struct {
 	uint64_t retry_at;
 	/* A line for the card: where it was left ("title - artist"), or "". */
 	char resume[128];
+	/* The offline kinds: what each row is (offline_logic.h), in a buffer
+	 * of their own as long as `tracks`; how many rows are collections and
+	 * how many tracks (Downloads); whether the collection is an album, and
+	 * the bytes of its tracks on the card; the downloads generation it was
+	 * filled at. */
+	track_row *rows;
+	int  coll_rows, track_rows;
+	bool offline_album;
+	uint64_t bytes;
+	unsigned dl_generation;
 	/* The view's state, so going back finds the list as it was left. */
 	int  selected, first;
 	char error[192];
@@ -105,6 +121,10 @@ void details_open_track(app_tab tab, const sp_track *list, int count,
 void details_open_album(app_tab tab, const char *uri);
 void details_open_artist(app_tab tab, const char *uri);
 void details_open_playlist(app_tab tab, const char *uri);
+/* The downloads, from the index: the Home tab's Downloads, and an album or
+ * playlist on the card by URI. No network. */
+void details_open_downloads(app_tab tab);
+void details_open_offline_collection(app_tab tab, const char *uri);
 
 /* Pops one level of `tab`; a load for it is asked to stop. False when the
  * stack was already empty, so B does what the tab's own view does. */

@@ -5,6 +5,7 @@
 #include "detail_nav.h"
 #include "downloads_logic.h"
 #include "downloads_view_logic.h"
+#include "offline_logic.h"
 #include "grid_logic.h"
 #include "home_feed_logic.h"
 #include "home_logic.h"
@@ -1119,6 +1120,94 @@ static void test_downloads_manager_list(void)
 	assert(top_mode_with_manager(TOP_ABOUT, false) == TOP_ABOUT);
 	assert(top_mode_with_manager(TOP_DETAIL, true) == TOP_DETAIL);
 	assert(top_mode_with_manager(TOP_NOW_CARD, true) == TOP_NOW_CARD);
+}
+
+static void test_offline_rows(void)
+{
+	static dl_index idx;
+	static track_row rows[64];
+	static offline_item scratch[DL_TRACKS_MAX];
+	dl_index_clear(&idx);
+	dl_track t;
+	/* t0..t4: t0, t1 alone (t1 newest), t2..t4 an album's; t3 queued. */
+	for (int i = 0; i < 5; i++) {
+		memset(&t, 0, sizeof(t));
+		snprintf(t.uri, sizeof(t.uri), "spotify:track:t%d", i);
+		dl_add_track(&idx, &t, i < 2, 10 + (uint32_t)i);
+		idx.tracks[i].state = DL_DONE;
+	}
+	idx.tracks[3].state = DL_QUEUED;
+	idx.tracks[4].state = DL_FAILED;
+	/* A sixth, alone but still queued: not in the Downloads yet. */
+	memset(&t, 0, sizeof(t));
+	snprintf(t.uri, sizeof(t.uri), "spotify:track:t5");
+	dl_add_track(&idx, &t, true, 99);
+	dl_collection c;
+	memset(&c, 0, sizeof(c));
+	snprintf(c.uri, sizeof(c.uri), "spotify:album:x");
+	c.kind = DL_COLL_ALBUM;
+	int album = dl_add_collection(&idx, &c, 5);
+	for (int i = 2; i < 5; i++)
+		dl_add_ref(&idx, album, i);
+	snprintf(c.uri, sizeof(c.uri), "spotify:playlist:y");
+	c.kind = DL_COLL_PLAYLIST;
+	int playlist = dl_add_collection(&idx, &c, 50);
+	dl_add_ref(&idx, playlist, 0);
+
+	/* Collections first, newest first; then the tracks alone on the card,
+	 * newest first. */
+	int colls;
+	int n = offline_home_rows(&idx, rows, 64, scratch, &colls);
+	assert(n == 4 && colls == 2);
+	assert(rows[0].kind == TRACK_ROW_PLAYLIST && rows[0].index == playlist);
+	assert(rows[0].done == 1 && rows[0].count == 1);
+	assert(rows[1].kind == TRACK_ROW_ALBUM && rows[1].index == album);
+	assert(rows[1].done == 1 && rows[1].count == 3);
+	assert(rows[2].kind == TRACK_ROW_TRACK && rows[2].index == 1);
+	assert(rows[3].kind == TRACK_ROW_TRACK && rows[3].index == 0);
+	for (int i = 0; i < n; i++)
+		assert(!rows[i].off);
+	/* Room for fewer: the first ones. */
+	assert(offline_home_rows(&idx, rows, 3, scratch, &colls) == 3);
+	assert(offline_home_rows(NULL, rows, 64, scratch, &colls) == 0 &&
+	       colls == 0);
+
+	/* An album on the card: its order; what is not downloaded is off. */
+	n = offline_collection_rows(&idx, album, rows, 64);
+	assert(n == 3);
+	assert(rows[0].index == 2 && !rows[0].off);
+	assert(rows[1].index == 3 && rows[1].off && rows[1].state == DL_QUEUED);
+	assert(rows[2].index == 4 && rows[2].off && rows[2].state == DL_FAILED);
+	assert(offline_collection_rows(&idx, 7, rows, 64) == 0);
+
+	/* The D-pad over rows that are off: up/down to the next on, pages
+	 * counting only those, bumping at the ends. */
+	track_row r[6];
+	memset(r, 0, sizeof(r));
+	r[1].off = r[2].off = r[4].off = true;
+	bool bumped;
+	assert(track_row_move(r, 6, 0, 1, &bumped) == 3 && !bumped);
+	assert(track_row_move(r, 6, 3, 1, &bumped) == 5);
+	assert(track_row_move(r, 6, 5, 1, &bumped) == 5 && bumped);
+	assert(track_row_move(r, 6, 3, -1, &bumped) == 0);
+	assert(track_row_move(r, 6, 0, -1, &bumped) == 0 && bumped);
+	assert(track_row_move(r, 6, 0, 4, &bumped) == 5 && !bumped);
+	assert(track_row_move(r, 6, 5, -2, &bumped) == 0);
+	assert(track_row_move(NULL, 6, 2, 1, &bumped) == 3);
+	assert(track_row_first_on(r, 6, 1) == 3);
+	assert(track_row_first_on(r, 6, 4) == 5);
+	r[5].off = true;
+	r[3].off = true;
+	assert(track_row_first_on(r, 6, 4) == 0);
+	r[0].off = true;
+	assert(track_row_first_on(r, 6, 0) == -1);
+	assert(track_row_on(NULL, 3) && !track_row_on(r, 3));
+
+	/* Home: Liked Songs, the Downloads, then the feed's playlists. */
+	assert(home_tile_of_feed(0) == 0);
+	assert(home_downloads_tile() == 1);
+	assert(home_tile_of_feed(1) == 2 && home_tile_of_feed(5) == 6);
+	assert(HOME_PINNED == 2);
 }
 
 static void test_download_buttons(void)
@@ -3845,6 +3934,7 @@ int main(void)
 	test_downloads_retry_and_busy();
 	test_download_buttons();
 	test_downloads_manager_list();
+	test_offline_rows();
 	test_playback_next_playable();
 	return 0;
 }
