@@ -1763,10 +1763,11 @@ static void download_playing(void)
 	const track_stream *ts = &dl.stream;
 	bool keyed = player.phase == PLAYER_PHASE_PLAYING && !dl_abandoned &&
 	             strcmp(ts->meta.uri, t->uri) == 0;
-	if (keyed)
-		downloads_add_track_keyed(t, ts->key, ts->file_id, ts->format);
-	else
-		downloads_add_track(t);
+	str_id said = keyed
+	              ? downloads_add_track_keyed(t, ts->key, ts->file_id,
+	                                          ts->format)
+	              : downloads_add_track(t);
+	view_player_notice(said, said == STR_DL_ADDED || said == STR_DL_ALREADY);
 }
 
 static void detail_input(spotify_session *session, u32 down)

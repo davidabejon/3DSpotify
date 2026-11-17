@@ -767,6 +767,8 @@ void downloads_start(const char *h, const char *tok, const char *user,
 	online = host[0] && token[0] && open_ap;
 	sd_full = false;
 	retry_at = 0;
+	dlog("session: %s, index %s", online ? "online" : "incomplete",
+	     unreadable ? "unreadable" : loaded ? "loaded" : "loading");
 	generation++;
 }
 
@@ -809,53 +811,82 @@ void downloads_exit(void)
 	loaded = false;
 }
 
-/* The account the index is for, set by the first download. */
-static bool claim(void)
+/* Whether something may be added, and if not, why (a downloads.h text).
+ * The first download makes the index this account's. */
+static str_id claim(void)
 {
-	if (!usable() || !online)
-		return false;
+	str_id why = STR_COUNT;
+	if (unreadable)
+		why = STR_DL_UNREADABLE;
+	else if (!loaded || !online)
+		why = STR_DL_NOT_READY;
+	else if (!usable())
+		why = STR_DL_OTHER_ACCOUNT;
+	if (why != STR_COUNT) {
+		dlog("refused: %s (loaded %d, online %d, owner %s)",
+		     why == STR_DL_UNREADABLE ? "index unreadable"
+		     : why == STR_DL_NOT_READY ? "not ready" : "another account",
+		     loaded, online, idx && idx->owner[0] ? "set" : "none");
+		return why;
+	}
 	if (!idx->owner[0]) {
 		snprintf(idx->owner, sizeof(idx->owner), "%s", username);
 		changed();
 	}
-	return true;
+	return STR_COUNT;
 }
 
-bool downloads_add_track(const sp_track *t)
+str_id downloads_add_track(const sp_track *t)
 {
-	if (!t || !claim())
-		return false;
+	if (!t)
+		return STR_DL_NOT_READY;
+	str_id why = claim();
+	if (why != STR_COUNT)
+		return why;
+	int had = dl_find_track(idx, t->uri);
+	if (had >= 0 && idx->tracks[had].state != DL_FAILED) {
+		idx->tracks[had].standalone = true;
+		dlog("%s: already in (%d)", t->uri, idx->tracks[had].state);
+		changed();
+		return STR_DL_ALREADY;
+	}
 	dl_track d;
 	track_from_sp(t, &d);
 	int at = dl_add_track(idx, &d, true, (uint32_t)time(NULL));
-	if (at < 0)
-		return false;
+	if (at < 0) {
+		dlog("%s: refused, the index is full", d.uri);
+		return STR_DL_FULL;
+	}
 	if (idx->tracks[at].state == DL_FAILED)
 		dl_requeue(idx, at);
 	dlog("%s: queued", d.uri);
 	changed();
-	return true;
+	return STR_DL_ADDED;
 }
 
-bool downloads_add_track_keyed(const sp_track *t, const uint8_t key[16],
-                               const uint8_t file_id[20], int format)
+str_id downloads_add_track_keyed(const sp_track *t, const uint8_t key[16],
+                                 const uint8_t file_id[20], int format)
 {
-	if (!downloads_add_track(t))
-		return false;
+	str_id said = downloads_add_track(t);
+	if (said != STR_DL_ADDED && said != STR_DL_ALREADY)
+		return said;
 	int at = dl_find_track(idx, t->uri);
 	if (at < 0 || idx->tracks[at].has_key || !dl_store_ensure_salt(idx))
-		return true;
+		return said;
 	uint8_t wrapped[DL_WRAPPED_LEN];
-	if (dl_store_wrap_key(idx->salt, t->uri, key, wrapped))
+	if (dl_store_wrap_key(idx->salt, t->uri, key, wrapped)) {
 		dl_set_key(idx, at, wrapped, file_id, format);
+		dlog("%s: with the player's key", t->uri);
+	}
 	secure_clear(wrapped, sizeof(wrapped));
-	return true;
+	return said;
 }
 
 bool downloads_add_collection(dl_coll_kind kind, const char *uri,
                               const char *name, const char *art)
 {
-	if (!uri || !uri[0] || !claim() || pending_count >= PENDING_MAX)
+	if (!uri || !uri[0] || claim() != STR_COUNT ||
+	    pending_count >= PENDING_MAX)
 		return false;
 	for (int i = 0; i < pending_count; i++)
 		if (strcmp(pending[i].uri, uri) == 0)

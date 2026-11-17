@@ -19,6 +19,7 @@
 
 #include "ap3ds.h"
 #include "downloads_logic.h"
+#include "lang.h"
 #include "spclient.h"
 
 #include <stdbool.h>
@@ -51,13 +52,15 @@ bool downloads_busy(void);
  * never got that far): it counts against the same allowance. */
 void downloads_note_player_key(int rc, int refused_code);
 
-/* Queues a track the user asked for. False while the index is not loaded,
- * belongs to another account, or is full. */
-bool downloads_add_track(const sp_track *t);
+/* Queues a track the user asked for. Returns what to tell them:
+ * STR_DL_ADDED or STR_DL_ALREADY when it is (or was) in, or why not:
+ * STR_DL_NOT_READY (the index is loading, or there is no session),
+ * STR_DL_UNREADABLE, STR_DL_OTHER_ACCOUNT, STR_DL_FULL. */
+str_id downloads_add_track(const sp_track *t);
 /* The same for the track that plays, with the key the player already has:
  * no key is asked for again. */
-bool downloads_add_track_keyed(const sp_track *t, const uint8_t key[16],
-                               const uint8_t file_id[20], int format);
+str_id downloads_add_track_keyed(const sp_track *t, const uint8_t key[16],
+                                 const uint8_t file_id[20], int format);
 /* Queues an album or a playlist (SP_LIKED_URI too): resolved into its
  * tracks in the background, then each queued. `name` and `art` show until
  * it is resolved. */

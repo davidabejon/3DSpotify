@@ -59,8 +59,20 @@ static player_action pending = PLAYER_ACTION_NONE;
 static const press_state *pending_press;
 static int loader_frames;
 /* The bubble (5.9) after touching the progress bar before the whole track
- * has downloaded: frames shown, or -1. */
+ * has downloaded, or after X (view_player_notice): frames shown, or -1;
+ * what it says, and whether that is good news or a refusal. */
 static int bubble_frames = -1;
+static str_id bubble_id = STR_PLAYER_SEEK_WAIT;
+static bool bubble_ok;
+
+static void show_bubble(str_id text, bool ok)
+{
+	if (text != bubble_id)
+		parsed_stage = STR_COUNT;   /* parse_static parses it again */
+	bubble_id = text;
+	bubble_ok = ok;
+	bubble_frames = 0;
+}
 /* The stylus on a bar: dragging the progress bar's handle (the track moves
  * when it lifts), or the volume (it follows at once); or still down on a
  * bar that went away (a new track), spent until it lifts. */
@@ -81,7 +93,7 @@ typedef struct {
 	bool link[PLAYER_LINK_COUNT];
 	bool glyph[GLYPH_COUNT];
 	int loader_step;
-	bool bubble;
+	str_id bubble;          /* the bubble's text, STR_COUNT when none */
 } player_look;
 static player_look drawn;
 static bool drawn_valid;
@@ -180,7 +192,7 @@ static void parse_static(void)
 	ui_rect notice = player_notice_rect();
 	parse_fitted(&failed_title, static_buf, tr(STR_PLAYER_FAILED_TITLE),
 	             TXT_CABEZA, notice.w - 2 * SP_3 - ICON_S - SP_1);
-	parse_fitted(&seek_wait_text, static_buf, tr(STR_PLAYER_SEEK_WAIT),
+	parse_fitted(&seek_wait_text, static_buf, tr(bubble_id),
 	             TXT_CUERPO,
 	             SCREEN_BOTTOM_W - 2 * SP_2 - 2 * SP_3 - ICON_S - SP_1);
 	parse(&failed_body, static_buf,
@@ -316,7 +328,7 @@ static player_look current_look(void)
 		.volume = info.volume_pct,
 		.loader_step = info.phase == PLAYER_PHASE_LOADING
 		               ? loader_frames / LOADER_STEP : 0,
-		.bubble = bubble_frames >= 0,
+		.bubble = bubble_frames >= 0 ? bubble_id : STR_COUNT,
 	};
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		look.control[i] = press_down(&press_control[i]);
@@ -502,7 +514,7 @@ static player_action handle_bars(u32 down, u32 held, bool *owned)
 			/* Still downloading: the track cannot move yet. The press
 			 * is spent and a bubble says to wait for 100%. */
 			drag = DRAG_SPENT;
-			bubble_frames = 0;
+			show_bubble(STR_PLAYER_SEEK_WAIT, false);
 		} else if (has_controls() &&
 		         ui_rect_contains(player_volume_zone(volume_label_w),
 		                          pos.px, pos.py)) {
@@ -606,6 +618,11 @@ player_action view_player_update(u32 down)
 	if (down & KEY_X)
 		return PLAYER_ACTION_DOWNLOAD;
 	return PLAYER_ACTION_NONE;
+}
+
+void view_player_notice(str_id text, bool ok)
+{
+	show_bubble(text, ok);
 }
 
 int view_player_value(void)
@@ -767,8 +784,8 @@ void view_player_draw_bottom(void)
 		break;
 	}
 	draw_hints(&look);
-	if (look.bubble) {
-		C2D_Image icon = icon_image(ICON_ERROR);
+	if (look.bubble != STR_COUNT) {
+		C2D_Image icon = icon_image(bubble_ok ? ICON_NOTE : ICON_ERROR);
 		ui_bubble(list_bubble_rect(ui_bubble_content_width(&seek_wait_text)),
 		          &icon, &seek_wait_text);
 	}

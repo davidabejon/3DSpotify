@@ -92,6 +92,9 @@ player_action view_player_update(u32 down);
 int view_player_value(void);
 
 bool view_player_dirty(void);
+/* A bubble over the player for a moment, as after touching the progress
+ * bar too soon: `ok` for good news (a note), else a refusal. */
+void view_player_notice(str_id text, bool ok);
 void view_player_draw_bottom(void);
 
 #endif

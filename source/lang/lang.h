@@ -203,6 +203,13 @@ typedef enum {
 	STR_DL_ERR_DAMAGED,
 	STR_DL_ERR_WRITE,
 	STR_DL_ERR_NO_SPACE,
+	/* What asking for a download says at once (downloads_add_track). */
+	STR_DL_ADDED,
+	STR_DL_ALREADY,
+	STR_DL_NOT_READY,
+	STR_DL_UNREADABLE,
+	STR_DL_OTHER_ACCOUNT,
+	STR_DL_FULL,
 
 	STR_COUNT
 } str_id;
