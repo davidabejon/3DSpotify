@@ -1104,12 +1104,16 @@ static void test_queue_drop_known(void)
 }
 
 /* The conversion specifiers of a printf format, flags and widths included,
- * so "%02d" in one language and "%2d" in another count as different. */
+ * so "%02d" in one language and "%2d" in another count as different. A
+ * '%' before a space or at the end is a plain percent sign ("100%") in a
+ * text that is drawn as it is, never formatted. */
 static void format_signature(const char *text, char *out, size_t outlen)
 {
 	size_t n = 0;
 	for (const char *p = text; *p; p++) {
 		if (*p != '%')
+			continue;
+		if (p[1] == ' ' || p[1] == '\0')
 			continue;
 		p++;
 		if (*p == '%')
