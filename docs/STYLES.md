@@ -832,9 +832,9 @@ Error:
  │ [⌂] [⌕] [▮▮▮] [▓⚙▓]      │ 32 px
  │                          │
  │ [ (o) Idioma: Español  ] │ 44..76
- │ [  Volver a conectar   ] │ 88..120
- │ [Emparejar otra cuenta ] │ 132..164
- │                          │ 176..208 (sitio para un cuarto)
+ │ [ (↓) Descargas (3)    ] │ 88..120
+ │ [  Volver a conectar   ] │ 132..164
+ │ [Emparejar otra cuenta ] │ 176..208
  │──────────────────────────│
  │ [A] Elegir  [B] Volver   │
  └──────────────────────────┘
@@ -845,6 +845,8 @@ Error:
   separados ≥ 4 px (§4.4) y sin tocar la barra de botones. Foco con la cruceta (§6.2) y
   toque (§6.4).
 - Idioma: el botón muestra el idioma actual y lo cambia al pulsarlo, sin burbuja.
+- Descargas: abre el gestor (§7.13). Mientras algo espera (canciones en cola o
+  descargándose, y álbumes o playlists por preparar) lo cuenta: «Descargas (3 en cola)».
 - Volver a conectar y emparejar detienen la reproducción y vuelven a la pantalla de sesión.
 - Superior: el logotipo en su sitio, oscurecido junto con el fondo por el velo de §2.7, y
   encima, con márgenes de 16 px (`about_layout.h`):
@@ -995,6 +997,60 @@ Error:
 - La imagen es la del detalle, nunca la de la pista que suena.
 
 ---
+
+### 7.13 Gestor de descargas
+
+Ajustes en otro modo, como «Mostrar más» en Inicio: no es un nivel de detalle. B vuelve a los
+botones con el foco en «Descargas».
+
+```
+ INFERIOR
+ ┌──────────────────────────┐
+ │ [⌂] [⌕] [▮▮▮] [▓⚙▓]      │ 0..32
+ │ EN CURSO                 │ cabecera, 24 px, t_meta · texto_2
+ │ [▢ Canción         42% ] │ fila §5.3; el artista comparte línea
+ │ [  Artista  ▬▬▬▬░░░░░  ] │   con una barra fina de 2 px
+ │ EN COLA (3)              │
+ │ [▢ Álbum             ◷ ] │ «Descargando 8 de 12»
+ │ CON ERROR (1)            │
+ │ [▢ Canción           ! ] │ el motivo en la segunda línea
+ │ DESCARGADAS (48)         │ lo más reciente primero
+ │ [▢ Canción           ✓ ] │
+ │──────────────────────────│
+ │ [A] Cancelar [X] Quitar  │ y [Y] Pausar [B] Volver
+ └──────────────────────────┘
+```
+
+- Una sola lista que se desplaza por píxeles, con arrastre (§6.9) e indicador (§5.11). Las
+  cabeceras no toman el foco; la primera fila de una sección trae su cabecera a la vista.
+  Una sección vacía no sale.
+- Secciones:
+  - En curso: la canción que se descarga, con su porcentaje (leído una vez por segundo) y
+    una barra fina de 2 px (`capa` y `clorofila`; `tinta` en la fila en foco).
+  - En cola: los álbumes y playlists que aún se están preparando («Preparando la
+    descarga...»), los que tienen canciones esperando («Descargando 8 de 12»), y después
+    las canciones sueltas, en el orden de la cola. Las de un álbum o playlist en cola no
+    salen sueltas: las representa su fila.
+  - Con error: todas las que fallaron, con el motivo.
+  - Descargadas: álbumes y playlists sin nada en cola («Canciones: 12»; también los que se
+    quedaron cortos por canciones con error), y las canciones en la SD que ninguno de ellos
+    contiene, de la más reciente a la más antigua.
+- Miniatura: la portada de la SD o de la red (§5.3); sin ella, nota, disco (álbum), líneas
+  (playlist) o corazón (Canciones que te gustan). A la derecha, el estado: reloj, error o
+  check, en el color secundario de la fila.
+- A: en curso o en cola, cancelar; con error, reintentar; descargada, abrir su detalle en
+  «Inicio» (cambia a esa pestaña). X: quitar cualquier fila (en cola, cancelarla). Cancelar
+  y quitar piden una segunda pulsación del mismo botón sobre la misma fila mientras la
+  burbuja «Pulsa A otra vez para cancelar» / «Pulsa X otra vez para quitar» se ve (2 s).
+  Y: pausar o reanudar toda la cola; la etiqueta dice lo que hará y una burbuja confirma.
+- Táctil: tocar una fila la enfoca; tocar la enfocada hace lo de A.
+- Vacío: mensaje centrado «Todavía no hay descargas».
+- Superior: panel `capa` a `e4` de los bordes con «Descargas» en `t_titulo` y, en
+  `t_cuerpo` · `texto`, «Canciones: 48 · Álbumes: 3 · Playlists: 2», «Ocupado: 312 MB»
+  y «Libre en la SD: 5,1 GB»; debajo, en `t_cabeza` · `texto_2`, el estado de la cola:
+  «Descargando», «Nada pendiente», «En pausa», «La tarjeta SD está llena» o «Sin
+  conexión». El espacio libre se lee al abrir y cada 10 s, no en cada frame.
+- Solo pide frame al pulsar, al cambiar las descargas y con el porcentaje (§9).
 
 ## 8. Movimiento
 

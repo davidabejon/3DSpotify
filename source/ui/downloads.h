@@ -109,5 +109,22 @@ void downloads_set_paused(bool paused);
 bool downloads_paused(void);
 /* The queue stopped because the card is full. */
 bool downloads_sd_full(void);
+/* Whether there is a session to download with. */
+bool downloads_online(void);
+
+/* For the manager: the albums and playlists waiting to be resolved into
+ * tracks, and the `i`th of them (the strings are the engine's, valid until
+ * the next downloads_poll). */
+int downloads_pending_count(void);
+bool downloads_pending_info(int i, const char **uri, const char **name,
+                            const char **art, dl_coll_kind *kind);
+/* Tracks queued or downloading, and collections waiting to be resolved:
+ * the count on the Settings button. Counted again only when the
+ * generation changes. */
+int downloads_waiting(void);
+/* The share of the track downloading now, 0 when none is. */
+int downloads_active_share(void);
+/* A downloaded track as the lists and the detail views take it. */
+void downloads_track_to_sp(const dl_track *d, sp_track *s);
 
 #endif

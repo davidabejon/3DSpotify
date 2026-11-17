@@ -4,6 +4,7 @@
 #include "detail_logic.h"
 #include "detail_nav.h"
 #include "downloads_logic.h"
+#include "downloads_view_logic.h"
 #include "grid_logic.h"
 #include "home_feed_logic.h"
 #include "home_logic.h"
@@ -953,6 +954,173 @@ static void test_list_frames(void)
 }
 
 /* What the download buttons say and do, from where the download is. */
+/* An index for the manager: tracks in every state, an album with one
+ * track waiting, a whole playlist, and a lone track on the card. */
+static void manager_index(dl_index *idx)
+{
+	dl_index_clear(idx);
+	dl_track t;
+	const char *names[] = { "q1", "q2", "f1", "d1", "d2", "a1", "p1", "p2",
+	                        "lone" };
+	for (int i = 0; i < 9; i++) {
+		memset(&t, 0, sizeof(t));
+		snprintf(t.uri, sizeof(t.uri), "spotify:track:%s", names[i]);
+		snprintf(t.name, sizeof(t.name), "%s", names[i]);
+		dl_add_track(idx, &t, i >= 2, 100 + (uint32_t)i);
+	}
+	/* q1, q2 queued (q1 first); f1 failed; d1, d2, p1, p2, lone on the
+	 * card; a1 downloading. */
+	idx->tracks[2].state = DL_FAILED;
+	for (int i = 3; i < 9; i++)
+		if (i != 5)
+			idx->tracks[i].state = DL_DONE;
+	idx->tracks[5].state = DL_ACTIVE;
+	idx->tracks[3].added_at = 300;   /* d1: the newest of the tracks */
+	idx->tracks[8].added_at = 50;    /* lone: the oldest */
+	dl_collection c;
+	memset(&c, 0, sizeof(c));
+	snprintf(c.uri, sizeof(c.uri), "spotify:album:a");
+	c.kind = DL_COLL_ALBUM;
+	int album = dl_add_collection(idx, &c, 200);
+	dl_add_ref(idx, album, 0);    /* q1: the album still waits */
+	dl_add_ref(idx, album, 3);    /* d1 */
+	snprintf(c.uri, sizeof(c.uri), "spotify:playlist:p");
+	c.kind = DL_COLL_PLAYLIST;
+	int playlist = dl_add_collection(idx, &c, 250);
+	dl_add_ref(idx, playlist, 6);
+	dl_add_ref(idx, playlist, 7);
+}
+
+static void test_downloads_manager_list(void)
+{
+	static dl_index idx;
+	static dlv_list l;
+	static dlv_done_item scratch[DL_TRACKS_MAX + DL_COLLS_MAX];
+	manager_index(&idx);
+	dlv_build(&l, &idx, 1, scratch);
+
+	/* In progress: a1. Queued: the collection being resolved, the album
+	 * that waits (for q1), then q2 on its own: q1 is the album's row.
+	 * Failed: f1. Downloaded, newest first: d1 (300), the playlist (250),
+	 * d2 (104), lone (50); p1 and p2 are the playlist's row, and d1 is a
+	 * row of its own, since its album still waits. */
+	struct { int kind, section, index; } want[] = {
+		{ DLV_HEADER, DLV_SEC_ACTIVE, DLV_SEC_ACTIVE },
+		{ DLV_TRACK, DLV_SEC_ACTIVE, 5 },
+		{ DLV_HEADER, DLV_SEC_QUEUED, DLV_SEC_QUEUED },
+		{ DLV_PENDING, DLV_SEC_QUEUED, 0 },
+		{ DLV_COLL, DLV_SEC_QUEUED, 0 },
+		{ DLV_TRACK, DLV_SEC_QUEUED, 1 },
+		{ DLV_HEADER, DLV_SEC_FAILED, DLV_SEC_FAILED },
+		{ DLV_TRACK, DLV_SEC_FAILED, 2 },
+		{ DLV_HEADER, DLV_SEC_DONE, DLV_SEC_DONE },
+		{ DLV_TRACK, DLV_SEC_DONE, 3 },
+		{ DLV_COLL, DLV_SEC_DONE, 1 },
+		{ DLV_TRACK, DLV_SEC_DONE, 4 },
+		{ DLV_TRACK, DLV_SEC_DONE, 8 },
+	};
+	int n = (int)(sizeof(want) / sizeof(want[0]));
+	assert(l.count == n);
+	for (int i = 0; i < n; i++) {
+		assert(l.entries[i].kind == want[i].kind);
+		assert(l.entries[i].section == want[i].section);
+		assert(l.entries[i].index == want[i].index);
+	}
+	assert(l.rows[DLV_SEC_ACTIVE] == 1 && l.rows[DLV_SEC_QUEUED] == 3 &&
+	       l.rows[DLV_SEC_FAILED] == 1 && l.rows[DLV_SEC_DONE] == 4);
+	/* Headers and rows one under the other. */
+	assert(l.entries[0].y == 0 && l.entries[1].y == DLV_HEADER_H);
+	assert(l.entries[2].y == DLV_HEADER_H + LIST_PITCH);
+	assert(l.height == 4 * DLV_HEADER_H + 9 * LIST_PITCH);
+
+	/* The focus skips the headers and stops at the ends. */
+	bool bumped;
+	assert(dlv_first_row(&l) == 1);
+	assert(dlv_move(&l, 1, 1, &bumped) == 3 && !bumped);
+	assert(dlv_move(&l, 5, 1, &bumped) == 7);
+	assert(dlv_move(&l, 3, -1, &bumped) == 1);
+	assert(dlv_move(&l, 1, -1, &bumped) == 1 && bumped);
+	assert(dlv_move(&l, 12, 1, &bumped) == 12 && bumped);
+	assert(dlv_clamp_focus(&l, 6) == 7);
+	assert(dlv_clamp_focus(&l, 99) == 12);
+	assert(dlv_clamp_focus(&l, -3) == 1);
+
+	/* Scrolling: the first row of a section brings its header; the list
+	 * never scrolls past either end. */
+	int max = dlv_max_scroll(&l);
+	assert(max == SP_1 + l.height - dlv_view_h());
+	assert(dlv_scroll_to(&l, 1, 200) == 0);
+	int s = dlv_scroll_to(&l, 12, 0);
+	assert(s == max);
+	assert(dlv_row_whole(&l, 12, s) && !dlv_row_whole(&l, 1, s));
+	s = dlv_scroll_to(&l, 7, max);
+	assert(s == l.entries[6].y);
+	assert(dlv_clamp_scroll(&l, -5) == 0 && dlv_clamp_scroll(&l, 9999) == max);
+	/* Taps land on rows, never on headers or the bars. */
+	ui_rect r = dlv_entry_rect(&l, 1, 0);
+	assert(r.y == TAB_H + SP_1 + DLV_HEADER_H && r.h == ROW_H);
+	assert(dlv_hit_row(&l, r.x + 1, r.y + 1, 0) == 1);
+	assert(dlv_hit_row(&l, r.x + 1, TAB_H + SP_1 + 2, 0) == -1);
+	assert(dlv_hit_row(&l, r.x + 1, 230, 0) == -1);
+	int from, to;
+	dlv_visible(&l, 0, &from, &to);
+	assert(from == 0 && to >= 3 && to < l.count);
+	ui_rect thumb = dlv_scroll_thumb(&l, max);
+	ui_rect track = dlv_scroll_track();
+	assert(thumb.y + thumb.h == track.y + track.h);
+
+	/* Nothing to list, or no index: an empty list, no focus. */
+	dlv_build(&l, NULL, 0, scratch);
+	assert(l.count == 0 && dlv_first_row(&l) == -1 &&
+	       dlv_clamp_focus(&l, 0) == -1 && dlv_max_scroll(&l) == 0);
+	static dl_index none;
+	dl_index_clear(&none);
+	dlv_build(&l, &none, 0, scratch);
+	assert(l.count == 0);
+
+	/* An album whose tracks all failed has nothing waiting: it is a
+	 * Downloaded row (to remove it), its tracks Failed rows. */
+	manager_index(&idx);
+	idx.tracks[0].state = DL_FAILED;
+	idx.tracks[1].state = DL_DONE;
+	idx.tracks[5].state = DL_DONE;
+	dlv_build(&l, &idx, 0, scratch);
+	assert(l.rows[DLV_SEC_ACTIVE] == 0 && l.rows[DLV_SEC_QUEUED] == 0);
+	assert(l.rows[DLV_SEC_FAILED] == 2);
+	bool album_done = false;
+	for (int i = 0; i < l.count; i++)
+		if (l.entries[i].kind == DLV_COLL && l.entries[i].index == 0)
+			album_done = l.entries[i].section == DLV_SEC_DONE;
+	assert(album_done);
+	/* d1 is the album's now: no row of its own. */
+	for (int i = 0; i < l.count; i++)
+		assert(!(l.entries[i].kind == DLV_TRACK && l.entries[i].index == 3));
+
+	/* The summary: on the card, its size, what waits. */
+	manager_index(&idx);
+	idx.tracks[3].size = 3u * 1024 * 1024;
+	idx.tracks[4].size = 2u * 1024 * 1024;
+	dlv_summary sum = dlv_summarize(&idx);
+	assert(sum.tracks == 5 && sum.albums == 1 && sum.playlists == 1);
+	assert(sum.used == 5u * 1024 * 1024 && sum.waiting == 3);
+	char text[32];
+	dlv_format_size(5u * 1024 * 1024, ',', text, sizeof(text));
+	assert(strcmp(text, "5 MB") == 0);
+	dlv_format_size(0, ',', text, sizeof(text));
+	assert(strcmp(text, "0 MB") == 0);
+	dlv_format_size((uint64_t)5 * 1024 * 1024 * 1024 + 100u * 1024 * 1024,
+	                ',', text, sizeof(text));
+	assert(strcmp(text, "5,1 GB") == 0);
+	dlv_format_size((uint64_t)1024 * 1024 * 1024, '.', text, sizeof(text));
+	assert(strcmp(text, "1.0 GB") == 0);
+
+	/* The manager's top screen is Settings' in another mode. */
+	assert(top_mode_with_manager(TOP_ABOUT, true) == TOP_DOWNLOADS);
+	assert(top_mode_with_manager(TOP_ABOUT, false) == TOP_ABOUT);
+	assert(top_mode_with_manager(TOP_DETAIL, true) == TOP_DETAIL);
+	assert(top_mode_with_manager(TOP_NOW_CARD, true) == TOP_NOW_CARD);
+}
+
 static void test_download_buttons(void)
 {
 	assert(dl_track_button(false, DL_DONE, true) == DL_BUTTON_DOWNLOAD);
@@ -2246,14 +2414,20 @@ static void test_settings_layout(void)
 	assert(settings_hit_test(10, TAB_H + SP_3 - 1) == SETTINGS_ITEM_NONE);
 	assert(settings_hit_test(10, 230) == SETTINGS_ITEM_NONE);
 
+	/* Four buttons, the downloads second; the last clear of the bar. */
+	assert(SETTINGS_ITEM_COUNT == 4 && SETTINGS_ITEM_DOWNLOADS == 1);
+	assert(settings_item_rect(SETTINGS_ITEM_DOWNLOADS).y == 88);
+	assert(settings_item_rect(SETTINGS_ITEM_PAIR).y == 176);
 	/* Focus stops at the ends; anything else falls back to the first. */
 	assert(settings_focus_move(SETTINGS_ITEM_LANGUAGE, 1) ==
+	       SETTINGS_ITEM_DOWNLOADS);
+	assert(settings_focus_move(SETTINGS_ITEM_DOWNLOADS, 1) ==
 	       SETTINGS_ITEM_RECONNECT);
 	assert(settings_focus_move(SETTINGS_ITEM_PAIR, 1) == SETTINGS_ITEM_PAIR);
 	assert(settings_focus_move(SETTINGS_ITEM_LANGUAGE, -1) ==
 	       SETTINGS_ITEM_LANGUAGE);
 	assert(settings_focus_move(SETTINGS_ITEM_NONE, 1) ==
-	       SETTINGS_ITEM_RECONNECT);
+	       SETTINGS_ITEM_DOWNLOADS);
 }
 
 static void test_player_layout(void)
@@ -3670,6 +3844,7 @@ int main(void)
 	test_downloads_key_bucket();
 	test_downloads_retry_and_busy();
 	test_download_buttons();
+	test_downloads_manager_list();
 	test_playback_next_playable();
 	return 0;
 }

@@ -27,6 +27,7 @@ static C2D_Text item_text[SETTINGS_ITEM_COUNT];
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_text[GLYPH_COUNT];
 static lang_id parsed_lang = LANG_COUNT;
+static int waiting, parsed_waiting = -1;
 
 static settings_item focus = SETTINGS_ITEM_LANGUAGE;
 static press_state press_item[SETTINGS_ITEM_COUNT];
@@ -78,13 +79,22 @@ static void parse(C2D_Text *text, const char *string)
 
 static void ensure_parsed(void)
 {
-	if (parsed_lang == lang_get())
+	if (parsed_lang == lang_get() && parsed_waiting == waiting)
 		return;
 	C2D_TextBufClear(text_buf);
 	char language[64];
 	snprintf(language, sizeof(language), tr(STR_SETTINGS_LANGUAGE_FMT),
 	         tr(STR_LANG_NAME));
 	parse(&item_text[SETTINGS_ITEM_LANGUAGE], language);
+	char downloads[64];
+	if (waiting > 0)
+		snprintf(downloads, sizeof(downloads),
+		         tr(STR_SETTINGS_DOWNLOADS_FMT), waiting);
+	else
+		snprintf(downloads, sizeof(downloads), "%s",
+		         tr(STR_SETTINGS_DOWNLOADS));
+	parse(&item_text[SETTINGS_ITEM_DOWNLOADS], downloads);
+	parsed_waiting = waiting;
 	parse(&item_text[SETTINGS_ITEM_RECONNECT], tr(STR_SETTINGS_RECONNECT));
 	parse(&item_text[SETTINGS_ITEM_PAIR], tr(STR_SETTINGS_PAIR));
 	for (int i = 0; i < GLYPH_COUNT; i++) {
@@ -132,6 +142,8 @@ static void tick(void)
 static settings_action item_action(settings_item item)
 {
 	switch (item) {
+	case SETTINGS_ITEM_DOWNLOADS:
+		return SETTINGS_ACTION_DOWNLOADS;
 	case SETTINGS_ITEM_RECONNECT:
 		return SETTINGS_ACTION_RECONNECT;
 	case SETTINGS_ITEM_PAIR:
@@ -233,9 +245,21 @@ settings_action view_settings_update(u32 down)
 	return SETTINGS_ACTION_NONE;
 }
 
+void view_settings_focus(int item)
+{
+	if (item >= 0 && item < SETTINGS_ITEM_COUNT)
+		focus = (settings_item)item;
+}
+
+void view_settings_set_waiting(int n)
+{
+	waiting = n < 0 ? 0 : n;
+}
+
 bool view_settings_dirty(void)
 {
-	if (parsed_lang != lang_get() || !drawn_valid)
+	if (parsed_lang != lang_get() || parsed_waiting != waiting ||
+	    !drawn_valid)
 		return true;
 	settings_look look = current_look();
 	return !same_look(&look, &drawn);
@@ -249,6 +273,7 @@ void view_settings_draw_bottom(void)
 	settings_look look = current_look();
 
 	C2D_Image globe = icon_image(ICON_LANGUAGE);
+	C2D_Image download = icon_image(ICON_DOWNLOAD);
 	for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
 		ui_control_look button = {
 			.pressed = look.item[i],
@@ -256,7 +281,8 @@ void view_settings_draw_bottom(void)
 		};
 		ui_button(settings_item_rect(i), UI_BUTTON_SECONDARY, button,
 		          &item_text[i],
-		          i == SETTINGS_ITEM_LANGUAGE ? &globe : NULL);
+		          i == SETTINGS_ITEM_LANGUAGE ? &globe
+		          : i == SETTINGS_ITEM_DOWNLOADS ? &download : NULL);
 	}
 
 	ui_hint hints[GLYPH_COUNT];

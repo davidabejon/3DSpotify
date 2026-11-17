@@ -917,6 +917,40 @@ class BuildTests(unittest.TestCase):
         # The share is read with the clock, not every frame (9).
         self.assertIn("DL_SAMPLE_FRAMES", view)
 
+    def test_downloads_manager_is_wired(self):
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        view = (root / "ui" / "view_downloads.c").read_text(encoding="utf-8")
+        top = (root / "ui" / "top.c").read_text(encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Settings opens it, and B comes back to the Downloads button.
+        self.assertIn("case SETTINGS_ACTION_DOWNLOADS:", app)
+        self.assertIn("view_settings_focus(SETTINGS_ITEM_DOWNLOADS);", app)
+        self.assertIn("view_settings_set_waiting(downloads_waiting());", app)
+        self.assertIn("top_set_manager(manager_open);", app)
+        self.assertIn("case TOP_DOWNLOADS:", top)
+        # Cancelling and removing take a second press of the same button
+        # on the same row.
+        act = body(view, "static dlv_action activate(void)")
+        self.assertLess(act.index("armed(KEY_A, uri)"),
+                        act.index("downloads_cancel(uri);"))
+        rem = body(view, "static void remove_focused(void)")
+        self.assertLess(rem.index("armed(KEY_X, uri)"),
+                        rem.index("downloads_remove(uri);"))
+        # Rebuilt only when the downloads change; the share and the free
+        # space on their own clocks, never every frame (9).
+        self.assertIn("if (built != downloads_generation())", view)
+        tick = body(view, "static void tick(void)")
+        self.assertIn("share_frames >= SHARE_FRAMES", tick)
+        self.assertIn("free_frames >= FREE_FRAMES", tick)
+        self.assertIn("dl_store_free_bytes()", tick)
+        # Its covers come through the thumbnail pool like any list's.
+        self.assertIn("thumbs_client_frame(&thumbs);", view)
+
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
         app = (source_root / "main.c").read_text(

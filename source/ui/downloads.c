@@ -1,5 +1,7 @@
 #include "downloads.h"
 
+#include "downloads_view_logic.h"
+
 #include "cfg3ds.h"
 #include "dl_store.h"
 #include "http3ds.h"
@@ -1060,4 +1062,88 @@ bool downloads_paused(void)
 bool downloads_sd_full(void)
 {
 	return sd_full;
+}
+
+/* --- For the manager ------------------------------------------------------ */
+
+_Static_assert(PENDING_MAX == DLV_PENDING_MAX,
+               "the manager lists every collection waiting to be resolved");
+
+/* The `i`th of the collections waiting to be resolved, leaving out one
+ * removed while it was. */
+static const pending_coll *pending_at(int i)
+{
+	for (int p = 0; p < pending_count; p++) {
+		if (pending[p].failures < 0)
+			continue;
+		if (i-- == 0)
+			return &pending[p];
+	}
+	return NULL;
+}
+
+int downloads_pending_count(void)
+{
+	int n = 0;
+	while (usable() && pending_at(n))
+		n++;
+	return n;
+}
+
+bool downloads_pending_info(int i, const char **uri, const char **name,
+                            const char **art, dl_coll_kind *kind)
+{
+	const pending_coll *p = usable() ? pending_at(i) : NULL;
+	if (!p)
+		return false;
+	*uri = p->uri;
+	*name = p->name;
+	*art = p->art;
+	*kind = p->kind;
+	return true;
+}
+
+int downloads_waiting(void)
+{
+	static unsigned counted = ~0u;
+	static int waiting;
+	if (counted != generation) {
+		counted = generation;
+		waiting = downloads_pending_count();
+		for (int t = 0; usable() && t < idx->track_count; t++)
+			waiting += idx->tracks[t].state == DL_QUEUED ||
+			           idx->tracks[t].state == DL_ACTIVE;
+	}
+	return waiting;
+}
+
+bool downloads_online(void)
+{
+	return online;
+}
+
+int downloads_active_share(void)
+{
+	uint32_t total = job.total_bytes, got = job.done_bytes;
+	if (!job_thread || job.kind != JOB_TRACK || !total)
+		return 0;
+	return got >= total ? 100 : (int)((uint64_t)got * 100 / total);
+}
+
+void downloads_track_to_sp(const dl_track *d, sp_track *s)
+{
+	memset(s, 0, sizeof(*s));
+	snprintf(s->uri, sizeof(s->uri), "%s", d->uri);
+	snprintf(s->name, sizeof(s->name), "%s", d->name);
+	snprintf(s->artist, sizeof(s->artist), "%s", d->artist);
+	snprintf(s->album, sizeof(s->album), "%s", d->album);
+	snprintf(s->art_small, sizeof(s->art_small), "%s", d->art_small);
+	snprintf(s->art_large, sizeof(s->art_large), "%s", d->art_large);
+	snprintf(s->album_uri, sizeof(s->album_uri), "%s", d->album_uri);
+	snprintf(s->artist_uri, sizeof(s->artist_uri), "%s", d->artist_uri);
+	s->duration_ms = d->duration_ms;
+	s->track_number = d->track_number;
+	s->disc_number = d->disc_number;
+	s->year = d->year;
+	s->is_explicit = d->is_explicit;
 }

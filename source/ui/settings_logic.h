@@ -5,9 +5,9 @@
  * Bottom screen, 320 x 240, 8 px side margins:
  *   tabs        0..32   the tab bar (tabs_logic.h)
  *   language   44..76   secondary button: the current language
- *   reconnect  88..120  secondary button
- *   pair      132..164  secondary button: pair another account
- *   (fourth)  176..208  room for one more
+ *   downloads  88..120  secondary button: the manager, with how many wait
+ *   reconnect 132..164  secondary button
+ *   pair      176..208  secondary button: pair another account
  *   hints     216..240  button bar
  * One button per row, the content width each, SP_3 apart: room for the
  * focus border and the hard shadow between them (4.4), and four buttons
@@ -22,6 +22,7 @@ typedef enum {
 	SETTINGS_ITEM_NONE = -1,
 	/* Focusable with the D-pad and touchable, top to bottom. */
 	SETTINGS_ITEM_LANGUAGE,
+	SETTINGS_ITEM_DOWNLOADS,
 	SETTINGS_ITEM_RECONNECT,
 	SETTINGS_ITEM_PAIR,
 	SETTINGS_ITEM_COUNT

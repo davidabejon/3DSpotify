@@ -19,7 +19,10 @@ typedef enum {
 	TOP_DETAIL,
 	/* Settings: the account, the credits and the licence over the
 	 * darkened logo (top_about.h, STYLES.md 7.8). */
-	TOP_ABOUT
+	TOP_ABOUT,
+	/* Settings with the downloads manager open: its card
+	 * (view_downloads.h). */
+	TOP_DOWNLOADS
 } top_mode;
 
 /* Music counts as playing while loading, playing (paused too) and once
@@ -44,6 +47,13 @@ static inline top_mode top_mode_for(app_tab tab, player_phase phase,
 	if (!top_music_on(phase))
 		return TOP_LOGO;
 	return tab == TAB_PLAYER ? TOP_ART_BIG : TOP_NOW_CARD;
+}
+
+/* The downloads manager is Settings in another mode: its top screen is
+ * the manager's card instead of the account's. */
+static inline top_mode top_mode_with_manager(top_mode mode, bool manager)
+{
+	return mode == TOP_ABOUT && manager ? TOP_DOWNLOADS : mode;
 }
 
 /* The spinner, centred over whatever the top screen shows, on any tab:

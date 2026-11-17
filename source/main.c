@@ -37,7 +37,9 @@
 #include "view_login.h"
 #include "view_player.h"
 #include "view_results.h"
+#include "view_downloads.h"
 #include "view_settings.h"
+#include "settings_logic.h"
 #include "worker_priority.h"
 #include "stb_vorbis.h"
 
@@ -149,6 +151,8 @@ static char home_query[SEARCH_QUERY_SIZE];
 typedef enum { VIEW_LOGIN, VIEW_TABS } screen_view;
 static screen_view active_view = VIEW_LOGIN;
 static app_tab active_tab = TAB_HOME;
+/* Settings shows the downloads manager instead of its buttons. */
+static bool manager_open;
 /* An applet (the keyboard) drew over both screens. */
 static bool screens_lost;
 
@@ -1385,6 +1389,8 @@ static void frame(void)
 		view_player_set(&info);
 		top_set(&info);
 		top_set_detail(top_detail_sync(), &detail_art);
+		top_set_manager(manager_open);
+		view_settings_set_waiting(downloads_waiting());
 		changed = tabbar_dirty() || top_dirty(active_tab, &cover_art);
 		if (details_active(active_tab))
 			changed |= view_detail_dirty(details_top(active_tab));
@@ -1399,7 +1405,8 @@ static void frame(void)
 			changed |= view_player_dirty();
 			break;
 		default:
-			changed |= view_settings_dirty();
+			changed |= manager_open ? view_downloads_dirty()
+			                        : view_settings_dirty();
 			break;
 		}
 	}
@@ -1431,7 +1438,10 @@ static void frame(void)
 			view_player_draw_bottom();
 			break;
 		default:
-			view_settings_draw_bottom();
+			if (manager_open)
+				view_downloads_draw_bottom();
+			else
+				view_settings_draw_bottom();
 			break;
 		}
 		tabbar_draw();
@@ -1943,9 +1953,33 @@ static void switch_tab(app_tab tab)
 		view_player_enter();
 		break;
 	default:
-		view_settings_enter();
+		if (manager_open)
+			view_downloads_enter();
+		else
+			view_settings_enter();
 		break;
 	}
+}
+
+/* A row of the downloads manager opened in the Home tab: a downloaded
+ * track's detail, or its album's or playlist's. */
+static void open_from_manager(dlv_action action)
+{
+	if (action == DLV_ACTION_OPEN_TRACK) {
+		static sp_track track;
+		if (view_downloads_target_track(&track))
+			details_open_track(TAB_HOME, &track, 1, 0, true);
+	} else {
+		char uri[SP_URI_MAX];
+		dl_coll_kind kind;
+		if (!view_downloads_target_collection(uri, sizeof(uri), &kind))
+			return;
+		if (kind == DL_COLL_ALBUM)
+			details_open_album(TAB_HOME, uri);
+		else
+			details_open_playlist(TAB_HOME, uri);
+	}
+	switch_tab(TAB_HOME);
 }
 
 /* Where the tabs go when they end. */
@@ -1960,6 +1994,7 @@ typedef enum {
 static tabs_exit run_tabs(spotify_session *session)
 {
 	active_view = VIEW_TABS;
+	manager_open = false;
 	/* The service's text may be in any script from here on; the fonts
 	 * have had the whole sign-in to load. */
 	ui_font_wait();
@@ -2118,10 +2153,34 @@ static tabs_exit run_tabs(spotify_session *session)
 			}
 			break;
 		default:
+			if (manager_open) {
+				dlv_action action = view_downloads_update(down);
+				switch (action) {
+				case DLV_ACTION_BACK:
+					manager_open = false;
+					view_settings_enter();
+					view_settings_focus(SETTINGS_ITEM_DOWNLOADS);
+					break;
+				case DLV_ACTION_LANGUAGE:
+					switch_language();
+					break;
+				case DLV_ACTION_OPEN_TRACK:
+				case DLV_ACTION_OPEN_COLLECTION:
+					open_from_manager(action);
+					break;
+				default:
+					break;
+				}
+				break;
+			}
 			switch (view_settings_update(down)) {
 			case SETTINGS_ACTION_LANGUAGE:
 				/* The language button shows the new one by itself. */
 				switch_language();
+				break;
+			case SETTINGS_ACTION_DOWNLOADS:
+				manager_open = true;
+				view_downloads_enter();
 				break;
 			case SETTINGS_ACTION_RECONNECT:
 				return TABS_RECONNECT;
@@ -2810,11 +2869,12 @@ int main(int argc, char **argv)
 	ui_font_start();
 	if (!view_home_init() || !view_results_init() ||
 	    !view_player_init() || !view_settings_init() || !view_login_init() ||
-	    !view_detail_init() || !top_init()) {
+	    !view_detail_init() || !view_downloads_init() || !top_init()) {
 		top_exit();
 		view_detail_exit();
 		view_login_exit();
 		view_settings_exit();
+		view_downloads_exit();
 		view_player_exit();
 		view_results_exit();
 		view_home_exit();
@@ -2924,6 +2984,7 @@ done:
 	view_detail_exit();
 	view_login_exit();
 	view_settings_exit();
+	view_downloads_exit();
 	view_player_exit();
 	view_results_exit();
 	view_home_exit();
