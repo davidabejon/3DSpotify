@@ -1210,6 +1210,42 @@ static void test_offline_rows(void)
 	assert(HOME_PINNED == 2);
 }
 
+static void test_offline_start(void)
+{
+	/* The network's own failures go on with the downloads. */
+	assert(login_error_allows_offline(STR_CAT_NO_NETWORK, false));
+	assert(login_error_allows_offline(STR_CAT_TLS_INIT, false));
+	assert(login_error_allows_offline(STR_CAT_AP_RESOLVE, false));
+	assert(login_error_allows_offline(STR_CAT_AP_CONNECT, false));
+	assert(login_error_allows_offline(STR_CAT_SERVER_RESOLVE, false));
+	/* Renewing the credential or opening the library: only when no answer
+	 * came at all. */
+	assert(login_error_allows_offline(STR_CAT_OAUTH_RENEW, true));
+	assert(!login_error_allows_offline(STR_CAT_OAUTH_RENEW, false));
+	assert(login_error_allows_offline(STR_CAT_LOGIN_FAILED, true));
+	assert(!login_error_allows_offline(STR_CAT_LOGIN_FAILED, false));
+	/* The account said no, or pairing, or the card: never. */
+	assert(!login_error_allows_offline(STR_CAT_AP_REJECTED, true));
+	assert(!login_error_allows_offline(STR_CAT_LOGIN_REFUSED, true));
+	assert(!login_error_allows_offline(STR_CAT_PS_INIT, true));
+	assert(!login_error_allows_offline(STR_CAT_SAVE_RENEWED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIRING, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_CANCELLED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_EXPIRED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_DENIED, true));
+	assert(!login_error_allows_offline(STR_CAT_PAIR_FAILED, true));
+	assert(!login_error_allows_offline(STR_CAT_SAVE_CREDENTIALS, true));
+
+	/* ACU, as measured on the console: without Wi-Fi the status call
+	 * fails and the other says 1; connected, 1 or 2 and 3. */
+	assert(login_wifi_down(false, 0, true, 1));
+	assert(login_wifi_down(true, 0, true, 3));
+	assert(login_wifi_down(true, 1, true, 1));
+	assert(login_wifi_down(true, 1, false, 3));
+	assert(!login_wifi_down(true, 1, true, 3));
+	assert(!login_wifi_down(true, 2, true, 3));
+}
+
 static void test_download_buttons(void)
 {
 	assert(dl_track_button(false, DL_DONE, true) == DL_BUTTON_DOWNLOAD);
@@ -3935,6 +3971,7 @@ int main(void)
 	test_download_buttons();
 	test_downloads_manager_list();
 	test_offline_rows();
+	test_offline_start();
 	test_playback_next_playable();
 	return 0;
 }

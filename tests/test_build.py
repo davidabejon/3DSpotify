@@ -227,9 +227,11 @@ class BuildTests(unittest.TestCase):
         ask = app[app.index("static bool ask_search_query("):
                   app.index("static void keyboard_search(")]
         self.assertIn("if (confirmed)", ask)
-        # Reconnecting and pairing moved to the Settings tab.
+        # Reconnecting and pairing moved to the Settings tab; Home only
+        # offers to reconnect while it runs without a connection.
         home = (ui_dir / "view_home.c").read_text(encoding="utf-8")
-        self.assertNotIn("HOME_ACTION_RECONNECT", home)
+        self.assertEqual(home.count("HOME_ACTION_RECONNECT"), 1)
+        self.assertIn("if (offline)\n\t\t\tqueue(HOME_ACTION_RECONNECT", home)
         self.assertNotIn("HOME_ACTION_PAIR", home)
 
     def test_home_playlists_follow_style_guide_and_docs(self):
@@ -977,6 +979,44 @@ class BuildTests(unittest.TestCase):
         play = app[app.index("static void queue_play_offline("):]
         play = play[:play.index("\n}\n")]
         self.assertIn("r->kind != TRACK_ROW_TRACK || r->off", play)
+
+    def test_offline_start_keeps_off_the_network(self):
+        import re
+        app = (build.ROOT / "main.c").read_text(encoding="utf-8")
+
+        def body(signature):
+            text = app[app.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # The tabs start the feed only with a connection, and every search
+        # they start is behind it.
+        tabs = body("static tabs_exit run_tabs(")
+        start = tabs.index("home_feed_start(")
+        self.assertIn("if (net_online) {", tabs[start - 40:start])
+        for m in re.finditer(r"(keyboard_search|search_start)\(session", tabs):
+            before = tabs[max(0, m.start() - 160):m.start()]
+            self.assertIn("net_online", before, tabs[m.start():m.start() + 60])
+        self.assertIn("if (net_online)\n\t\t\tqueue_feed_tick(session);", tabs)
+        # Offline, a track that is not on the card does not reach for an
+        # access point: it fails at once.
+        prep = body("static void prepare_worker(void *arg)")
+        self.assertLess(prep.index("if (!job->session->online) {"),
+                        prep.index("open_playback_ap("))
+        # No profile request without a connection.
+        self.assertIn("!session->online", body(
+            "static void account_start(const spotify_session *session)\n{"))
+        # A start-up that failed for the network, with a credential, goes
+        # on with the downloads; one that failed for the account does not
+        # (login_error_allows_offline decides), and pairing never does.
+        loop = app[app.index("bool reconnecting = false;"):]
+        loop = loop[:loop.index("failed:")]
+        self.assertIn("login_error_allows_offline(error.category, "
+                      "error.transport)", loop)
+        self.assertIn("!force_pair && credential_stored()", loop)
+        self.assertIn("wifi_down()", loop)
+        # The username is kept for that start, and nothing else of the
+        # session.
+        self.assertIn('cfg_set_async("username", session.username);', loop)
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT

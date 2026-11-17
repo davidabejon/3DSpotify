@@ -50,6 +50,9 @@ typedef struct {
 	 * downloads (sampled with the clock, as download_pct). */
 	dl_button saved;
 	int saved_pct;
+	/* No connection: the artist's and the album's links, and downloading,
+	 * need one. */
+	bool offline;
 } player_info;
 
 typedef enum {

@@ -18,7 +18,10 @@ static u32 press_keys;
 typedef struct {
 	app_tab active;
 	bool pressed[TAB_COUNT];
+	bool offline;
 } tabbar_look;
+/* No connection: a mark on the Search tab, what it costs most. */
+static bool offline;
 static tabbar_look drawn;
 static bool drawn_valid;
 
@@ -35,6 +38,11 @@ void tabbar_reset(app_tab tab)
 void tabbar_set_active(app_tab tab)
 {
 	active = tab;
+}
+
+void tabbar_set_offline(bool on)
+{
+	offline = on;
 }
 
 app_tab tabbar_active(void)
@@ -101,6 +109,7 @@ static tabbar_look current_look(void)
 	tabbar_look look = { .active = active };
 	for (int i = 0; i < TAB_COUNT; i++)
 		look.pressed[i] = press_down(&press[i]);
+	look.offline = offline;
 	return look;
 }
 
@@ -109,7 +118,7 @@ bool tabbar_dirty(void)
 	if (!drawn_valid)
 		return true;
 	tabbar_look look = current_look();
-	if (look.active != drawn.active)
+	if (look.active != drawn.active || look.offline != drawn.offline)
 		return true;
 	for (int i = 0; i < TAB_COUNT; i++)
 		if (look.pressed[i] != drawn.pressed[i])
@@ -152,6 +161,12 @@ static void draw_tab(int tab, bool pressed)
 	}
 	C2D_Image icon = icon_image(tab_icons[tab]);
 	ui_icon(&icon, r.x + (r.w - ICON_S) / 2, r.y + (r.h - ICON_S) / 2, ink);
+	/* Still, beside the tab's own icon (9): searching needs a connection. */
+	if (offline && tab == TAB_SEARCH) {
+		C2D_Image mark = icon_image(ICON_OFFLINE);
+		ui_icon(&mark, r.x + r.w - SP_2 - ICON_S, r.y + (r.h - ICON_S) / 2,
+		        ink);
+	}
 }
 
 void tabbar_draw(void)

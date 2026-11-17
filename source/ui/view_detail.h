@@ -86,6 +86,10 @@ detail_action view_detail_update(detail_doc *doc, u32 down);
  * and after every DETAIL_ACTION_SHUFFLE. */
 void view_detail_set_shuffle(bool on);
 
+/* Without a connection the artist's and the album's buttons, and
+ * downloading, are disabled (6.1); removing a download still works. */
+void view_detail_set_offline(bool on);
+
 /* A bubble (5.9) with what a download action did; `ok` picks the note
  * icon, else the error one. */
 void view_detail_notice(str_id text, bool ok);

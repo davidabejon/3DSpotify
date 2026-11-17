@@ -101,6 +101,7 @@ typedef struct {
 	dl_button saved;
 	int saved_pct;
 	bool save_pressed;
+	bool offline;
 	int loader_step;
 	str_id bubble;          /* the bubble's text, STR_COUNT when none */
 } player_look;
@@ -325,9 +326,9 @@ static bool link_enabled(int link)
 		return false;
 	switch (link) {
 	case PLAYER_LINK_ARTIST:
-		return info.track->artist_uri[0] != '\0';
+		return info.track->artist_uri[0] != '\0' && !info.offline;
 	case PLAYER_LINK_ALBUM:
-		return info.track->album_uri[0] != '\0';
+		return info.track->album_uri[0] != '\0' && !info.offline;
 	default:
 		return true;
 	}
@@ -342,7 +343,8 @@ static bool save_shown(void)
 
 static bool save_enabled(void)
 {
-	return save_shown() && (info.saved == DL_BUTTON_DOWNLOAD ||
+	return save_shown() && !info.offline &&
+	       (info.saved == DL_BUTTON_DOWNLOAD ||
 	                        info.saved == DL_BUTTON_RETRY);
 }
 
@@ -364,6 +366,7 @@ static player_look current_look(void)
 		               ? loader_frames / LOADER_STEP : 0,
 		.bubble = bubble_frames >= 0 ? bubble_id : STR_COUNT,
 		.saved = save_shown() ? info.saved : (dl_button)-1,
+		.offline = info.offline,
 		.saved_pct = saved_shown,
 		.save_pressed = press_down(&press_save),
 	};
@@ -385,7 +388,8 @@ static bool same_look(const player_look *a, const player_look *b)
 	    a->download != b->download || a->volume != b->volume ||
 	    a->seek != b->seek || a->loader_step != b->loader_step ||
 	    a->bubble != b->bubble || a->saved != b->saved ||
-	    a->saved_pct != b->saved_pct || a->save_pressed != b->save_pressed)
+	    a->saved_pct != b->saved_pct || a->save_pressed != b->save_pressed ||
+	    a->offline != b->offline)
 		return false;
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		if (a->control[i] != b->control[i])
@@ -666,7 +670,7 @@ player_action view_player_update(u32 down)
 	}
 	if (down & KEY_SELECT)
 		return PLAYER_ACTION_LANGUAGE;
-	if ((down & KEY_X) && save_shown()) {
+	if ((down & KEY_X) && save_shown() && !info.offline) {
 		/* Its bubble says what came of it, whatever the state. */
 		press_begin(&press_glyph[GLYPH_X]);
 		queue(PLAYER_ACTION_DOWNLOAD, &press_glyph[GLYPH_X]);
@@ -829,7 +833,8 @@ static void draw_hints(const player_look *look)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
 		                        look->glyph[GLYPH_A] };
-	if (look->saved == DL_BUTTON_DOWNLOAD || look->saved == DL_BUTTON_RETRY)
+	if (!look->offline &&
+	    (look->saved == DL_BUTTON_DOWNLOAD || look->saved == DL_BUTTON_RETRY))
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_save,
 		                        glyph_colors[GLYPH_X],
 		                        look->glyph[GLYPH_X] };

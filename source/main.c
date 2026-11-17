@@ -67,6 +67,10 @@ typedef struct {
 	time_t oauth_expires_at;
 	ap_candidate ap_candidates[AP_MAX_CANDIDATES];
 	int ap_candidate_count;
+	/* False when the app runs on its downloads alone: the start-up could
+	 * not reach Spotify, so `host` and the tokens are empty and `username`
+	 * comes from the config. */
+	bool online;
 } spotify_session;
 
 typedef struct {
@@ -93,6 +97,9 @@ typedef struct {
 	/* An id rather than text so the screen follows a language switch. */
 	str_id category;
 	char detail[256];
+	/* No answer came at all: the network failed, not the account
+	 * (login_error_allows_offline). */
+	bool transport;
 } startup_error;
 
 static search_job search;
@@ -151,6 +158,8 @@ static char home_query[SEARCH_QUERY_SIZE];
 typedef enum { VIEW_LOGIN, VIEW_TABS } screen_view;
 static screen_view active_view = VIEW_LOGIN;
 static app_tab active_tab = TAB_HOME;
+/* The tabs run with a session that reached Spotify. */
+static bool net_online = true;
 /* Settings shows the downloads manager instead of its buttons. */
 static bool manager_open;
 /* An applet (the keyboard) drew over both screens. */
@@ -616,6 +625,15 @@ static void prepare_worker(void *arg)
 		 * network still has the track. */
 		job->error[0] = '\0';
 	}
+	/* Without a connection there is nowhere else to get it from. */
+	if (!job->session->online) {
+		snprintf(job->error, sizeof(job->error), "%s",
+		         tr(STR_ERR_OFFLINE_NOT_DOWNLOADED));
+		job->rc = -1;
+		__sync_synchronize();
+		job->done = true;
+		return;
+	}
 	job->stage = STR_AP_AUTHENTICATING;
 	ap_session *ap = open_playback_ap(job->session, job->error,
 	                                  sizeof(job->error));
@@ -720,12 +738,35 @@ static void player_apply_pause(void)
 		ndspChnSetPaused(0, player.paused || player.held);
 }
 
+/* Offline: the first position from `pos` (itself included) going
+ * `direction` whose track is on the card, or -1. */
+static int offline_playable(int pos, int direction)
+{
+	static bool playable[PLAYBACK_QUEUE_MAX];
+	static downloads_local local;
+	for (int i = 0; i < playback_queue_count; i++)
+		playable[i] = downloads_local_track(playback_queue[i].uri, &local);
+	secure_clear(&local, sizeof(local));
+	return playback_next_playable(pos - direction, playback_queue_count,
+	                              direction, playback_order, playable);
+}
+
 /* Starts the track at position `pos` of the queue's order: the cover
  * first, then player_pump goes on with the audio once it has arrived. */
 static void player_play(spotify_session *session, int pos)
 {
 	if (pos < 0 || pos >= playback_queue_count)
 		return;
+	/* Offline only downloads play: the next one on the card the way the
+	 * queue was going, or none (the track asked for says so). */
+	bool none = false;
+	if (session && !session->online) {
+		int found = offline_playable(pos, pos < queue_pos ? -1 : 1);
+		if (found >= 0)
+			pos = found;
+		else
+			none = true;
+	}
 	int index = playback_order[pos];
 	player_release();
 	player.session = session;
@@ -738,6 +779,8 @@ static void player_play(spotify_session *session, int pos)
 	player.stage = STR_PLAYER_ART_LOADING;
 	artwork_request(&cover_art, playback_queue[index].art_large);
 	artwork_set_preview(&cover_art, playback_queue[index].art_small);
+	if (none)
+		player_fail(tr(STR_ERR_OFFLINE_NOT_DOWNLOADED));
 }
 
 /* Starts the track's preparation thread. Not while a skipped track's is
@@ -1290,6 +1333,7 @@ static player_info player_snapshot(void)
 		.error = player.error,
 		.saved = dl_track_button(dl_known, dl_now, dl_alone),
 		.saved_pct = dl_pct,
+		.offline = !net_online,
 	};
 	return info;
 }
@@ -1621,6 +1665,9 @@ static void queue_play(spotify_session *session, const sp_track *tracks,
 	queue_feed_cancel();
 	queue_rng ^= (uint32_t)svcGetSystemTick();
 	bool shuffled = source != QUEUE_RADIO && shuffle_on;
+	/* A new queue: offline, the search for a downloaded track goes on
+	 * forwards from the one chosen. */
+	queue_pos = -1;
 	player_play(session, queue_order_start(playback_order, count, index,
 	                                       shuffled, &queue_rng));
 }
@@ -2036,10 +2083,8 @@ static void open_from_manager(dlv_action action)
 		dl_coll_kind kind;
 		if (!view_downloads_target_collection(uri, sizeof(uri), &kind))
 			return;
-		if (kind == DL_COLL_ALBUM)
-			details_open_album(TAB_HOME, uri);
-		else
-			details_open_playlist(TAB_HOME, uri);
+		/* The copy on the card: no network needed. */
+		details_open_offline_collection(TAB_HOME, uri);
 	}
 	switch_tab(TAB_HOME);
 }
@@ -2053,21 +2098,36 @@ typedef enum {
 
 /* The app once the session is up: one loop for every tab, so the audio
  * keeps playing while the user moves between them. */
-static tabs_exit run_tabs(spotify_session *session)
+static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 {
 	active_view = VIEW_TABS;
 	manager_open = false;
+	net_online = session->online;
+	tabbar_set_offline(!net_online);
+	view_home_set_offline(!net_online);
+	view_detail_set_offline(!net_online);
 	/* The service's text may be in any script from here on; the fonts
 	 * have had the whole sign-in to load. */
 	ui_font_wait();
 	account_start(session);
 	tabbar_reset(TAB_HOME);
-	/* In the background: the home tab shows its skeleton meanwhile. */
-	home_feed_start(session->host, session->library_token, session->username);
+	/* In the background: the home tab shows its skeleton meanwhile.
+	 * Offline it shows the downloads, and searching says it cannot. */
+	if (net_online) {
+		home_feed_start(session->host, session->library_token,
+		                session->username);
+		view_results_idle();
+	} else {
+		view_results_error(STR_OFFLINE_SEARCH);
+	}
 	downloads_session = session;
+	/* Offline the engine gets no host: it keeps the index for playing and
+	 * downloads nothing. */
 	downloads_start(session->host, session->library_token, session->username,
-	                downloads_open_ap);
+	                net_online ? downloads_open_ap : NULL);
 	switch_tab(TAB_HOME);
+	if (still_offline)
+		view_home_notice(STR_OFFLINE_STILL);
 	for (;;) {
 		hidScanInput();
 		u32 down = keys_down();
@@ -2078,7 +2138,9 @@ static tabs_exit run_tabs(spotify_session *session)
 
 		/* The audio first: the DSP's cushion is ~370 ms. */
 		player_pump();
-		queue_feed_tick(session);
+		/* Radios and playlist pages come from the network. */
+		if (net_online)
+			queue_feed_tick(session);
 		/* Below the player: quiet while it prepares a track or downloads
 		 * the one that plays. */
 		downloads_poll(dl_player_busy(player_preparing(), dl.thread != NULL,
@@ -2106,8 +2168,14 @@ static tabs_exit run_tabs(spotify_session *session)
 		case TAB_HOME:
 			switch (view_home_update(down)) {
 			case HOME_ACTION_SEARCH:
-				keyboard_search(session, home_query);
+				/* Offline the Search tab says why it cannot. */
+				if (net_online)
+					keyboard_search(session, home_query);
+				else
+					switch_tab(TAB_SEARCH);
 				break;
+			case HOME_ACTION_RECONNECT:
+				return TABS_RECONNECT;
 			case HOME_ACTION_OPEN:
 				/* On Home's own stack: L/R and back find it as left. The
 				 * Downloads tile opens the card's, with no network. */
@@ -2157,13 +2225,17 @@ static tabs_exit run_tabs(spotify_session *session)
 			case RESULTS_ACTION_RECENT:
 				snprintf(home_query, sizeof(home_query), "%s",
 				         view_results_recent_query());
-				if (home_query[0])
+				if (home_query[0] && net_online)
 					search_start(session, home_query);
 				break;
 			case RESULTS_ACTION_NEW_SEARCH:
-				keyboard_search(session, home_query);
+				if (net_online)
+					keyboard_search(session, home_query);
 				break;
 			case RESULTS_ACTION_RETRY:
+				/* Offline, Retry is retrying the connection. */
+				if (!net_online)
+					return TABS_RECONNECT;
 				search_start(session, home_query);
 				break;
 			case RESULTS_ACTION_LANGUAGE:
@@ -2365,7 +2437,7 @@ static void account_start(const spotify_session *session)
 	account_set_art(cfg_load_profile_art(art, sizeof(art)) ? art : "");
 	top_set_account(&account, &account_art);
 
-	if (profile_thread || !session->username[0])
+	if (profile_thread || !session->username[0] || !session->online)
 		return;
 	memset(&profile, 0, sizeof(profile));
 	snprintf(profile.host, sizeof(profile.host), "%s", session->host);
@@ -2694,6 +2766,7 @@ static bool resolve_and_login(spotify_tokens *tokens, startup_error *error,
 	int rc = login5_from_credentials(info->username, info->reusable,
 	                                 info->reusable_len, device_id,
 	                                 library, detail, sizeof(detail));
+	error->transport = rc == LOGIN5_ERR_TRANSPORT;
 	snprintf(session->username, sizeof(session->username), "%.*s",
 	         (int)sizeof(session->username) - 1, info->username);
 	ap_close(ap);
@@ -2746,7 +2819,9 @@ static bool start_session(bool force_pair, startup_error *error,
 
 	char detail[192] = {0};
 	session_stage(STR_CREDENTIAL_RENEWING);
-	if (token_refresh(stored, tokens, detail, sizeof(detail)) != 0) {
+	int renewed = token_refresh(stored, tokens, detail, sizeof(detail));
+	error->transport = renewed == TOKEN_ERR_TRANSPORT;
+	if (renewed != 0) {
 		secure_clear(stored, stored_size);
 		secure_clear(tokens, sizeof(*tokens));
 		if (strstr(detail, "invalid_grant")) {
@@ -2804,7 +2879,8 @@ static void session_cancel(void)
 typedef enum {
 	LOGIN_READY,    /* *session is up */
 	LOGIN_FAILED,   /* *error says why */
-	LOGIN_QUIT      /* the app is closing */
+	LOGIN_QUIT,     /* the app is closing */
+	LOGIN_OFFLINE   /* no connection: the tabs run on the downloads */
 } login_result;
 
 /* Hands the worker's progress to the login view. Cheap enough for every
@@ -2878,6 +2954,40 @@ static login_result run_login(bool force_pair, spotify_session *session,
 		*error = login.error;
 	secure_clear(&login, sizeof(login));
 	return result;
+}
+
+/* --- Without a connection ---------------------------------------------- */
+
+/* A credential is saved: the app may start on its downloads. */
+static bool credential_stored(void)
+{
+	char stored[512];
+	bool ok = cfg_load_refresh_token(stored, sizeof(stored));
+	secure_clear(stored, sizeof(stored));
+	return ok;
+}
+
+/* No Wi-Fi right now, asked of ACU without waiting on anything: a start-up
+ * then goes straight to the downloads instead of to its timeouts. */
+static bool wifi_down(void)
+{
+	if (R_FAILED(acInit()))
+		return false;   /* unknown: try the network as always */
+	u32 wifi = 0, status = 0;
+	bool wifi_ok = R_SUCCEEDED(ACU_GetWifiStatus(&wifi));
+	bool status_ok = R_SUCCEEDED(ACU_GetStatus(&status));
+	acExit();
+	return login_wifi_down(wifi_ok, wifi, status_ok, status);
+}
+
+/* A session for the downloads alone: no host and no token; the username
+ * the last session saved, which the downloads index is checked against. */
+static void offline_session(spotify_session *session)
+{
+	secure_clear(session, sizeof(*session));
+	session->online = false;
+	if (!cfg_get("username", session->username, sizeof(session->username)))
+		session->username[0] = '\0';
 }
 
 /* The start-up error until the user picks: Retry (A) with the stored
@@ -2969,13 +3079,16 @@ int main(int argc, char **argv)
 	startup_error error = {0};
 	spotify_session session = {0};
 
+	/* Sockets and TLS: without them only the downloads can play. */
+	bool net_ready = true;
 	if (!soc_buffer || R_FAILED(socInit(soc_buffer, SOC_BUFFER))) {
 		error.category = STR_CAT_NO_NETWORK;
 		snprintf(error.detail, sizeof(error.detail), "%s",
 		         tr(STR_CHECK_WIFI_CONNECTED));
-		goto failed;
+		net_ready = false;
+	} else {
+		soc_ready = true;
 	}
-	soc_ready = true;
 	if (R_FAILED(psInit())) {
 		error.category = STR_CAT_PS_INIT;
 		snprintf(error.detail, sizeof(error.detail), "%s",
@@ -2987,25 +3100,53 @@ int main(int argc, char **argv)
 	/* The index loads while the session starts. */
 	downloads_init();
 
-	{
+	if (net_ready) {
 		int rc = tls_global_init();
 		if (rc != 0) {
 			char reason[128];
 			tls_strerror(rc, reason, sizeof(reason));
 			error.category = STR_CAT_TLS_INIT;
 			snprintf(error.detail, sizeof(error.detail), "%s", reason);
-			goto failed;
+			net_ready = false;
+		} else {
+			tls_ready = true;
 		}
 	}
-	tls_ready = true;
+	/* Nothing to start with: no network, and no account to play the
+	 * downloads of. */
+	if (!net_ready && !credential_stored())
+		goto failed;
 
 	bool force_pair = false;
+	/* The last tabs asked to connect again: offline once more, they say
+	 * so. */
+	bool reconnecting = false;
 	for (;;) {
-		login_result login_state = run_login(force_pair, &session, &error);
+		login_result login_state;
+		if (!force_pair && credential_stored() &&
+		    (!net_ready || wifi_down())) {
+			/* No Wi-Fi: straight to the downloads, no timeouts. */
+			login_state = LOGIN_OFFLINE;
+		} else {
+			login_state = run_login(force_pair, &session, &error);
+			if (login_state == LOGIN_FAILED && !force_pair &&
+			    credential_stored() &&
+			    login_error_allows_offline(error.category, error.transport))
+				login_state = LOGIN_OFFLINE;
+		}
 		if (login_state == LOGIN_QUIT)
 			goto done;
-		if (login_state == LOGIN_READY) {
-			tabs_exit result = run_tabs(&session);
+		if (login_state == LOGIN_READY || login_state == LOGIN_OFFLINE) {
+			if (login_state == LOGIN_OFFLINE) {
+				offline_session(&session);
+			} else {
+				session.online = true;
+				/* For the next start without a connection. */
+				cfg_set_async("username", session.username);
+			}
+			tabs_exit result = run_tabs(&session,
+			                            login_state == LOGIN_OFFLINE &&
+			                            reconnecting);
 			/* Reconnecting or pairing starts a new session from
 			 * scratch: nothing of this one survives. */
 			stop_tabs();
@@ -3013,7 +3154,9 @@ int main(int argc, char **argv)
 			if (result == TABS_EXIT)
 				goto done;
 			force_pair = result == TABS_PAIR;
+			reconnecting = result == TABS_RECONNECT;
 		} else {
+			reconnecting = false;
 			secure_clear(&session, sizeof(session));
 			login_action choice = run_error(&error, false);
 			if (choice == LOGIN_ACTION_EXIT)

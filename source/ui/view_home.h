@@ -18,6 +18,7 @@
 #define VIEW_HOME_H
 
 #include "details.h"
+#include "lang.h"
 
 #include <3ds.h>
 
@@ -34,7 +35,9 @@ typedef enum {
 	HOME_ACTION_RETRY,
 	/* SELECT: switch the language. The view shows the bubble with the new
 	 * language's name by itself. */
-	HOME_ACTION_LANGUAGE
+	HOME_ACTION_LANGUAGE,
+	/* Offline: "Retry connection", start the session again. */
+	HOME_ACTION_RECONNECT
 } home_action;
 
 /* After ui_init and icons_init. */
@@ -49,6 +52,13 @@ void view_home_enter(void);
  * Handles A, B, Y, SELECT, the D-pad and touch; START and the tabs stay
  * with the caller. */
 home_action view_home_update(u32 down);
+
+/* Without a connection the view shows the Downloads tile under "Offline:
+ * your downloads", and "Retry connection" where "Show more" goes; the
+ * feed is not used. */
+void view_home_set_offline(bool on);
+/* A bubble (5.9) with `text`, as "Still offline" after a retry. */
+void view_home_notice(str_id text);
 
 /* The playlist to open after HOME_ACTION_OPEN. */
 const char *view_home_selected_uri(void);

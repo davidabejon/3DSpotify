@@ -259,6 +259,12 @@ typedef enum {
 	STR_DLH_SUMMARY_FMT,
 	STR_DLH_COLL_SIZE_FMT,
 	STR_DLH_EMPTY,
+	/* Without a connection: the tabs with the downloads only. */
+	STR_OFFLINE_NOTICE,
+	STR_OFFLINE_RETRY,
+	STR_OFFLINE_STILL,
+	STR_OFFLINE_SEARCH,
+	STR_ERR_OFFLINE_NOT_DOWNLOADED,
 
 	STR_COUNT
 } str_id;

@@ -26,6 +26,8 @@ typedef struct {
 
 /* Trades the AP's reusable credentials for a Bearer token. Solves any hashcash
  * challenge the server issues. Returns 0, or -1 with `err` set. */
+/* login5_from_credentials' result when no answer came at all. */
+#define LOGIN5_ERR_TRANSPORT (-2)
 int login5_from_credentials(const char *username,
                             const uint8_t *credentials, size_t credentials_len,
                             const char *device_id,

@@ -24,6 +24,7 @@ typedef enum {
 	ICON_QUEUED,
 	ICON_ALBUM,
 	ICON_PLAYLIST,
+	ICON_OFFLINE,
 	ICON_COUNT
 } icon_id;
 

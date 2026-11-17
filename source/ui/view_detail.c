@@ -97,6 +97,8 @@ static bool notice_ok;
 static bool header, header_enabled, header_focus;
 /* What the level on screen is (details.h). */
 static detail_kind shown_kind = DETAIL_TRACK;
+/* No connection: what needs one is disabled. */
+static bool offline;
 static press_state press_header;
 
 static detail_mode mode = MODE_NONE;
@@ -266,8 +268,8 @@ static void parse_text(const detail_doc *doc)
 		const sp_track *t = &doc->tracks[doc->selected];
 		enabled[DETAIL_BUTTON_PLAY] = true;
 		enabled[DETAIL_BUTTON_DOWNLOAD] = dl_button_enabled(dl_now.kind);
-		enabled[DETAIL_BUTTON_ARTIST] = t->artist_uri[0] != '\0';
-		enabled[DETAIL_BUTTON_ALBUM] = t->album_uri[0] != '\0';
+		enabled[DETAIL_BUTTON_ARTIST] = t->artist_uri[0] != '\0' && !offline;
+		enabled[DETAIL_BUTTON_ALBUM] = t->album_uri[0] != '\0' && !offline;
 		parse(&button_text[DETAIL_BUTTON_PLAY], tr(STR_DETAIL_PLAY));
 		parse_button(DETAIL_BUTTON_ARTIST, STR_DETAIL_ARTIST_FMT,
 		             t->artist[0] ? t->artist : tr(STR_UNKNOWN_ARTIST));
@@ -377,7 +379,10 @@ static void follow_download(const detail_doc *doc, bool force)
 		next.kind = dl_track_button(known, state, alone);
 		if (next.kind == DL_BUTTON_PROGRESS)
 			next.a = pct;
-		enabled[DETAIL_BUTTON_DOWNLOAD] = dl_button_enabled(next.kind);
+		/* Removing needs no connection; downloading does. */
+		enabled[DETAIL_BUTTON_DOWNLOAD] = dl_button_enabled(next.kind) &&
+		                                  (!offline ||
+		                                   next.kind == DL_BUTTON_REMOVE);
 		/* Queued by its own press: a disabled button holds no focus. */
 		focus = detail_focus_move(focus, 0, enabled);
 	} else if (doc->kind == DETAIL_OFFLINE_COLLECTION) {
@@ -822,6 +827,15 @@ detail_action view_detail_update(detail_doc *doc, u32 down)
 void view_detail_set_shuffle(bool on)
 {
 	shuffle = on;
+}
+
+void view_detail_set_offline(bool on)
+{
+	if (on == offline)
+		return;
+	offline = on;
+	parsed_lang = LANG_COUNT;   /* the buttons are set again */
+	dl_seen = ~0u;
 }
 
 void view_detail_notice(str_id text, bool ok)

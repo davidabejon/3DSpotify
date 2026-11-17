@@ -311,7 +311,8 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Conjunto: reproducir, pausa, anterior, siguiente, volumen, buscar, cuenta, Wi-Fi, error,
   aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador), ajustes
   (engranaje), aleatorio (dos flechas cruzadas) y, para las descargas, descargar (flecha a
-  una bandeja), descargada (check), en cola (reloj), álbum (disco) y playlist (líneas).
+  una bandeja), descargada (check), en cola (reloj), álbum (disco), playlist (líneas) y
+  sin conexión (Wi-Fi tachado).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 - El logotipo no es un icono: se carga en tiempo de ejecución desde `romfs:/gfx/logo.png`
   (directorio `romfs/` del repositorio, empaquetado en el `.3dsx` y el `.cia`). PNG RGBA de
@@ -810,8 +811,8 @@ Error:
 - «Mostrar más» es la misma pestaña en otro modo, no un nivel de detalle: 5 filas de
   teselas entre las barras, con indicador de desplazamiento. B vuelve a la rejilla de 6 con
   el foco en «Mostrar más».
-- La segunda tesela es siempre «Descargas», con el icono de descarga donde iría la
-  portada: no viene del feed, así que la primera fila es `[Canciones que te gustan]
+- La segunda tesela es siempre «Descargas» (sin conexión, la única: §7.15), con el icono
+  de descarga donde iría la portada: no viene del feed, así que la primera fila es `[Canciones que te gustan]
   [Descargas]`. Su vista previa dice cuántas canciones y colecciones hay en la SD.
 - La primera tesela es siempre «Canciones que te gustan», con el icono del corazón
   (§5.10) donde iría la portada. Se abre como una playlist más, por páginas (§7.11); la
@@ -1087,6 +1088,34 @@ botones con el foco en «Descargas».
 - Sin nada descargado: «Todavía no hay nada descargado».
 - Superior (§7.12): «Descargas» con «Canciones: N · Álbumes y playlists: M»; una colección,
   su portada (desde la SD), «Álbum - artista» y «Canciones: 12 · 48 MB».
+
+### 7.15 Sin conexión
+
+- Con una credencial guardada, la app entra en las pestañas aunque no llegue a Spotify, y
+  funciona con lo descargado:
+  - sin Wi-Fi al arrancar, al instante (sin esperar a ningún timeout);
+  - con Wi-Fi pero sin respuesta, cuando el arranque falla por la red (no encontrar el
+    punto de acceso o el servidor, o no recibir respuesta al renovar la credencial o al
+    abrir la biblioteca). Si Spotify contesta que no (credencial revocada, acceso
+    rechazado), se va a la pantalla de error o a emparejar, como siempre.
+  Sin credencial guardada, se empareja como siempre.
+- Indicador fijo: el icono de Wi-Fi tachado junto a la lupa de la pestaña «Búsqueda», en
+  el color del icono de la pestaña. No se anima (§9).
+- Inicio: solo la tesela «Descargas», bajo la etiqueta «Sin conexión: tus descargas», y en
+  el sitio de «Mostrar más» el botón «Reintentar conexión».
+- Búsqueda: el aviso de error con «Para buscar hace falta conexión...» y «Reintentar», que
+  reintenta la conexión.
+- Detalle de canción: «Artista», «Álbum» y «Descargar» deshabilitados (§6.1); «Borrar
+  descarga» sigue. Reproductor: los enlaces de artista y álbum no responden y X no
+  descarga; el icono de estado sigue.
+- Reproducción: solo lo descargado. Al pasar a una pista que no está en la SD, salta a la
+  siguiente descargada en la dirección en que iba la cola; si no queda ninguna, el
+  reproductor muestra «Sin conexión, y nada de esta cola está descargado.».
+- «Reintentar conexión» (Inicio, Búsqueda) y «Volver a conectar» (Ajustes) vuelven a
+  arrancar la sesión. Si sigue sin haber conexión, se vuelve a las pestañas sin conexión
+  con la burbuja «Sigue sin conexión» (icono de Wi-Fi tachado). La música se para, como en
+  cualquier reconexión.
+- Las descargas en cola esperan: el motor no descarga sin conexión.
 
 ## 8. Movimiento
 
