@@ -817,4 +817,59 @@ static inline bool dl_player_busy(bool preparing, bool playing,
 	return preparing || (playing && !stream_whole);
 }
 
+/* ------------------------------------------------------------ buttons */
+
+/* What a track's download button says, and does on A. Only DOWNLOAD,
+ * RETRY and REMOVE act; the rest are disabled (STYLES.md 6.1). */
+typedef enum {
+	DL_BUTTON_DOWNLOAD,    /* not in the index: queue it */
+	DL_BUTTON_QUEUED,      /* waiting its turn */
+	DL_BUTTON_PROGRESS,    /* downloading, with its share */
+	DL_BUTTON_RETRY,       /* failed: back in the queue */
+	DL_BUTTON_REMOVE,      /* on the card as a song of its own: off it */
+	DL_BUTTON_HELD         /* on the card for an album or playlist only */
+} dl_button;
+
+static inline dl_button dl_track_button(bool known, dl_state state,
+                                        bool standalone)
+{
+	if (!known)
+		return DL_BUTTON_DOWNLOAD;
+	switch (state) {
+	case DL_QUEUED:
+		return DL_BUTTON_QUEUED;
+	case DL_ACTIVE:
+		return DL_BUTTON_PROGRESS;
+	case DL_FAILED:
+		return DL_BUTTON_RETRY;
+	default:
+		return standalone ? DL_BUTTON_REMOVE : DL_BUTTON_HELD;
+	}
+}
+
+static inline bool dl_button_enabled(dl_button b)
+{
+	return b == DL_BUTTON_DOWNLOAD || b == DL_BUTTON_RETRY ||
+	       b == DL_BUTTON_REMOVE;
+}
+
+/* An album's or a playlist's button: download it all; it is being
+ * resolved into tracks; "8 of 12"; all on the card. Only DOWNLOAD acts. */
+typedef enum {
+	DL_COLL_BUTTON_DOWNLOAD,
+	DL_COLL_BUTTON_WAITING,
+	DL_COLL_BUTTON_PROGRESS,
+	DL_COLL_BUTTON_DONE
+} dl_coll_button;
+
+static inline dl_coll_button dl_collection_button(bool pending, bool known,
+                                                  int done, int count)
+{
+	if (pending)
+		return DL_COLL_BUTTON_WAITING;
+	if (!known)
+		return DL_COLL_BUTTON_DOWNLOAD;
+	return done >= count ? DL_COLL_BUTTON_DONE : DL_COLL_BUTTON_PROGRESS;
+}
+
 #endif

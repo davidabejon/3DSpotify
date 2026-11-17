@@ -825,51 +825,173 @@ static void test_detail_stack(void)
 
 static void test_detail_buttons(void)
 {
-	/* The Settings geometry: three full-width buttons of TOUCH_MIN under
-	 * the tab bar, SP_4 apart, clear of the button bar. */
+	/* The Settings geometry: four full-width buttons of TOUCH_MIN under
+	 * the tab bar, SP_3 apart, clear of the button bar. */
+	assert(DETAIL_BUTTON_COUNT == 4);
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++) {
 		ui_rect r = detail_button_rect(i);
 		ui_rect s = settings_item_rect(i);
 		assert(r.x == s.x && r.y == s.y && r.w == s.w && r.h == s.h);
 		assert(r.h >= TOUCH_MIN);
-		assert(r.y + r.h <= detail_hints_rect().y);
+		/* Its shadow, or its pressed shift, clear of the button bar. */
+		assert(r.y + r.h + SHADOW_OFF + PRESS_SHIFT <= detail_hints_rect().y);
 		if (i > 0)
 			assert(r.y - (detail_button_rect(i - 1).y +
-			              detail_button_rect(i - 1).h) == SP_4);
+			              detail_button_rect(i - 1).h) == SP_3);
 	}
-	assert(detail_button_rect(0).y >= TAB_H);
+	assert(detail_button_rect(0).y == 44);
+	assert(detail_button_rect(DETAIL_BUTTON_DOWNLOAD).y == 88);
+	assert(detail_button_rect(DETAIL_BUTTON_ALBUM).y == 176);
 
-	bool all[DETAIL_BUTTON_COUNT] = { true, true, true };
-	bool no_artist[DETAIL_BUTTON_COUNT] = { true, false, true };
-	bool only_play[DETAIL_BUTTON_COUNT] = { true, false, false };
+	bool all[DETAIL_BUTTON_COUNT] = { true, true, true, true };
+	bool no_artist[DETAIL_BUTTON_COUNT] = { true, true, false, true };
+	bool only_play[DETAIL_BUTTON_COUNT] = { true, false, false, false };
+	/* A download queued or under way: its button is disabled. */
+	bool queued[DETAIL_BUTTON_COUNT] = { true, false, true, true };
 	ui_rect artist = detail_button_rect(DETAIL_BUTTON_ARTIST);
 	int ax = artist.x + artist.w / 2, ay = artist.y + artist.h / 2;
+	ui_rect save = detail_button_rect(DETAIL_BUTTON_DOWNLOAD);
+	int sx = save.x + save.w / 2, sy = save.y + save.h / 2;
 
 	/* A disabled button does not answer the stylus (6.1). */
 	assert(detail_hit_test(ax, ay, all) == DETAIL_BUTTON_ARTIST);
 	assert(detail_hit_test(ax, ay, no_artist) == DETAIL_BUTTON_NONE);
+	assert(detail_hit_test(sx, sy, all) == DETAIL_BUTTON_DOWNLOAD);
+	assert(detail_hit_test(sx, sy, queued) == DETAIL_BUTTON_NONE);
 	assert(detail_hit_test(0, 0, all) == DETAIL_BUTTON_NONE);
 
 	/* The D-pad stops at the ends and steps over disabled buttons. */
 	assert(detail_focus_move(DETAIL_BUTTON_PLAY, -1, all) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, all) ==
+	       DETAIL_BUTTON_DOWNLOAD);
+	assert(detail_focus_move(DETAIL_BUTTON_DOWNLOAD, 1, all) ==
 	       DETAIL_BUTTON_ARTIST);
 	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, 1, all) ==
 	       DETAIL_BUTTON_ALBUM);
-	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, no_artist) ==
+	assert(detail_focus_move(DETAIL_BUTTON_DOWNLOAD, 1, no_artist) ==
 	       DETAIL_BUTTON_ALBUM);
 	assert(detail_focus_move(DETAIL_BUTTON_ALBUM, -1, no_artist) ==
+	       DETAIL_BUTTON_DOWNLOAD);
+	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, queued) ==
+	       DETAIL_BUTTON_ARTIST);
+	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, -1, queued) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_PLAY, 1, only_play) ==
 	       DETAIL_BUTTON_PLAY);
-	/* A focus that is not usable falls back to Play. */
+	/* A focus that is not usable falls back to Play: the download button
+	 * that its own press queued, too. */
 	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 1, no_artist) ==
+	       DETAIL_BUTTON_PLAY);
+	assert(detail_focus_move(DETAIL_BUTTON_DOWNLOAD, 0, queued) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_NONE, 1, all) ==
 	       DETAIL_BUTTON_PLAY);
 	assert(detail_focus_move(DETAIL_BUTTON_ARTIST, 0, all) ==
 	       DETAIL_BUTTON_ARTIST);
+
+	/* An album's list and the button over it: up from the first row only,
+	 * down back to the list; a disabled button never holds the focus. */
+	assert(detail_header_focus(false, 0, -1, true));
+	assert(!detail_header_focus(false, 1, -1, true));
+	assert(!detail_header_focus(false, 0, 1, true));
+	assert(!detail_header_focus(false, 0, -1, false));
+	assert(detail_header_focus(true, 0, -1, true));
+	assert(detail_header_focus(true, 3, 0, true));
+	assert(!detail_header_focus(true, 0, 1, true));
+	assert(!detail_header_focus(true, 0, 0, false));
+}
+
+/* The list under an album's or playlist's download button: three rows
+ * where the results have four, the same pitch, the same edges. */
+static void test_list_frames(void)
+{
+	list_frame full = list_frame_full();
+	list_frame under = list_frame_under_button();
+	assert(full.top == TAB_H && full.rows == RESULTS_PER_PAGE);
+	ui_rect button = list_header_button_rect();
+	assert(button.y == TAB_H + SP_1 && button.h == TOUCH_MIN);
+	assert(button.x == SP_2 && button.w == SCREEN_BOTTOM_W - 2 * SP_2);
+	assert(under.top == button.y + button.h + SP_1);
+	assert(under.rows == 3);
+	/* The rows: 76..117, 121..162, 166..207, clear of the button bar. */
+	assert(list_row_rect_in(under, 0).y == 76);
+	ui_rect last = list_row_rect_in(under, under.rows - 1);
+	assert(last.y == 166 && last.y + last.h <= SCREEN_H - BAR_H - SP_1);
+	/* The full frame is the one the functions without a frame use. */
+	for (int i = 0; i < RESULTS_PER_PAGE; i++) {
+		ui_rect a = list_row_rect(i), b = list_row_rect_in(full, i);
+		assert(a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
+	}
+	/* Ten tracks: seven rows of scroll under the button, six without. */
+	assert(list_max_scroll_in(under, 10) == 7 * LIST_PITCH);
+	assert(list_max_scroll(10) == 6 * LIST_PITCH);
+	assert(list_max_scroll_in(under, 3) == 0);
+	/* A touch on the button is not a row, nor the start of a drag. */
+	assert(!list_area_contains_in(under, 10, button.y + 1));
+	assert(list_hit_row_in(under, 10, button.y + 1, 0, 10) == -1);
+	assert(list_hit_row_in(under, 10, 80, 0, 10) == 0);
+	assert(list_hit_row_in(under, 10, 170, 0, 10) == 2);
+	assert(list_hit_row_in(under, 10, 170, LIST_PITCH, 10) == 3);
+	/* Whole rows, and the buttons' realignment, in three. */
+	int from, to;
+	list_full_rows_in(under, 0, 10, &from, &to);
+	assert(from == 0 && to == 2);
+	assert(list_row_whole_in(under, 2, 0, 10));
+	assert(!list_row_whole_in(under, 3, 0, 10));
+	assert(list_align_in(under, 0, 5, 10) == 3);
+	assert(list_align_in(under, 0, 1, 10) == 0);
+	list_drag d;
+	list_drag_begin(&d, 150, 0);
+	assert(list_drag_scroll_in(under, &d, -400, 10) == 7 * LIST_PITCH);
+	/* The scroll indicator runs between the button and the button bar. */
+	ui_rect track = list_scroll_track_in(under);
+	assert(track.y == under.top && track.y + track.h == SCREEN_H - BAR_H);
+	ui_rect thumb = list_scroll_thumb_in(under, 7 * LIST_PITCH, 10);
+	assert(thumb.y + thumb.h == track.y + track.h);
+	assert(list_scroll_thumb_in(under, 0, 3).h == track.h);
+}
+
+/* What the download buttons say and do, from where the download is. */
+static void test_download_buttons(void)
+{
+	assert(dl_track_button(false, DL_DONE, true) == DL_BUTTON_DOWNLOAD);
+	assert(dl_track_button(true, DL_QUEUED, true) == DL_BUTTON_QUEUED);
+	assert(dl_track_button(true, DL_ACTIVE, false) == DL_BUTTON_PROGRESS);
+	assert(dl_track_button(true, DL_FAILED, true) == DL_BUTTON_RETRY);
+	assert(dl_track_button(true, DL_DONE, true) == DL_BUTTON_REMOVE);
+	/* On the card for an album only: removed with the album. */
+	assert(dl_track_button(true, DL_DONE, false) == DL_BUTTON_HELD);
+	assert(dl_button_enabled(DL_BUTTON_DOWNLOAD));
+	assert(dl_button_enabled(DL_BUTTON_RETRY));
+	assert(dl_button_enabled(DL_BUTTON_REMOVE));
+	assert(!dl_button_enabled(DL_BUTTON_QUEUED));
+	assert(!dl_button_enabled(DL_BUTTON_PROGRESS));
+	assert(!dl_button_enabled(DL_BUTTON_HELD));
+
+	assert(dl_collection_button(false, false, 0, 0) ==
+	       DL_COLL_BUTTON_DOWNLOAD);
+	assert(dl_collection_button(true, false, 0, 0) ==
+	       DL_COLL_BUTTON_WAITING);
+	/* Waiting to be resolved again wins over what the index holds. */
+	assert(dl_collection_button(true, true, 12, 12) ==
+	       DL_COLL_BUTTON_WAITING);
+	assert(dl_collection_button(false, true, 8, 12) ==
+	       DL_COLL_BUTTON_PROGRESS);
+	assert(dl_collection_button(false, true, 12, 12) ==
+	       DL_COLL_BUTTON_DONE);
+	assert(dl_collection_button(false, true, 0, 0) == DL_COLL_BUTTON_DONE);
+
+	/* The player's icon: right of the album link, a TOUCH_MIN square
+	 * SP_1 from it, ending at the margin, on the links' second row. */
+	ui_rect icon = player_download_rect();
+	ui_rect album = player_link_rect(PLAYER_LINK_ALBUM);
+	assert(icon.w == TOUCH_MIN && icon.h == TOUCH_MIN);
+	assert(icon.y == album.y && icon.x == album.x + album.w + SP_1);
+	assert(icon.x + icon.w == SCREEN_BOTTOM_W - SP_2);
+	bool links_all[PLAYER_LINK_COUNT] = { true, true, true };
+	assert(player_link_hit(icon.x + 1, icon.y + 1, links_all) ==
+	       PLAYER_LINK_NONE);
 }
 
 static void test_detail_pool(void)
@@ -2107,7 +2229,7 @@ static void test_settings_layout(void)
 		assert(r.h == TOUCH_MIN);
 		assert(r.x + r.w + PRESS_SHIFT <= SCREEN_BOTTOM_W);
 		if (i == 0)
-			assert(r.y == TAB_H + SP_4);
+			assert(r.y == TAB_H + SP_3);
 		else {
 			ui_rect prev = settings_item_rect(i - 1);
 			/* Focus borders and shadows stay SP_1 apart at least. */
@@ -2121,7 +2243,7 @@ static void test_settings_layout(void)
 	assert(last.y + last.h + below + PRESS_SHIFT <= hints.y);
 	/* The tab bar, the gaps and the bars are not buttons. */
 	assert(settings_hit_test(10, 10) == SETTINGS_ITEM_NONE);
-	assert(settings_hit_test(10, TAB_H + SP_4 - 1) == SETTINGS_ITEM_NONE);
+	assert(settings_hit_test(10, TAB_H + SP_3 - 1) == SETTINGS_ITEM_NONE);
 	assert(settings_hit_test(10, 230) == SETTINGS_ITEM_NONE);
 
 	/* Focus stops at the ends; anything else falls back to the first. */
@@ -2166,11 +2288,13 @@ static void test_player_layout(void)
 	assert(link_track.x == SP_2 && link_track.y == 36 &&
 	       link_track.w == SCREEN_BOTTOM_W - 2 * SP_2 &&
 	       link_track.h == TOUCH_MIN);
+	/* The second row leaves its right end to the download icon. */
 	assert(link_artist.x == 8 && link_artist.y == 72 &&
-	       link_artist.w == 150 && link_artist.h == TOUCH_MIN);
-	assert(link_album.x == 162 && link_album.y == 72 &&
-	       link_album.w == 150 && link_album.h == TOUCH_MIN);
-	assert(link_album.x + link_album.w == SCREEN_BOTTOM_W - SP_2);
+	       link_artist.w == 132 && link_artist.h == TOUCH_MIN);
+	assert(link_album.x == 144 && link_album.y == 72 &&
+	       link_album.w == 132 && link_album.h == TOUCH_MIN);
+	assert(link_album.x + link_album.w + SP_1 + TOUCH_MIN ==
+	       SCREEN_BOTTOM_W - SP_2);
 	assert(link_track.y >= TAB_H);
 	assert(link_artist.y - (link_track.y + link_track.h) == SP_1);
 	/* The links end above the controls, with room to spare. */
@@ -3528,6 +3652,7 @@ int main(void)
 	test_detail_stack();
 	test_detail_pool();
 	test_detail_buttons();
+	test_list_frames();
 	test_http_redirects();
 	test_download_retry_delay();
 	test_power_policy();
@@ -3544,6 +3669,7 @@ int main(void)
 	test_downloads_engine_states();
 	test_downloads_key_bucket();
 	test_downloads_retry_and_busy();
+	test_download_buttons();
 	test_playback_next_playable();
 	return 0;
 }

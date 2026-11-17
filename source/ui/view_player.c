@@ -15,26 +15,28 @@
 
 #define STATIC_GLYPHS 768
 #define TRACK_GLYPHS 512
-#define TIME_GLYPHS 24
+#define TIME_GLYPHS 32
 #define SCRATCH_GLYPHS UI_FIELD_SIZE
 
 /* Touch control ids: the controls are their player_control, the links
- * LINK_CONTROL + their player_link. */
+ * LINK_CONTROL + their player_link, the download icon SAVE_CONTROL. */
 #define LINK_CONTROL 10
+#define SAVE_CONTROL 20
 
 /* The button bar (STYLES.md 5.6). */
-enum { GLYPH_A, GLYPH_B, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B" };
-static const u32 glyph_colors[GLYPH_COUNT] = { COL_BTN_A, COL_BTN_B };
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X" };
+static const u32 glyph_colors[GLYPH_COUNT] = { COL_BTN_A, COL_BTN_B,
+                                               COL_BTN_X };
 
 static C2D_TextBuf static_buf, track_buf, time_buf, scratch_buf;
 
 static C2D_Text idle_text, stage_text, finished_text, volume_label;
 static C2D_Text failed_title, failed_body, seek_wait_text;
 static C2D_Text letter_text[GLYPH_COUNT];
-static C2D_Text hint_pause, hint_play, hint_retry, hint_back;
+static C2D_Text hint_pause, hint_play, hint_retry, hint_back, hint_save;
 static C2D_Text title_text, artist_text, album_text, queue_text;
-static C2D_Text elapsed_text, duration_text;
+static C2D_Text elapsed_text, duration_text, saved_text;
 static int volume_label_w;
 
 /* What was parsed, to parse again only on a change. */
@@ -44,15 +46,19 @@ static char parsed_error[256];
 static unsigned parsed_serial = ~0u;
 static int parsed_index = -1, parsed_count = -1;
 static unsigned parsed_elapsed = ~0u, parsed_duration = ~0u;
+static int parsed_saved = -1;
 
 static char info_error[256];
 static player_info info = { .stage = STR_PLAYER_ART_LOADING,
                             .error = info_error };
-/* 9: the download share follows the clock, not every frame. */
+/* 9: the download share follows the clock, not every frame; so does the
+ * share of the track's own download to the card. */
 static player_download_sample download;
+static int saved_shown;
 
 static press_state press_control[PLAYER_CONTROL_COUNT];
 static press_state press_link[PLAYER_LINK_COUNT];
+static press_state press_save;
 static press_state press_glyph[GLYPH_COUNT];
 static touch_track touch = { -1 };
 static player_action pending = PLAYER_ACTION_NONE;
@@ -92,6 +98,9 @@ typedef struct {
 	bool control[PLAYER_CONTROL_COUNT];
 	bool link[PLAYER_LINK_COUNT];
 	bool glyph[GLYPH_COUNT];
+	dl_button saved;
+	int saved_pct;
+	bool save_pressed;
 	int loader_step;
 	str_id bubble;          /* the bubble's text, STR_COUNT when none */
 } player_look;
@@ -130,6 +139,7 @@ void view_player_enter(void)
 		press_reset(&press_control[i]);
 	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
 		press_reset(&press_link[i]);
+	press_reset(&press_save);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_reset(&press_glyph[i]);
 	touch.target = -1;
@@ -148,6 +158,13 @@ void view_player_set(const player_info *next)
 	if (drag == DRAG_SEEK &&
 	    (!next->seekable || next->serial != info.serial))
 		drag = DRAG_SPENT;
+	/* Once a second even while paused: the card's download goes on. */
+	static int saved_frames;
+	if (tick || next->saved != info.saved || ++saved_frames >= 60) {
+		saved_frames = 0;
+		saved_shown = next->saved == DL_BUTTON_PROGRESS ? next->saved_pct
+		                                                : 0;
+	}
 	info = *next;
 	snprintf(info_error, sizeof(info_error), "%s",
 	         next->error ? next->error : "");
@@ -203,6 +220,7 @@ static void parse_static(void)
 	parse(&hint_play, static_buf, tr(STR_HINT_PLAY));
 	parse(&hint_retry, static_buf, tr(STR_HINT_RETRY));
 	parse(&hint_back, static_buf, tr(STR_HINT_BACK));
+	parse(&hint_save, static_buf, tr(STR_HINT_DOWNLOAD));
 }
 
 static void parse_track(void)
@@ -248,6 +266,8 @@ static void parse_times(void)
 	parse(&elapsed_text, time_buf, text);
 	player_format_time(info.duration_s, text, sizeof(text));
 	parse(&duration_text, time_buf, text);
+	snprintf(text, sizeof(text), "%d%%", saved_shown);
+	parse(&saved_text, time_buf, text);
 }
 
 static void ensure_parsed(void)
@@ -267,10 +287,11 @@ static void ensure_parsed(void)
 		parsed_count = info.count;
 	}
 	if (parsed_elapsed != shown_elapsed() ||
-	    parsed_duration != info.duration_s) {
+	    parsed_duration != info.duration_s || parsed_saved != saved_shown) {
 		parse_times();
 		parsed_elapsed = shown_elapsed();
 		parsed_duration = info.duration_s;
+		parsed_saved = saved_shown;
 	}
 	parsed_lang = lang_get();
 }
@@ -312,6 +333,19 @@ static bool link_enabled(int link)
 	}
 }
 
+/* The download icon shows with the track's text; it acts, like X, while
+ * the track is not on the card nor on its way there. */
+static bool save_shown(void)
+{
+	return player_links_enabled(info.phase) && info.track;
+}
+
+static bool save_enabled(void)
+{
+	return save_shown() && (info.saved == DL_BUTTON_DOWNLOAD ||
+	                        info.saved == DL_BUTTON_RETRY);
+}
+
 static player_look current_look(void)
 {
 	player_look look = {
@@ -329,6 +363,9 @@ static player_look current_look(void)
 		.loader_step = info.phase == PLAYER_PHASE_LOADING
 		               ? loader_frames / LOADER_STEP : 0,
 		.bubble = bubble_frames >= 0 ? bubble_id : STR_COUNT,
+		.saved = save_shown() ? info.saved : (dl_button)-1,
+		.saved_pct = saved_shown,
+		.save_pressed = press_down(&press_save),
 	};
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		look.control[i] = press_down(&press_control[i]);
@@ -347,7 +384,8 @@ static bool same_look(const player_look *a, const player_look *b)
 	    a->elapsed != b->elapsed || a->duration != b->duration ||
 	    a->download != b->download || a->volume != b->volume ||
 	    a->seek != b->seek || a->loader_step != b->loader_step ||
-	    a->bubble != b->bubble)
+	    a->bubble != b->bubble || a->saved != b->saved ||
+	    a->saved_pct != b->saved_pct || a->save_pressed != b->save_pressed)
 		return false;
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		if (a->control[i] != b->control[i])
@@ -368,6 +406,7 @@ static void tick(void)
 		press_tick(&press_control[i]);
 	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
 		press_tick(&press_link[i]);
+	press_tick(&press_save);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_tick(&press_glyph[i]);
 	if (info.phase == PLAYER_PHASE_LOADING)
@@ -431,6 +470,8 @@ static void release_keys(u32 up)
 		press_end(&press_glyph[GLYPH_A]);
 	if (up & KEY_B)
 		press_end(&press_glyph[GLYPH_B]);
+	if (up & KEY_X)
+		press_end(&press_glyph[GLYPH_X]);
 }
 
 /* Returns the action to run now, if any; sets `*owned` while the stylus
@@ -451,6 +492,10 @@ static player_action handle_touch(u32 down, u32 held, u32 up, bool *owned)
 			int link = player_link_hit(pos.px, pos.py, enabled);
 			if (link >= 0)
 				hit = LINK_CONTROL + link;
+			else if (save_enabled() &&
+			         ui_rect_contains(player_download_rect(), pos.px,
+			                          pos.py))
+				hit = SAVE_CONTROL;
 		}
 	}
 	int control = -1;
@@ -463,9 +508,11 @@ static player_action handle_touch(u32 down, u32 held, u32 up, bool *owned)
 		*owned = touch.target >= 0;
 		return now;
 	}
-	bool link = control >= LINK_CONTROL;
-	press_state *press = link ? &press_link[control - LINK_CONTROL]
-	                          : &press_control[control];
+	bool save = control == SAVE_CONTROL;
+	bool link = !save && control >= LINK_CONTROL;
+	press_state *press = save ? &press_save
+	                     : link ? &press_link[control - LINK_CONTROL]
+	                            : &press_control[control];
 	switch (event) {
 	case TOUCH_PRESS:
 		press_begin(press);
@@ -475,6 +522,10 @@ static player_action handle_touch(u32 down, u32 held, u32 up, bool *owned)
 		break;
 	case TOUCH_ACTIVATE: {
 		press_end(press);
+		if (save) {
+			queue(PLAYER_ACTION_DOWNLOAD, press);
+			break;
+		}
 		if (link) {
 			/* A detail takes the screen over: once the press is seen. */
 			queue(link_action(control - LINK_CONTROL), press);
@@ -615,8 +666,11 @@ player_action view_player_update(u32 down)
 	}
 	if (down & KEY_SELECT)
 		return PLAYER_ACTION_LANGUAGE;
-	if (down & KEY_X)
-		return PLAYER_ACTION_DOWNLOAD;
+	if ((down & KEY_X) && save_shown()) {
+		/* Its bubble says what came of it, whatever the state. */
+		press_begin(&press_glyph[GLYPH_X]);
+		queue(PLAYER_ACTION_DOWNLOAD, &press_glyph[GLYPH_X]);
+	}
 	return PLAYER_ACTION_NONE;
 }
 
@@ -659,6 +713,35 @@ static void draw_link(int link, const C2D_Text *text, float scale,
 	}
 }
 
+/* Where the track is in the downloads, still (9): an arrow to download
+ * it (or try again), a clock while queued, the share while downloading,
+ * a check once on the card. Pressed like a link: `lima`. */
+static void draw_saved(const player_look *look)
+{
+	ui_rect zone = player_download_rect();
+	int cx = zone.x + zone.w / 2, cy = zone.y + zone.h / 2;
+	u32 ink = look->save_pressed ? COL_LIMA : COL_TEXTO_2;
+	icon_id id;
+	switch (look->saved) {
+	case DL_BUTTON_PROGRESS:
+		ui_text_centered(&saved_text, cx, cy, TXT_META, ink);
+		return;
+	case DL_BUTTON_QUEUED:
+		id = ICON_QUEUED;
+		break;
+	case DL_BUTTON_REMOVE:
+	case DL_BUTTON_HELD:
+		id = ICON_DOWNLOADED;
+		ink = COL_LIMA;
+		break;
+	default:
+		id = ICON_DOWNLOAD;
+		break;
+	}
+	C2D_Image icon = icon_image(id);
+	ui_icon(&icon, cx - ICON_S / 2, cy - ICON_S / 2, ink);
+}
+
 static void draw_track(const player_look *look)
 {
 	draw_link(PLAYER_LINK_TRACK, &title_text, TXT_CABEZA,
@@ -672,6 +755,7 @@ static void draw_track(const player_look *look)
 	          look->link[PLAYER_LINK_ARTIST], COL_TEXTO_2);
 	draw_link(PLAYER_LINK_ALBUM, &album_text, TXT_CUERPO,
 	          look->link[PLAYER_LINK_ALBUM], COL_TEXTO_2);
+	draw_saved(look);
 }
 
 static void draw_controls(const player_look *look)
@@ -745,6 +829,10 @@ static void draw_hints(const player_look *look)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
 		                        look->glyph[GLYPH_A] };
+	if (look->saved == DL_BUTTON_DOWNLOAD || look->saved == DL_BUTTON_RETRY)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_save,
+		                        glyph_colors[GLYPH_X],
+		                        look->glyph[GLYPH_X] };
 	hints[n++] = (ui_hint){ &letter_text[GLYPH_B], &hint_back,
 	                        glyph_colors[GLYPH_B], look->glyph[GLYPH_B] };
 	ui_button_bar(player_hints_rect(), hints, n);

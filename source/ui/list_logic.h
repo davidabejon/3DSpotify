@@ -91,18 +91,56 @@ static inline int list_top(void)
 	return TAB_H;
 }
 
+/* The area a list lives in: from `top` to the button bar, `rows` whole
+ * rows of it. The results, and most lists, have it all (list_frame_full);
+ * an album or a playlist gives the top of it to a button
+ * (list_frame_under). The functions without a frame are the full one's. */
+typedef struct {
+	int top;
+	int rows;
+} list_frame;
+
+static inline list_frame list_frame_full(void)
+{
+	list_frame f = { TAB_H, RESULTS_PER_PAGE };
+	return f;
+}
+
+/* Under a button of TOUCH_MIN, SP_1 below the tab bar and SP_1 above the
+ * list area (whose first row is SP_1 lower still): the rows that fit whole
+ * above the button bar. */
+static inline list_frame list_frame_under_button(void)
+{
+	list_frame f;
+	f.top = TAB_H + SP_1 + TOUCH_MIN + SP_1;
+	f.rows = (SCREEN_H - BAR_H - f.top) / LIST_PITCH;
+	return f;
+}
+
+/* The button over such a list. */
+static inline ui_rect list_header_button_rect(void)
+{
+	ui_rect r = { SP_2, TAB_H + SP_1, SCREEN_BOTTOM_W - 2 * SP_2, TOUCH_MIN };
+	return r;
+}
+
 static inline ui_rect list_hints_rect(void)
 {
 	ui_rect r = { 0, SCREEN_H - BAR_H, SCREEN_BOTTOM_W, BAR_H };
 	return r;
 }
 
-/* The row in screen slot `slot` (0..RESULTS_PER_PAGE-1). */
-static inline ui_rect list_row_rect(int slot)
+/* The row in screen slot `slot` (0..f.rows-1). */
+static inline ui_rect list_row_rect_in(list_frame f, int slot)
 {
-	ui_rect r = { SP_2, list_top() + SP_1 + slot * (ROW_H + SP_1),
+	ui_rect r = { SP_2, f.top + SP_1 + slot * (ROW_H + SP_1),
 	              SCREEN_BOTTOM_W - 2 * SP_2, ROW_H };
 	return r;
+}
+
+static inline ui_rect list_row_rect(int slot)
+{
+	return list_row_rect_in(list_frame_full(), slot);
 }
 
 /* The thumbnail square of a row, SP_1 from its left, top and bottom. */
@@ -119,62 +157,88 @@ static inline int list_text_x(ui_rect row)
 }
 
 /* The furthest the list scrolls: its last row at the bottom. */
+static inline int list_max_scroll_in(list_frame f, int count)
+{
+	return count > f.rows ? (count - f.rows) * LIST_PITCH : 0;
+}
+
 static inline int list_max_scroll(int count)
 {
-	return count > RESULTS_PER_PAGE
-	       ? (count - RESULTS_PER_PAGE) * LIST_PITCH : 0;
+	return list_max_scroll_in(list_frame_full(), count);
 }
 
 /* Row `index` of the list scrolled by `scroll` px. It may lie partly or
  * wholly outside the list area; the bars are drawn over it. */
-static inline ui_rect list_row_at(int index, int scroll)
+static inline ui_rect list_row_at_in(list_frame f, int index, int scroll)
 {
-	ui_rect r = list_row_rect(0);
+	ui_rect r = list_row_rect_in(f, 0);
 	r.y += index * LIST_PITCH - scroll;
 	return r;
 }
 
+static inline ui_rect list_row_at(int index, int scroll)
+{
+	return list_row_at_in(list_frame_full(), index, scroll);
+}
+
 /* Whether (x, y) is inside the list area, between the bars: where a drag
  * may start. */
-static inline bool list_area_contains(int x, int y)
+static inline bool list_area_contains_in(list_frame f, int x, int y)
 {
 	(void)x;
-	return y >= list_top() && y < SCREEN_H - BAR_H;
+	return y >= f.top && y < SCREEN_H - BAR_H;
+}
+
+static inline bool list_area_contains(int x, int y)
+{
+	return list_area_contains_in(list_frame_full(), x, y);
 }
 
 /* The track under (x, y), or -1: inside the list area, rows only, not the
  * gaps between them. */
-static inline int list_hit_row(int x, int y, int scroll, int count)
+static inline int list_hit_row_in(list_frame f, int x, int y, int scroll,
+                                  int count)
 {
-	if (y < list_top() || y >= SCREEN_H - BAR_H)
+	if (y < f.top || y >= SCREEN_H - BAR_H)
 		return -1;
-	int offset = y - list_row_rect(0).y + scroll;
+	int offset = y - list_row_rect_in(f, 0).y + scroll;
 	if (offset < 0)
 		return -1;
 	int index = offset / LIST_PITCH;
 	if (index >= count)
 		return -1;
-	return ui_rect_contains(list_row_at(index, scroll), x, y) ? index : -1;
+	return ui_rect_contains(list_row_at_in(f, index, scroll), x, y) ? index
+	                                                                : -1;
+}
+
+static inline int list_hit_row(int x, int y, int scroll, int count)
+{
+	return list_hit_row_in(list_frame_full(), x, y, scroll, count);
 }
 
 /* The whole row nearest to `scroll`. */
-static inline int list_snap(int scroll, int count)
+static inline int list_snap_in(list_frame f, int scroll, int count)
 {
 	int first = (scroll + LIST_PITCH / 2) / LIST_PITCH;
-	int max_first = list_max_scroll(count) / LIST_PITCH;
+	int max_first = list_max_scroll_in(f, count) / LIST_PITCH;
 	if (first > max_first)
 		first = max_first;
 	return first < 0 ? 0 : first;
 }
 
-/* The rows wholly inside the list area at `scroll`. With the list resting
- * on whole rows that is RESULTS_PER_PAGE of them; cut at both ends, one
- * fewer. */
-static inline void list_full_rows(int scroll, int count, int *from, int *to)
+static inline int list_snap(int scroll, int count)
 {
-	int top = list_top();
+	return list_snap_in(list_frame_full(), scroll, count);
+}
+
+/* The rows wholly inside the list area at `scroll`. With the list resting
+ * on whole rows that is f.rows of them; cut at both ends, one fewer. */
+static inline void list_full_rows_in(list_frame f, int scroll, int count,
+                                     int *from, int *to)
+{
+	int top = f.top;
 	int bottom = SCREEN_H - BAR_H;
-	int r0 = list_row_rect(0).y;
+	int r0 = list_row_rect_in(f, 0).y;
 	/* Row i is whole when r0 + i*P - scroll >= top and its bottom edge
 	 * stays above `bottom`. */
 	int low = scroll + top - r0;
@@ -184,21 +248,38 @@ static inline void list_full_rows(int scroll, int count, int *from, int *to)
 		*to = count - 1;
 }
 
+static inline void list_full_rows(int scroll, int count, int *from, int *to)
+{
+	list_full_rows_in(list_frame_full(), scroll, count, from, to);
+}
+
 /* Whether row `index` is wholly on screen. A drag can leave the focused
  * row cut or out of view: it keeps the focus anyway (6.9). */
-static inline bool list_row_whole(int index, int scroll, int count)
+static inline bool list_row_whole_in(list_frame f, int index, int scroll,
+                                     int count)
 {
 	int from, to;
-	list_full_rows(scroll, count, &from, &to);
+	list_full_rows_in(f, scroll, count, &from, &to);
 	return index >= from && index <= to;
+}
+
+static inline bool list_row_whole(int index, int scroll, int count)
+{
+	return list_row_whole_in(list_frame_full(), index, scroll, count);
 }
 
 /* The buttons work on whole rows (6.6): from a list left cut by a drag,
  * the first whole row that shows `selected` with the least movement. */
+static inline int list_align_in(list_frame f, int scroll, int selected,
+                                int count)
+{
+	return list_scroll(list_snap_in(f, scroll, count), selected, count,
+	                   f.rows);
+}
+
 static inline int list_align(int scroll, int selected, int count)
 {
-	return list_scroll(list_snap(scroll, count), selected, count,
-	                   RESULTS_PER_PAGE);
+	return list_align_in(list_frame_full(), scroll, selected, count);
 }
 
 /* Dragging the list (6.9): a touch becomes a drag once the stylus has moved
@@ -231,34 +312,46 @@ static inline bool list_drag_update(list_drag *d, int y)
 }
 
 /* The scroll for the stylus at `y`: the list moves with it. */
-static inline int list_drag_scroll(const list_drag *d, int y, int count)
+static inline int list_drag_scroll_in(list_frame f, const list_drag *d, int y,
+                                      int count)
 {
 	int scroll = d->start_scroll - (y - d->start_y);
-	int max = list_max_scroll(count);
+	int max = list_max_scroll_in(f, count);
 	if (scroll > max)
 		scroll = max;
 	return scroll < 0 ? 0 : scroll;
 }
 
+static inline int list_drag_scroll(const list_drag *d, int y, int count)
+{
+	return list_drag_scroll_in(list_frame_full(), d, y, count);
+}
+
 /* The scroll indicator (5.11): a track against the right edge of the
  * screen, between the bars, and a thumb sized and placed in proportion to
  * the visible part of the list. */
-static inline ui_rect list_scroll_track(void)
+static inline ui_rect list_scroll_track_in(list_frame f)
 {
-	ui_rect r = { SCREEN_BOTTOM_W - SCROLL_W, list_top(), SCROLL_W,
-	              SCREEN_H - list_top() - BAR_H };
+	ui_rect r = { SCREEN_BOTTOM_W - SCROLL_W, f.top, SCROLL_W,
+	              SCREEN_H - f.top - BAR_H };
 	return r;
 }
 
-static inline ui_rect list_scroll_thumb(int scroll, int count)
+static inline ui_rect list_scroll_track(void)
 {
-	ui_rect track = list_scroll_track();
-	if (count <= RESULTS_PER_PAGE)
+	return list_scroll_track_in(list_frame_full());
+}
+
+static inline ui_rect list_scroll_thumb_in(list_frame f, int scroll,
+                                           int count)
+{
+	ui_rect track = list_scroll_track_in(f);
+	if (count <= f.rows)
 		return track;
-	int h = track.h * RESULTS_PER_PAGE / count;
+	int h = track.h * f.rows / count;
 	if (h < SCROLL_MIN_H)
 		h = SCROLL_MIN_H;
-	int max = list_max_scroll(count);
+	int max = list_max_scroll_in(f, count);
 	if (scroll < 0)
 		scroll = 0;
 	if (scroll > max)
@@ -267,6 +360,11 @@ static inline ui_rect list_scroll_thumb(int scroll, int count)
 	ui_rect r = { track.x, track.y + (travel * scroll + max / 2) / max,
 	              track.w, h };
 	return r;
+}
+
+static inline ui_rect list_scroll_thumb(int scroll, int count)
+{
+	return list_scroll_thumb_in(list_frame_full(), scroll, count);
 }
 
 /* Empty and error states: a block from the top of the list area and a

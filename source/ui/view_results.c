@@ -589,7 +589,7 @@ void view_results_draw_bottom(void)
 	switch (mode) {
 	case MODE_SEARCHING:
 		/* Skeleton rows: the layout the results will fill. */
-		track_list_draw_skeleton();
+		track_list_draw_skeleton(list_frame_full());
 		break;
 	case MODE_LIST:
 		track_list_draw(&list, &look.list);

@@ -1261,6 +1261,12 @@ static player_info player_snapshot(void)
 		percent = 100;
 	unsigned duration = track && track->duration_ms > 0
 	                    ? (unsigned)track->duration_ms / 1000 : 0;
+	/* Where the track is in the downloads, for its icon and X. */
+	dl_state dl_now = DL_QUEUED;
+	bool dl_alone = false;
+	int dl_pct = 0;
+	bool dl_known = track && downloads_track_state(track->uri, &dl_now,
+	                                               &dl_pct, &dl_alone);
 	player_info info = {
 		.phase = player.phase,
 		.track = track,
@@ -1278,6 +1284,8 @@ static player_info player_snapshot(void)
 		            dl.stream.dl_done &&
 		            dl.stream.len > SPOTIFY_OGG_HEADER && duration > 0,
 		.error = player.error,
+		.saved = dl_track_button(dl_known, dl_now, dl_alone),
+		.saved_pct = dl_pct,
 	};
 	return info;
 }
@@ -1785,25 +1793,75 @@ static void open_playing_detail(detail_kind kind)
 	switch_tab(TAB_PLAYER);
 }
 
-/* A detail is on top of the active tab: its view has the input. */
-/* X on the Playing tab: the track that plays, kept on the SD card. Once it
- * plays, the player holds its key and its file: they go with it, so the
- * download asks the access point for nothing. */
+/* `t` kept on the SD card (or a failed download of it tried again). When
+ * it is the track that plays, the player holds its key and its file: they
+ * go with it, so the download asks the access point for nothing. Returns
+ * what to tell the user. */
+static str_id download_track(const sp_track *t)
+{
+	if (!t)
+		return STR_DL_NOT_READY;
+	const sp_track *playing = player_track();
+	const track_stream *ts = &dl.stream;
+	bool keyed = playing && strcmp(playing->uri, t->uri) == 0 &&
+	             player.phase == PLAYER_PHASE_PLAYING && !dl_abandoned &&
+	             strcmp(ts->meta.uri, t->uri) == 0;
+	return keyed ? downloads_add_track_keyed(t, ts->key, ts->file_id,
+	                                         ts->format)
+	             : downloads_add_track(t);
+}
+
+static bool good_news(str_id said)
+{
+	return said == STR_DL_ADDED || said == STR_DL_ALREADY ||
+	       said == STR_DL_REMOVED;
+}
+
+/* X on the Playing tab: the track that plays, kept on the SD card. */
 static void download_playing(void)
 {
 	const sp_track *t = player_track();
 	if (!t)
 		return;
-	const track_stream *ts = &dl.stream;
-	bool keyed = player.phase == PLAYER_PHASE_PLAYING && !dl_abandoned &&
-	             strcmp(ts->meta.uri, t->uri) == 0;
-	str_id said = keyed
-	              ? downloads_add_track_keyed(t, ts->key, ts->file_id,
-	                                          ts->format)
-	              : downloads_add_track(t);
-	view_player_notice(said, said == STR_DL_ADDED || said == STR_DL_ALREADY);
+	str_id said = download_track(t);
+	view_player_notice(said, good_news(said));
 }
 
+/* The track detail's download button, as it is now: download (or retry),
+ * or remove. Queued and downloading tracks have it disabled. */
+static void download_from_detail(const sp_track *t)
+{
+	if (!t)
+		return;
+	dl_state state = DL_QUEUED;
+	bool alone = false;
+	bool known = downloads_track_state(t->uri, &state, NULL, &alone);
+	str_id said;
+	switch (dl_track_button(known, state, alone)) {
+	case DL_BUTTON_DOWNLOAD:
+	case DL_BUTTON_RETRY:
+		said = download_track(t);
+		break;
+	case DL_BUTTON_REMOVE:
+		downloads_remove(t->uri);
+		said = STR_DL_REMOVED;
+		break;
+	default:
+		return;
+	}
+	view_detail_notice(said, good_news(said));
+}
+
+/* An album's or playlist's button over its list. */
+static void download_collection(const detail_doc *doc)
+{
+	str_id said = downloads_add_collection(
+		doc->kind == DETAIL_ALBUM ? DL_COLL_ALBUM : DL_COLL_PLAYLIST,
+		doc->uri, doc->title, doc->art);
+	view_detail_notice(said, good_news(said));
+}
+
+/* A detail is on top of the active tab: its view has the input. */
 static void detail_input(spotify_session *session, u32 down)
 {
 	detail_doc *doc = details_top(active_tab);
@@ -1849,6 +1907,13 @@ static void detail_input(spotify_session *session, u32 down)
 		break;
 	case DETAIL_ACTION_SHUFFLE:
 		toggle_shuffle();
+		break;
+	case DETAIL_ACTION_DOWNLOAD:
+		download_from_detail(track);
+		break;
+	case DETAIL_ACTION_DOWNLOAD_ALL:
+		if (doc->kind == DETAIL_ALBUM || doc->kind == DETAIL_PLAYLIST)
+			download_collection(doc);
 		break;
 	default:
 		break;

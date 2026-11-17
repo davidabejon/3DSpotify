@@ -63,8 +63,9 @@ str_id downloads_add_track_keyed(const sp_track *t, const uint8_t key[16],
                                  const uint8_t file_id[20], int format);
 /* Queues an album or a playlist (SP_LIKED_URI too): resolved into its
  * tracks in the background, then each queued. `name` and `art` show until
- * it is resolved. */
-bool downloads_add_collection(dl_coll_kind kind, const char *uri,
+ * it is resolved. Returns what to tell the user, as downloads_add_track
+ * (STR_DL_FULL when too many wait to be resolved). */
+str_id downloads_add_collection(dl_coll_kind kind, const char *uri,
                               const char *name, const char *art);
 
 /* What the player needs to play a download from the card, instead of the
@@ -80,9 +81,17 @@ typedef struct {
 /* True when `uri` is downloaded whole, with `out` filled. */
 bool downloads_local_track(const char *uri, downloads_local *out);
 
-/* Where a track is: false when it is not in the index. `pct` (may be NULL)
- * is the download's progress, while DL_ACTIVE. */
-bool downloads_track_state(const char *uri, dl_state *state, int *pct);
+/* Where a track is: false when it is not in the index. `pct` is the
+ * download's progress while DL_ACTIVE; `standalone`, whether the user
+ * asked for it on its own (rather than with an album or playlist). Either
+ * may be NULL. */
+bool downloads_track_state(const char *uri, dl_state *state, int *pct,
+                           bool *standalone);
+/* An album or a playlist: `pending` while it waits to be resolved into
+ * tracks; otherwise `done` of the `count` tracks the index holds for it are
+ * on the card. False when it is neither waiting nor in the index. */
+bool downloads_collection_state(const char *uri, bool *pending, int *done,
+                                int *count);
 /* The index, NULL while loading, unreadable, or another account's. */
 const dl_index *downloads_index(void);
 /* Bumped on every change, as home_feed_generation. */

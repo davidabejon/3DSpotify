@@ -4,12 +4,14 @@
  *
  * Bottom screen, 320 x 240, 8 px side margins:
  *   tabs        0..32   the tab bar (tabs_logic.h)
- *   language   48..80   secondary button: the current language
- *   reconnect  96..128  secondary button
- *   pair      144..176  secondary button: pair another account
+ *   language   44..76   secondary button: the current language
+ *   reconnect  88..120  secondary button
+ *   pair      132..164  secondary button: pair another account
+ *   (fourth)  176..208  room for one more
  *   hints     216..240  button bar
- * One button per row, the content width each, SP_4 apart: room for the
- * focus border and the hard shadow between them (4.4). */
+ * One button per row, the content width each, SP_3 apart: room for the
+ * focus border and the hard shadow between them (4.4), and four buttons
+ * clear of the button bar. */
 #ifndef SETTINGS_LOGIC_H
 #define SETTINGS_LOGIC_H
 
@@ -27,7 +29,7 @@ typedef enum {
 
 static inline ui_rect settings_item_rect(int item)
 {
-	ui_rect r = { SP_2, TAB_H + SP_4 + item * (TOUCH_MIN + SP_4),
+	ui_rect r = { SP_2, TAB_H + SP_3 + item * (TOUCH_MIN + SP_3),
 	              SCREEN_BOTTOM_W - 2 * SP_2, TOUCH_MIN };
 	return r;
 }

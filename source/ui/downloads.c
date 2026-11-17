@@ -882,15 +882,21 @@ str_id downloads_add_track_keyed(const sp_track *t, const uint8_t key[16],
 	return said;
 }
 
-bool downloads_add_collection(dl_coll_kind kind, const char *uri,
-                              const char *name, const char *art)
+str_id downloads_add_collection(dl_coll_kind kind, const char *uri,
+                                const char *name, const char *art)
 {
-	if (!uri || !uri[0] || claim() != STR_COUNT ||
-	    pending_count >= PENDING_MAX)
-		return false;
+	if (!uri || !uri[0])
+		return STR_DL_NOT_READY;
+	str_id why = claim();
+	if (why != STR_COUNT)
+		return why;
 	for (int i = 0; i < pending_count; i++)
 		if (strcmp(pending[i].uri, uri) == 0)
-			return true;
+			return STR_DL_ALREADY;
+	if (pending_count >= PENDING_MAX) {
+		dlog("%s: refused, %d collections wait", uri, pending_count);
+		return STR_DL_FULL;
+	}
 	pending_coll *p = &pending[pending_count++];
 	memset(p, 0, sizeof(*p));
 	p->kind = kind;
@@ -899,23 +905,49 @@ bool downloads_add_collection(dl_coll_kind kind, const char *uri,
 	snprintf(p->art, sizeof(p->art), "%s", art ? art : "");
 	dlog("%s: collection queued", uri);
 	generation++;
-	return true;
+	return STR_DL_ADDED;
 }
 
-bool downloads_track_state(const char *uri, dl_state *state, int *pct)
+bool downloads_track_state(const char *uri, dl_state *state, int *pct,
+                           bool *standalone)
 {
 	if (!usable())
 		return false;
 	int t = dl_find_track(idx, uri);
 	if (t < 0)
 		return false;
-	*state = idx->tracks[t].state;
+	if (state)
+		*state = idx->tracks[t].state;
+	if (standalone)
+		*standalone = idx->tracks[t].standalone;
 	if (pct) {
 		*pct = 0;
-		if (*state == DL_ACTIVE && job_thread && job.kind == JOB_TRACK &&
-		    strcmp(job.uri, uri) == 0 && job.total_bytes)
-			*pct = (int)((uint64_t)job.done_bytes * 100 / job.total_bytes);
+		/* The worker writes both as it goes: read each once. */
+		uint32_t total = job.total_bytes, got = job.done_bytes;
+		if (idx->tracks[t].state == DL_ACTIVE && job_thread &&
+		    job.kind == JOB_TRACK && strcmp(job.uri, uri) == 0 && total)
+			*pct = got >= total ? 100
+			                    : (int)((uint64_t)got * 100 / total);
 	}
+	return true;
+}
+
+bool downloads_collection_state(const char *uri, bool *pending_out,
+                                int *done, int *count)
+{
+	*pending_out = false;
+	*done = *count = 0;
+	if (!usable() || !uri)
+		return false;
+	for (int i = 0; i < pending_count; i++)
+		if (strcmp(pending[i].uri, uri) == 0 && pending[i].failures >= 0) {
+			*pending_out = true;
+			return true;
+		}
+	int c = dl_find_collection(idx, uri);
+	if (c < 0)
+		return false;
+	dl_collection_progress(idx, c, done, count);
 	return true;
 }
 

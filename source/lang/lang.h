@@ -212,6 +212,20 @@ typedef enum {
 	STR_DL_FULL,
 	/* The Playing tab while a downloaded track opens from the card. */
 	STR_PLAYER_LOCAL_OPENING,
+	/* The download buttons: a track's state, a collection's, and the bar. */
+	STR_DL_DOWNLOAD,
+	STR_DL_QUEUED,
+	STR_DL_PROGRESS_FMT,
+	STR_DL_RETRY,
+	STR_DL_REMOVE,
+	STR_DL_REMOVE_CONFIRM,
+	STR_DL_REMOVED,
+	STR_DL_ALL_ALBUM,
+	STR_DL_ALL_PLAYLIST,
+	STR_DL_COLL_WAITING,
+	STR_DL_COLL_PROGRESS_FMT,
+	STR_DL_DONE,
+	STR_HINT_DOWNLOAD,
 
 	STR_COUNT
 } str_id;

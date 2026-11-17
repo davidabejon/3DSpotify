@@ -1,7 +1,8 @@
 /* A list of tracks on the bottom screen (docs/STYLES.md 5.3, 5.11, 6.6 and
  * 6.9), shared by the results and the album and artist details.
  *
- * Rows of ROW_H below the tab bar, RESULTS_PER_PAGE at a time, with the
+ * Rows of ROW_H below the tab bar (or a button, track_list_set_frame),
+ * RESULTS_PER_PAGE at a time (fewer under a button), with the
  * focus kept on whole rows by the buttons, the list following the stylus
  * when dragged, and a scroll indicator when the list does not fit. The
  * square at the left of each row is either the cover thumbnail (thumbs.h)
@@ -63,6 +64,8 @@ typedef struct {
 
 typedef struct {
 	track_list_style style;
+	/* Where the rows go: list_frame_full unless set. */
+	list_frame frame;
 	const sp_track *tracks;   /* the owner's; valid while shown */
 	int count;
 	int selected;
@@ -99,6 +102,9 @@ void track_list_exit(track_list *l);
  * carries over. */
 void track_list_set(track_list *l, const sp_track *tracks, int count,
                     int selected);
+/* Where the rows go (list_logic.h): before track_list_set, which places
+ * the focus in it. A list starts with list_frame_full. */
+void track_list_set_frame(track_list *l, list_frame frame);
 /* Back to where a list was left: `first` as the first visible row, on
  * whole rows, with the focus kept in view. */
 void track_list_scroll_to(track_list *l, int first);
@@ -156,8 +162,8 @@ bool track_list_same_look(const track_list_look *a, const track_list_look *b);
 /* The visible rows, the focused one last so its nudge draws over its
  * neighbours, and the scroll indicator when the list does not fit. */
 void track_list_draw(const track_list *l, const track_list_look *look);
-/* RESULTS_PER_PAGE empty rows: the layout a list about to arrive will
+/* Empty rows filling `frame`: the layout a list about to arrive will
  * fill. */
-void track_list_draw_skeleton(void);
+void track_list_draw_skeleton(list_frame frame);
 
 #endif

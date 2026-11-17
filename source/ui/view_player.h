@@ -14,11 +14,15 @@
  * the album are links, touch only, to their details
  * (docs/plan_vistas_detalle.md 4.4). Per 9, a GPU frame is
  * only needed when the clock's second, the volume, the pause, a press or
- * the phase changes; the download share is sampled with the clock. Main
- * thread only. */
+ * the phase changes; the download share is sampled with the clock. Right
+ * of the artist and the album, an icon says where the track is in the
+ * downloads -- an arrow, a clock, its share, a check -- and, as X, keeps it
+ * on the SD card; the bar then shows "[X] Download". Nothing in it moves
+ * by itself (9). Main thread only. */
 #ifndef VIEW_PLAYER_H
 #define VIEW_PLAYER_H
 
+#include "downloads_logic.h"
 #include "lang.h"
 #include "player_logic.h"
 #include "spclient.h"
@@ -42,6 +46,10 @@ typedef struct {
 	 * known and its whole file downloaded. */
 	bool seekable;
 	const char *error;      /* when failed */
+	/* Where the track is in the downloads, and its share while it
+	 * downloads (sampled with the clock, as download_pct). */
+	dl_button saved;
+	int saved_pct;
 } player_info;
 
 typedef enum {
@@ -68,7 +76,8 @@ typedef enum {
 	/* The stylus on the volume bar: set it to view_player_value()
 	 * thousandths. */
 	PLAYER_ACTION_VOLUME_SET,
-	/* X: keep the track that plays on the SD card. */
+	/* X, or the download icon by the links: keep the track that plays on
+	 * the SD card. */
 	PLAYER_ACTION_DOWNLOAD
 } player_action;
 

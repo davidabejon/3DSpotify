@@ -36,6 +36,7 @@ bool track_list_init(track_list *l, track_list_style style)
 {
 	memset(l, 0, sizeof(*l));
 	l->style = style;
+	l->frame = list_frame_full();
 	l->parsed_lang = LANG_COUNT;
 	l->stale = true;
 	l->press_index = -1;
@@ -111,7 +112,7 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 	l->count = count < 0 ? 0 : count > TRACK_LIST_MAX ? TRACK_LIST_MAX
 	                                                  : count;
 	l->selected = list_clamp(selected, l->count);
-	l->first = list_scroll(0, l->selected, l->count, RESULTS_PER_PAGE);
+	l->first = list_scroll(0, l->selected, l->count, l->frame.rows);
 	l->scroll = l->first * LIST_PITCH;
 	l->base = list_window_base(0, l->first, l->count, TRACK_LIST_WINDOW);
 	/* New tracks: thumbs.c is handed their covers by the next claim. */
@@ -121,14 +122,19 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 	track_list_reset_input(l);
 }
 
+void track_list_set_frame(track_list *l, list_frame frame)
+{
+	l->frame = frame;
+}
+
 void track_list_scroll_to(track_list *l, int first)
 {
-	int last = list_max_scroll(l->count) / LIST_PITCH;
+	int last = list_max_scroll_in(l->frame, l->count) / LIST_PITCH;
 	l->first = first < 0 ? 0 : first > last ? last : first;
 	l->scroll = l->first * LIST_PITCH;
 	/* The focus is never left out of view by this. */
-	if (!list_row_whole(l->selected, l->scroll, l->count))
-		l->first = list_align(l->scroll, l->selected, l->count);
+	if (!list_row_whole_in(l->frame, l->selected, l->scroll, l->count))
+		l->first = list_align_in(l->frame, l->scroll, l->selected, l->count);
 	l->scroll = l->first * LIST_PITCH;
 	follow_window(l);
 }
@@ -246,7 +252,7 @@ void track_list_tick(track_list *l)
 void track_list_focus(track_list *l, int index)
 {
 	l->selected = list_clamp(index, l->count);
-	l->first = list_align(l->scroll, l->selected, l->count);
+	l->first = list_align_in(l->frame, l->scroll, l->selected, l->count);
 	l->scroll = l->first * LIST_PITCH;
 	follow_window(l);
 }
@@ -254,7 +260,7 @@ void track_list_focus(track_list *l, int index)
 /* 6.9: the list follows the stylus pixel for pixel. */
 static void drag_to(track_list *l, int y)
 {
-	l->scroll = list_drag_scroll(&l->drag, y, l->count);
+	l->scroll = list_drag_scroll_in(l->frame, &l->drag, y, l->count);
 	int now_first = l->scroll / LIST_PITCH;
 	if (now_first != l->first) {
 		l->first = now_first;
@@ -299,7 +305,7 @@ track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
 		if (down & KEY_TOUCH) {
 			/* Only from the list itself: the tab bar keeps its own
 			 * touches. */
-			if (list_area_contains(pos.px, pos.py) && !tabbar_touching())
+			if (list_area_contains_in(l->frame, pos.px, pos.py) && !tabbar_touching())
 				list_drag_begin(&l->drag, pos.py, l->scroll);
 		} else if (list_drag_update(&l->drag, pos.py)) {
 			/* A drag is not a tap: the row returns to rest without
@@ -317,7 +323,8 @@ track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
 	if (held & KEY_TOUCH) {
 		touchPosition pos;
 		hidTouchRead(&pos);
-		hit = list_hit_row(pos.px, pos.py, l->scroll, l->count);
+		hit = list_hit_row_in(l->frame, pos.px, pos.py, l->scroll,
+		                      l->count);
 	}
 	int control;
 	touch_event event = touch_track_update(&l->touch, (down & KEY_TOUCH) != 0,
@@ -347,7 +354,7 @@ track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
 bool track_list_realign(track_list *l, u32 down, u32 confirm_keys)
 {
 	u32 keys = KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | confirm_keys;
-	if (!(down & keys) || list_row_whole(l->selected, l->scroll, l->count))
+	if (!(down & keys) || list_row_whole_in(l->frame, l->selected, l->scroll, l->count))
 		return false;
 	track_list_focus(l, l->selected);
 	return true;
@@ -360,9 +367,9 @@ void track_list_navigate(track_list *l, u32 down)
 	else if (down & KEY_DOWN)
 		move_focus(l, 1);
 	else if (down & KEY_LEFT)
-		move_focus(l, -RESULTS_PER_PAGE);
+		move_focus(l, -l->frame.rows);
 	else if (down & KEY_RIGHT)
-		move_focus(l, RESULTS_PER_PAGE);
+		move_focus(l, l->frame.rows);
 }
 
 press_state *track_list_focused_press(track_list *l)
@@ -435,25 +442,27 @@ void track_list_draw(const track_list *l, const track_list_look *look)
 {
 	/* Mid-drag one more row peeks in at the bottom. The focused row goes
 	 * last, so its nudge draws over its neighbours. */
-	int last = look->first + RESULTS_PER_PAGE;
+	int last = look->first + l->frame.rows;
 	if (last > l->count - 1)
 		last = l->count - 1;
 	for (int index = look->first; index <= last; index++)
 		if (index != look->selected)
-			draw_row(l, list_row_at(index, look->scroll), index, look);
+			draw_row(l, list_row_at_in(l->frame, index, look->scroll), index, look);
 	if (look->selected >= look->first && look->selected <= last)
-		draw_row(l, list_row_at(look->selected, look->scroll),
+		draw_row(l, list_row_at_in(l->frame, look->selected,
+		                        look->scroll),
 		         look->selected, look);
 	/* 5.11: only when the list does not fit. */
-	if (l->count > RESULTS_PER_PAGE) {
-		ui_fill(list_scroll_track(), COL_CAPA);
-		ui_fill(list_scroll_thumb(look->scroll, l->count), COL_CLOROFILA);
+	if (l->count > l->frame.rows) {
+		ui_fill(list_scroll_track_in(l->frame), COL_CAPA);
+		ui_fill(list_scroll_thumb_in(l->frame, look->scroll, l->count),
+		        COL_CLOROFILA);
 	}
 }
 
-void track_list_draw_skeleton(void)
+void track_list_draw_skeleton(list_frame frame)
 {
 	track_list_look none = { .selected = -1, .pressed = -1 };
-	for (int slot = 0; slot < RESULTS_PER_PAGE; slot++)
-		draw_row(NULL, list_row_rect(slot), -1, &none);
+	for (int slot = 0; slot < frame.rows; slot++)
+		draw_row(NULL, list_row_rect_in(frame, slot), -1, &none);
 }

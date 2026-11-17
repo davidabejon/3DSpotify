@@ -389,9 +389,12 @@ class BuildTests(unittest.TestCase):
         self.assertIn('#include "track_list.h"', results)
         self.assertIn("track_list_update_touch(&list", results)
         self.assertIn("track_list_navigate(&list, down)", results)
-        self.assertIn("move_focus(l, RESULTS_PER_PAGE)", rows)
+        # Left and right jump a page: the rows of the list's frame
+        # (RESULTS_PER_PAGE, or fewer under an album's download button).
+        self.assertIn("move_focus(l, l->frame.rows)", rows)
         self.assertIn("else if (down & KEY_RIGHT)\n\t\tmove_focus(l, "
-                      "RESULTS_PER_PAGE);", rows)
+                      "l->frame.rows);", rows)
+        self.assertIn("l->frame = list_frame_full();", rows)
         for source in (results, rows):
             self.assertNotIn("KEY_L)", source)
             self.assertNotIn("KEY_R)", source)
@@ -543,25 +546,29 @@ class BuildTests(unittest.TestCase):
         rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
         self.assertIn("list_drag_begin(&l->drag", rows)
         # A drag starts on the list, never on the tab bar.
-        self.assertIn("list_area_contains(pos.px, pos.py)", rows)
+        self.assertIn("list_area_contains_in(l->frame, pos.px, pos.py)",
+                      rows)
         self.assertIn("!tabbar_touching()", rows)
         self.assertIn("list_drag_update(&l->drag", rows)
         self.assertIn("press_cancel(&l->press)", rows)
         # A drag may leave rows cut; the buttons align to whole rows.
-        self.assertIn("list_align(l->scroll, l->selected, l->count)", rows)
+        self.assertIn("list_align_in(l->frame, l->scroll, l->selected, "
+                      "l->count)", rows)
         # The focus survives a drag (6.9), and the first button press with
         # it out of view only brings the list back to it (6.6).
         drag_end = rows[rows.index("static void drag_end(track_list *l)"):]
         drag_end = drag_end[:drag_end.index("\n}\n")]
         for change in ("list_snap", "scroll =", "selected ="):
             self.assertNotIn(change, drag_end)
-        self.assertIn("list_row_whole(l->selected, l->scroll, l->count)", rows)
+        self.assertIn("list_row_whole_in(l->frame, l->selected, l->scroll, "
+                      "l->count)", rows)
         self.assertIn("track_list_realign(&list, down, KEY_A | KEY_X)",
                       results)
         for source in (results, rows):
             self.assertNotIn("list_keep_visible", source)
-        self.assertIn("list_scroll_thumb(look->scroll, l->count)", rows)
-        self.assertIn("list_hit_row(pos.px, pos.py, l->scroll, l->count)",
+        self.assertIn("list_scroll_thumb_in(l->frame, look->scroll, "
+                      "l->count)", rows)
+        self.assertIn("list_hit_row_in(l->frame, pos.px, pos.py, l->scroll,",
                       rows)
         style = (build.ROOT.parent / "docs" / "STYLES.md").read_text(
             encoding="utf-8")
@@ -859,6 +866,56 @@ class BuildTests(unittest.TestCase):
                             text.index("dl_store_art_read("))
             self.assertLess(text.index("dl_store_art_read("),
                             text.index(net))
+
+    def test_download_buttons_are_wired(self):
+        import re
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        view = (root / "ui" / "view_detail.c").read_text(encoding="utf-8")
+        player = (root / "ui" / "view_player.c").read_text(encoding="utf-8")
+        header = (root / "lang" / "lang.h").read_text(encoding="utf-8")
+
+        def body(source, signature):
+            text = source[source.index(signature):]
+            return text[:text.index("\n}\n")]
+
+        # Every download text in both languages, the Spanish one accented
+        # where the word is ("álbum"), and the formats as in English.
+        ids = re.findall(r"\b(STR_DL_\w+|STR_HINT_DOWNLOAD)\b,", header)
+        self.assertIn("STR_DL_REMOVE_CONFIRM", ids)
+        for name in ("lang_en.c", "lang_es.c"):
+            table = (root / "lang" / name).read_text(encoding="utf-8")
+            for sid in ids:
+                self.assertIn("[%s] = \"" % sid, table, (name, sid))
+        es = (root / "lang" / "lang_es.c").read_text(encoding="utf-8")
+        self.assertIn('[STR_DL_ALL_ALBUM] = "Descargar álbum"', es)
+        # The detail's button does what its state says; removing needs the
+        # second A that "Press A again" asks for.
+        detail = body(app, "static void download_from_detail(")
+        self.assertIn("dl_track_button(known, state, alone)", detail)
+        self.assertIn("downloads_remove(t->uri);", detail)
+        self.assertIn("download_track(t);", detail)
+        confirm = body(view, "static detail_action download_action(void)")
+        self.assertLess(confirm.index("remove_armed()"),
+                        confirm.rindex("return DETAIL_ACTION_DOWNLOAD;"))
+        self.assertIn("view_detail_notice(STR_DL_REMOVE_CONFIRM", confirm)
+        # The button over an album or a playlist, never an artist's list.
+        place = body(view, "static void place_list(")
+        self.assertIn("DETAIL_ALBUM", place)
+        self.assertIn("DETAIL_PLAYLIST", place)
+        self.assertNotIn("DETAIL_ARTIST", place)
+        self.assertIn("downloads_add_collection(",
+                      body(app, "static void download_collection("))
+        # The track that plays goes with the player's key, from X or from
+        # the detail alike.
+        self.assertIn("downloads_add_track_keyed(",
+                      body(app, "static str_id download_track("))
+        # The player's X shows its press before it acts (6.5).
+        update = body(player, "player_action view_player_update(")
+        self.assertIn("queue(PLAYER_ACTION_DOWNLOAD, &press_glyph[GLYPH_X]);",
+                      update)
+        # The share is read with the clock, not every frame (9).
+        self.assertIn("DL_SAMPLE_FRAMES", view)
 
     def test_native_search_encoding_and_cancellation_are_wired(self):
         source_root = build.ROOT
