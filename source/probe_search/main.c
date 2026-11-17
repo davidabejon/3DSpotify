@@ -11,9 +11,10 @@
  *       (gzip, inflated here) declares the find* operations and their hash.
  *       Bytes and time of each step, and the hash against the one seen on
  *       2026-11-17.
- *   P1  findTopResults for the first query with three sets of headers
- *       (Bearer only; + App-Platform and spotify-app-version; + a browser
- *       User-Agent, Origin and Referer). The first that answers is used on.
+ *   P1  findTopResults for the first query with four sets of headers
+ *       (Bearer only; + App-Platform and spotify-app-version; a browser
+ *       User-Agent alone; all of them with Origin and Referer). The first
+ *       that answers is used on.
  *   P2  For each query, findTopResults and then findArtists, findAlbums,
  *       findPlaylists and findTracks, back to back: shape, counts, totals,
  *       top results, images, non-ASCII names, and whether a 429 shows up.
@@ -97,9 +98,10 @@ static const char *const OP_FILE[] = {
 };
 #define NOPS ((int)(sizeof(OPS) / sizeof(OPS[0])))
 
-typedef enum { H_BEARER, H_PLATFORM, H_BROWSER, H_COUNT } header_set;
+/* Least to most: the first that answers is the one used on. */
+typedef enum { H_BEARER, H_PLATFORM, H_UA, H_BROWSER, H_COUNT } header_set;
 static const char *const HEADER_NAME[H_COUNT] = {
-	"bearer only", "+platform", "+browser",
+	"bearer only", "+platform", "browser UA only", "+platform+browser",
 };
 
 typedef struct {
@@ -667,12 +669,16 @@ static bool json_escape(const char *in, char *out, size_t outlen)
 static void header_lines(header_set h, char *out, size_t outlen)
 {
 	out[0] = '\0';
-	if (h >= H_PLATFORM)
+	if (h == H_PLATFORM || h == H_BROWSER)
 		snprintf(out, outlen, "App-Platform: WebPlayer\r\n"
 		         "spotify-app-version: %s\r\n", net.version);
-	if (h >= H_BROWSER) {
+	if (h == H_UA || h == H_BROWSER) {
 		size_t at = strlen(out);
-		snprintf(out + at, outlen - at, "User-Agent: " BROWSER_UA "\r\n"
+		snprintf(out + at, outlen - at, "User-Agent: " BROWSER_UA "\r\n");
+	}
+	if (h == H_BROWSER) {
+		size_t at = strlen(out);
+		snprintf(out + at, outlen - at,
 		         "Origin: https://open.spotify.com\r\n"
 		         "Referer: https://open.spotify.com/\r\n");
 	}
@@ -811,14 +817,20 @@ static bool read_page(char *bundle, size_t blen)
 	}
 	say("   page: HTTP %d, %u B, %.0f ms\n", r.status, (unsigned)r.len,
 	    now_ms() - t0);
+	/* The same name also comes as the stylesheet (.css) first: only
+	 * "<mark><hex>.js" is the bundle. */
 	bool ok = false;
 	const char *m = r.body ? strstr(r.body, BUNDLE_MARK) : NULL;
-	if (m) {
+	for (; m && !ok; m = strstr(m + 1, BUNDLE_MARK)) {
+		const char *e = m + sizeof(BUNDLE_MARK) - 1;
+		while ((*e >= '0' && *e <= '9') || (*e >= 'a' && *e <= 'f'))
+			e++;
+		if (strncmp(e, ".js\"", 4) != 0)
+			continue;
 		const char *s = m;
 		while (s > r.body && s[-1] != '"')
 			s--;
-		const char *e = strstr(m, ".js");
-		if (e && (size_t)(e + 3 - s) < blen) {
+		if ((size_t)(e + 3 - s) < blen) {
 			snprintf(bundle, blen, "%.*s", (int)(e + 3 - s), s);
 			ok = strncmp(bundle, "https://", 8) == 0;
 		}
