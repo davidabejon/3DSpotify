@@ -733,7 +733,7 @@ Error:
   cola), su porcentaje en `t_meta` (descargándose, tomado con el reloj: una vez por segundo)
   o check en `lima` (en la SD). Es estático: nada se anima en el reproductor (§9). Tocarlo
   con flecha, o pulsar X, la descarga; una burbuja (§5.9) dice lo que pasó. La barra añade
-  `[X] Descargar` mientras la flecha se ve. Quitar una descarga no se hace aquí: se hace en
+  `[X] Descargar` mientras la flecha se ve. Borrar una descarga no se hace aquí: se hace en
   el detalle de canción (§7.10).
 - Los iconos de los controles son de 16 px mientras no exista el juego de 24 px (§5.10).
 - Anterior y siguiente se deshabilitan (§6.1) en los extremos de la cola.
@@ -921,7 +921,7 @@ Error:
   | en cola | «En cola» | deshabilitado (§6.1) |
   | descargando | «Descargando 42%» (una vez por segundo) | deshabilitado |
   | falló | «Reintentar descarga» | la vuelve a poner en cola |
-  | en la SD | «Quitar descarga» | burbuja «Pulsa A otra vez para quitar»; otra A en 2 s la quita |
+  | en la SD | «Borrar descarga» | burbuja «Pulsa A otra vez para borrar»; otra A en 2 s la borra |
   | en la SD por un álbum o playlist | «Descargado» | deshabilitado: se quita con ellos |
 
   Una burbuja (§5.9) dice lo que pasó («Añadida a descargas», o por qué no). Si el botón se
@@ -1017,7 +1017,7 @@ botones con el foco en «Descargas».
  │ DESCARGADAS (48)         │ lo más reciente primero
  │ [▢ Canción           ✓ ] │
  │──────────────────────────│
- │ [A] Cancelar [X] Quitar  │ y [Y] Pausar [B] Volver
+ │ [A] Cancelar [X] Borrar  │ y [Y] Pausar [B] Volver
  └──────────────────────────┘
 ```
 
@@ -1026,7 +1026,8 @@ botones con el foco en «Descargas».
   Una sección vacía no sale.
 - Secciones:
   - En curso: la canción que se descarga, con su porcentaje (leído una vez por segundo) y
-    una barra fina de 2 px (`capa` y `clorofila`; `tinta` en la fila en foco).
+    una barra fina como la del volumen (§5.5): 6 px, contorno `tinta`, `capa_alta` y
+    relleno `clorofila`, que se ve igual en la fila en foco.
   - En cola: los álbumes y playlists que aún se están preparando («Preparando la
     descarga...»), los que tienen canciones esperando («Descargando 8 de 12»), y después
     las canciones sueltas, en el orden de la cola. Las de un álbum o playlist en cola no
@@ -1039,9 +1040,9 @@ botones con el foco en «Descargas».
   (playlist) o corazón (Canciones que te gustan). A la derecha, el estado: reloj, error o
   check, en el color secundario de la fila.
 - A: en curso o en cola, cancelar; con error, reintentar; descargada, abrir su detalle en
-  «Inicio» (cambia a esa pestaña). X: quitar cualquier fila (en cola, cancelarla). Cancelar
-  y quitar piden una segunda pulsación del mismo botón sobre la misma fila mientras la
-  burbuja «Pulsa A otra vez para cancelar» / «Pulsa X otra vez para quitar» se ve (2 s).
+  «Inicio» (cambia a esa pestaña). X: borrar cualquier fila (en cola, cancelarla). Cancelar
+  y borrar piden una segunda pulsación del mismo botón sobre la misma fila mientras la
+  burbuja «Pulsa A otra vez para cancelar» / «Pulsa X otra vez para borrar» se ve (2 s).
   Y: pausar o reanudar toda la cola; la etiqueta dice lo que hará y una burbuja confirma.
 - Táctil: tocar una fila la enfoca; tocar la enfocada hace lo de A.
 - Vacío: mensaje centrado «Todavía no hay descargas».

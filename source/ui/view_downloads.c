@@ -769,14 +769,14 @@ static void draw_entry(int i, const dlv_look *look)
 	ui_text(&title_text[w], x, title_cy, TXT_CABEZA, ink);
 	ui_text(&sub_text[w], x, sub_cy, TXT_CUERPO, meta);
 	if (e->section == DLV_SEC_ACTIVE) {
-		/* The share, and a thin bar of it beside the artist. */
+		/* The share, and a thin bar of it beside the artist: the volume
+		 * bar's look, outlined, so it reads on a focused row too. */
 		int tw = ui_px_ceil(ui_text_width(&share_text, TXT_META));
 		ui_text(&share_text, right - tw, title_cy, TXT_META, meta);
 		int bar_x = x + text_width() / 2 + SP_2;
-		ui_rect bar = { bar_x, sub_cy - 1, right - bar_x, 2 };
-		ui_fill(bar, COL_CAPA);
-		bar.w = bar.w * look->share / 100;
-		ui_fill(bar, focused ? COL_TINTA : COL_CLOROFILA);
+		ui_rect bar = { bar_x, sub_cy - VOLUME_H / 2, right - bar_x,
+		                VOLUME_H };
+		ui_progress(bar, -1, look->share * 10, UI_HANDLE_NONE);
 		return;
 	}
 	C2D_Image icon = icon_image(state_icon(e));
