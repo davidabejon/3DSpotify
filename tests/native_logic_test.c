@@ -3581,15 +3581,18 @@ static void test_http_redirects(void)
 
 static void test_power_policy(void)
 {
-	assert(power_keep_awake(PLAYER_PHASE_LOADING, false, true));
-	assert(power_keep_awake(PLAYER_PHASE_PLAYING, false, true));
-	assert(!power_keep_awake(PLAYER_PHASE_PLAYING, true, true));
-	assert(!power_keep_awake(PLAYER_PHASE_IDLE, false, true));
-	assert(!power_keep_awake(PLAYER_PHASE_FINISHED, false, true));
-	assert(!power_keep_awake(PLAYER_PHASE_FAILED, false, true));
+	assert(power_keep_awake(PLAYER_PHASE_LOADING, false, false, true));
+	assert(power_keep_awake(PLAYER_PHASE_PLAYING, false, false, true));
+	assert(!power_keep_awake(PLAYER_PHASE_PLAYING, true, false, true));
+	assert(!power_keep_awake(PLAYER_PHASE_IDLE, false, true, true));
+	assert(!power_keep_awake(PLAYER_PHASE_FINISHED, false, false, true));
+	assert(!power_keep_awake(PLAYER_PHASE_FAILED, false, true, true));
+	/* Between tracks: awake for the next one, not at the queue's end. */
+	assert(power_keep_awake(PLAYER_PHASE_FINISHED, false, true, true));
 	/* Speakers go mute under a shut lid: no headphones, normal sleep. */
-	assert(!power_keep_awake(PLAYER_PHASE_PLAYING, false, false));
-	assert(!power_keep_awake(PLAYER_PHASE_LOADING, false, false));
+	assert(!power_keep_awake(PLAYER_PHASE_PLAYING, false, false, false));
+	assert(!power_keep_awake(PLAYER_PHASE_LOADING, false, false, false));
+	assert(!power_keep_awake(PLAYER_PHASE_FINISHED, false, true, false));
 
 	assert(power_screens_lit(true, true));
 	assert(power_screens_lit(true, false));

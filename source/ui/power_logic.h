@@ -11,14 +11,18 @@
 #include <stdbool.h>
 
 /* A track loading counts: the user pressed play and expects to hear it.
- * Only through headphones, though: the system mutes the speakers while the
- * lid is shut, so without them staying awake would play to nobody. */
+ * So does a finished one while the queue goes on (`follows`): the next
+ * track starts a frame later, and letting go for that frame would sleep
+ * the console and drop the Wi-Fi it needs. Only through headphones,
+ * though: the system mutes the speakers while the lid is shut, so without
+ * them staying awake would play to nobody. */
 static inline bool power_keep_awake(player_phase phase, bool paused,
-                                    bool headphones)
+                                    bool follows, bool headphones)
 {
 	return headphones &&
 	       (phase == PLAYER_PHASE_LOADING ||
-	        (phase == PLAYER_PHASE_PLAYING && !paused));
+	        (phase == PLAYER_PHASE_PLAYING && !paused) ||
+	        (phase == PLAYER_PHASE_FINISHED && follows));
 }
 
 /* The backlights stay on unless the lid is shut over music. When the music

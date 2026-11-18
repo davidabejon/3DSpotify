@@ -1380,8 +1380,12 @@ static void power_poll(void)
 {
 	if (!ptmu_ready || !lcd_ready)
 		return;   /* without both, closing the lid just sleeps as before */
+	/* After a finished track the queue goes on with its next one, or with
+	 * a radio's next batch once it comes (player_pump). */
+	bool follows = queue_step(queue_pos, playback_queue_count, 1) >= 0 ||
+	               queue_source == QUEUE_RADIO || !queue_feed_idle();
 	bool awake = power_keep_awake(player.phase, player.paused || player.held,
-	                              osIsHeadsetConnected());
+	                              follows, osIsHeadsetConnected());
 	u8 shell = 1;
 	if (R_FAILED(PTMU_GetShellState(&shell)))
 		shell = 1;
