@@ -27,7 +27,7 @@ Spotify over HTTPS.
 
 ## Overview
 This repository contains:
-- The native 3DS client, with its entry point in `source/main.c` and UI modules in [source/ui](source/ui), which pairs the account on-console, searches for tracks, and plays audio locally with album artwork.
+- The native 3DS client, with its entry point in `source/main.c` and UI modules in [source/ui](source/ui), which pairs the account on-console, searches for songs, artists, albums and playlists, and plays audio locally with album artwork.
 - Independent protocol probes and build/test tooling in `source` and `tests`.
 
 ## Requirements
@@ -195,20 +195,22 @@ While the keyboard is open, the playing track pauses; it resumes once the keyboa
 
 ### Search
 
-Results show four songs at a time. The **bottom screen** shows the list with thumbnails under the tab bar; the top screen follows [Top screen](#top-screen).
+A search finds songs, artists, albums and playlists. Results show one type at a time, four rows on screen, and start on the type of Spotify's top result (an artist for "the killers", an album for "ok computer"). The **bottom screen** shows the list with thumbnails under the tab bar; the top screen follows [Top screen](#top-screen).
 
 **Navigation:**
-- Use up/down to move through songs; the highlighted one gets a brighter green background.
-- Press left/right to jump four songs at a time.
-- Tap a song to highlight it; tap it again (or press **A**) to play it: the app moves to the **Playing** tab.
+- Use up/down to move through the list; the highlighted row gets a brighter green background.
+- Press left/right to switch between Songs, Artists, Albums and Playlists. Types with nothing found are skipped, and each type keeps its place when you come back to it.
+- Tap a row to highlight it; tap it again (or press **A**) to open it: a song plays (the app moves to the **Playing** tab); an artist, album or playlist opens its detail ([Details](#details)).
 - Drag the list with the stylus to scroll; the bar on the right edge shows your position.
 
 **Button hints:**
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — plays the highlighted song
-- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — returns to the Home tab
-- <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> — opens the highlighted song's detail ([Details](#details))
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — plays the highlighted song, or opens the highlighted artist, album or playlist
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — back to the screen before the search (from there, to the Home tab)
+- <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> — opens the highlighted song's detail ([Details](#details)); songs only
 - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — enters a new search
-- Left/right — jump four songs at a time
+- Left/right — switches the type of results
+
+Searching by type uses the service Spotify's web player searches with. If it stops answering, the app searches the way it always did: songs, plus the artists and albums of those songs, and no playlists.
 
 **Touch gestures:**
 - **Tap a row:** selects the song; the row highlights.
@@ -217,7 +219,7 @@ Results show four songs at a time. The **bottom screen** shows the list with thu
 - **Drag beyond 8 pixels from the starting point:** commits to scrolling; the row tap is cancelled.
 
 **Search status:**
-- Before the first search, the tab offers a **"Search songs"** button.
+- Before the first search, the tab offers a **"Search songs"** button, and below it your last three searches to repeat.
 - If the search fails, press **A** (or tap the on-screen button) to retry.
 - Press **B** to cancel a pending search after the current network request finishes.
 
@@ -286,7 +288,7 @@ From a song you can open its detail, and from there its artist and album:
 - Album, artist and playlist details load in the background: **B** cancels, and if
   loading fails **A** retries.
 
-Details open from **Home** (a playlist tile), from **Search** (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> on a result) and from
+Details open from **Home** (a playlist tile), from **Search** (<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> on a song, <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> on an artist, album or playlist) and from
 **Playing** (tap the title, artist or album). A new search closes the details open in
 **Search**.
 

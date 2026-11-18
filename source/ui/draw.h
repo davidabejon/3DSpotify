@@ -66,12 +66,20 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color,
 /* The width ui_glyph() will take for `letter`. */
 int ui_glyph_width(const C2D_Text *letter);
 
+/* A D-pad glyph (5.6): the icon on `capa_alta` inside a `tinta` outline,
+ * in `texto`; inverted, `tinta` with the icon in `capa_alta`. Returns its
+ * width. */
+int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted);
+int ui_glyph_icon_width(void);
+
 /* One action of the button bar: the button's glyph and what it does. */
 typedef struct {
 	const C2D_Text *letter;
 	const C2D_Text *label;
 	u32 color;      /* the button's colour (2.5) */
 	bool inverted;  /* the button is held (6.5) */
+	/* Not NULL: a D-pad glyph with this icon instead of the letter. */
+	const C2D_Image *icon;
 } ui_hint;
 
 /* The button bar (5.6): a `capa` panel with up to four actions, left to

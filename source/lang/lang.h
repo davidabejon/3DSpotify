@@ -164,6 +164,12 @@ typedef enum {
 	STR_RESULTS_EMPTY,
 	STR_RESULTS_IDLE,
 	STR_RESULTS_RECENT,
+	/* Search results by kind: the D-pad action, and the second line of an
+	 * artist, an album or a playlist row. */
+	STR_HINT_KIND,
+	STR_RESULT_ARTIST,
+	STR_RESULT_ALBUM_FMT,
+	STR_RESULT_PLAYLIST_FMT,
 
 	/* Playback. */
 	STR_PLAYER_ART_LOADING,

@@ -832,14 +832,14 @@ static void draw_hints(const player_look *look)
 	if (a_label)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
-		                        look->glyph[GLYPH_A] };
+		                        look->glyph[GLYPH_A], NULL };
 	if (!look->offline &&
 	    (look->saved == DL_BUTTON_DOWNLOAD || look->saved == DL_BUTTON_RETRY))
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_save,
 		                        glyph_colors[GLYPH_X],
-		                        look->glyph[GLYPH_X] };
+		                        look->glyph[GLYPH_X], NULL };
 	hints[n++] = (ui_hint){ &letter_text[GLYPH_B], &hint_back,
-	                        glyph_colors[GLYPH_B], look->glyph[GLYPH_B] };
+	                        glyph_colors[GLYPH_B], look->glyph[GLYPH_B], NULL };
 	ui_button_bar(player_hints_rect(), hints, n);
 }
 

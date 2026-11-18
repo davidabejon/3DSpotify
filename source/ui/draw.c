@@ -236,14 +236,35 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color, bool inverted)
 	return w;
 }
 
+int ui_glyph_icon_width(void)
+{
+	return ICON_S + SP_1;
+}
+
+int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted)
+{
+	int w = ui_glyph_icon_width();
+	ui_rect r = { x, cy - GLYPH_H / 2, w, GLYPH_H };
+	if (inverted)
+		r = ui_rect_offset(r, 0, GLYPH_SHIFT);
+	outlined(r, inverted ? COL_TINTA : COL_CAPA_ALTA);
+	/* The icon is taller than the glyph, but its triangles keep to the
+	 * middle ten rows: centred, they sit inside the outline. */
+	ui_icon(icon, r.x + (w - ICON_S) / 2, r.y + r.h / 2 - ICON_S / 2,
+	        inverted ? COL_CAPA_ALTA : COL_TEXTO);
+	return w;
+}
+
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
 {
 	ui_panel(bar);
 	int cy = bar.y + bar.h / 2;
 	int x = bar.x + SP_2;
 	for (int i = 0; i < count; i++) {
-		x += ui_glyph(x, cy, hints[i].letter, hints[i].color,
-		              hints[i].inverted);
+		x += hints[i].icon
+		     ? ui_glyph_icon(x, cy, hints[i].icon, hints[i].inverted)
+		     : ui_glyph(x, cy, hints[i].letter, hints[i].color,
+		                hints[i].inverted);
 		if (!hints[i].label) {
 			x += SP_3;
 			continue;

@@ -232,7 +232,21 @@ void track_list_ensure_parsed(track_list *l)
 		ui_parse_fitted(&l->title[i], l->buf, l->scratch, track_name(t),
 		                TXT_CABEZA, title_width);
 		char sub[192];
-		if (is_collection(r)) {
+		if (r && r->search) {
+			/* A search result says what it is: "Artist", "Album · <its
+			 * artist>", "Playlist · <its owner>" (pathfinder gives no
+			 * year). */
+			if (r->kind == TRACK_ROW_ARTIST)
+				snprintf(sub, sizeof(sub), "%s", tr(STR_RESULT_ARTIST));
+			else if (r->kind == TRACK_ROW_ALBUM)
+				snprintf(sub, sizeof(sub), tr(STR_RESULT_ALBUM_FMT),
+				         track_artist(t));
+			else if (t->artist[0])
+				snprintf(sub, sizeof(sub), tr(STR_RESULT_PLAYLIST_FMT),
+				         t->artist);
+			else
+				snprintf(sub, sizeof(sub), "%s", tr(STR_PLAYLIST_TYPE));
+		} else if (is_collection(r)) {
 			bool album = r->kind == TRACK_ROW_ALBUM;
 			if (r->done < r->count)
 				snprintf(sub, sizeof(sub),
@@ -454,23 +468,27 @@ static void draw_number(const track_list *l, ui_rect row, int index)
 	                 box.y + box.h / 2, TXT_META, COL_TEXTO_2);
 }
 
-/* A collection's cover (5.3), with a badge, the album or playlist icon,
- * at its bottom left. Without a cover the square shows the note, as
- * everywhere (the heart for Liked Songs), and no badge over it. */
+/* A collection's or an artist's cover (5.3), with a badge, the album,
+ * playlist or user icon, at its bottom left. Without a cover the square
+ * shows the note, as everywhere (the heart for Liked Songs, the user for
+ * an artist), and no badge over it: the kind still reads without colour. */
 static void draw_collection_cover(const track_list *l, ui_rect row, int index,
                        const track_row *r)
 {
 	ui_rect box = list_thumb_rect(row);
 	C2D_Image image;
 	bool shown = thumbs_client_image(&l->thumbs, index - l->base, &image);
-	bool album = r->kind == TRACK_ROW_ALBUM;
+	int badge_icon = r->kind == TRACK_ROW_ALBUM ? ICON_ALBUM
+	               : r->kind == TRACK_ROW_ARTIST ? ICON_USER : ICON_PLAYLIST;
 	bool liked = strcmp(l->tracks[index].uri, SP_LIKED_URI) == 0;
-	ui_art_or(box, shown ? &image : NULL, liked ? ICON_HEART : ICON_NOTE);
+	ui_art_or(box, shown ? &image : NULL,
+	          liked ? ICON_HEART
+	                : r->kind == TRACK_ROW_ARTIST ? ICON_USER : ICON_NOTE);
 	if (!shown)
 		return;
 	ui_rect badge = { box.x, box.y + box.h - ICON_S, ICON_S, ICON_S };
 	ui_fill(badge, COL_TINTA);
-	C2D_Image icon = icon_image(album ? ICON_ALBUM : ICON_PLAYLIST);
+	C2D_Image icon = icon_image(badge_icon);
 	ui_icon(&icon, badge.x, badge.y, COL_TEXTO);
 }
 

@@ -1830,7 +1830,17 @@ static void search_poll(void)
 		/* The connection went while it searched. */
 		view_results_error(STR_OFFLINE_SEARCH);
 	} else if (search.result == 0) {
-		view_results_show(search.tracks, search.count, 0);
+		results_content found = {
+			.items = { search.tracks, search.artists, search.albums,
+			           search.playlists },
+			.preferred_kind = search.best_kind,
+			.preferred_index = search.best_index,
+		};
+		for (int k = 0; k < RESULT_KINDS; k++) {
+			found.count[k] = search.kind_count[k];
+			found.offered[k] = search.offered[k];
+		}
+		view_results_show(&found);
 	} else {
 		view_results_error(search_error_advice(search.error));
 	}
@@ -2065,11 +2075,43 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 	switch_tab(TAB_PLAYER);
 }
 
-/* The detail of the focused result, on the Search tab's stack. */
+/* The detail of the focused result, on the Search tab's stack: tracks
+ * only, the view offers X nowhere else. */
 static void open_result_detail(void)
 {
+	if (view_results_kind() != RESULT_TRACKS)
+		return;
 	details_open_track(TAB_SEARCH, search.tracks, search.count,
 	                   view_results_selected(), true);
+	switch_tab(TAB_SEARCH);
+}
+
+/* A on a result: a track plays; an artist, an album or a playlist opens
+ * its detail on the Search tab's stack, B coming back to the list as it
+ * was. */
+static void open_result(spotify_session *session)
+{
+	int i = view_results_selected();
+	result_kind kind = view_results_kind();
+	if (kind == RESULT_TRACKS) {
+		play_from_results(session, i);
+		return;
+	}
+	if (i < 0 || i >= search.kind_count[kind])
+		return;
+	switch (kind) {
+	case RESULT_ARTISTS:
+		details_open_artist(TAB_SEARCH, search.artists[i].uri);
+		break;
+	case RESULT_ALBUMS:
+		details_open_album(TAB_SEARCH, search.albums[i].uri);
+		break;
+	case RESULT_PLAYLISTS:
+		details_open_playlist(TAB_SEARCH, search.playlists[i].uri);
+		break;
+	default:
+		return;
+	}
 	switch_tab(TAB_SEARCH);
 }
 
@@ -2548,7 +2590,7 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 			}
 			switch (action) {
 			case RESULTS_ACTION_OPEN:
-				play_from_results(session, view_results_selected());
+				open_result(session);
 				break;
 			case RESULTS_ACTION_DETAIL:
 				open_result_detail();

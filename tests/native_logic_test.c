@@ -23,6 +23,7 @@
 #include "qrcodegen.h"
 #include "queue_logic.h"
 #include "recent_logic.h"
+#include "results_logic.h"
 #include "power_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
@@ -1169,7 +1170,7 @@ static void test_offline_rows(void)
 	assert(rows[2].kind == TRACK_ROW_TRACK && rows[2].index == 1);
 	assert(rows[3].kind == TRACK_ROW_TRACK && rows[3].index == 0);
 	for (int i = 0; i < n; i++)
-		assert(!rows[i].off);
+		assert(!rows[i].off && !rows[i].search);
 	/* Room for fewer: the first ones. */
 	assert(offline_home_rows(&idx, rows, 3, scratch, &colls) == 3);
 	assert(offline_home_rows(NULL, rows, 64, scratch, &colls) == 0 &&
@@ -1181,6 +1182,8 @@ static void test_offline_rows(void)
 	assert(rows[0].index == 2 && !rows[0].off);
 	assert(rows[1].index == 3 && rows[1].off && rows[1].state == DL_QUEUED);
 	assert(rows[2].index == 4 && rows[2].off && rows[2].state == DL_FAILED);
+	for (int i = 0; i < n; i++)
+		assert(!rows[i].search);
 	assert(offline_collection_rows(&idx, 7, rows, 64) == 0);
 
 	/* The D-pad over rows that are off: up/down to the next on, pages
@@ -4281,6 +4284,59 @@ static void test_search_derive(void)
 	assert(search_find_uri(tracks, 4, "spotify:track:t4") == -1);
 }
 
+static void test_results_kinds(void)
+{
+	results_kinds k;
+	bool all[RESULT_KINDS] = { true, true, true, true };
+	bool no_playlists[RESULT_KINDS] = { true, true, true, false };
+	int counts[RESULT_KINDS] = { 20, 0, 12, 12 };
+
+	/* The preferred kind, focused on its best result. */
+	assert(results_kinds_init(&k, all, counts, RESULT_ALBUMS, 3));
+	assert(k.active == RESULT_ALBUMS && k.selected[RESULT_ALBUMS] == 3);
+	assert(k.first[RESULT_ALBUMS] == -1 && k.selected[RESULT_TRACKS] == 0);
+	/* Out of range: the kind, from its first row. */
+	assert(results_kinds_init(&k, all, counts, RESULT_PLAYLISTS, 40));
+	assert(k.active == RESULT_PLAYLISTS && k.selected[RESULT_PLAYLISTS] == 0);
+	/* Preferred but empty, or none: the first kind with results. */
+	assert(results_kinds_init(&k, all, counts, RESULT_ARTISTS, 2));
+	assert(k.active == RESULT_TRACKS && k.selected[RESULT_TRACKS] == 0);
+	assert(results_kinds_init(&k, all, counts, -1, 0));
+	assert(k.active == RESULT_TRACKS);
+	/* Not offered (the fallback's playlists): never enabled. */
+	assert(results_kinds_init(&k, no_playlists, counts, RESULT_PLAYLISTS, 0));
+	assert(k.active == RESULT_TRACKS);
+	assert(!results_kind_enabled(&k, RESULT_PLAYLISTS));
+	assert(results_kinds_enabled(&k) == 2);
+	int none[RESULT_KINDS] = { 0, 0, 0, 0 };
+	assert(!results_kinds_init(&k, all, none, RESULT_TRACKS, 0));
+	assert(results_kinds_enabled(&k) == 0);
+	int albums_only[RESULT_KINDS] = { 0, 0, 5, 0 };
+	assert(results_kinds_init(&k, all, albums_only, -1, 0));
+	assert(k.active == RESULT_ALBUMS);
+
+	/* Steps skip what is empty, and stop at the ends without wrapping. */
+	assert(results_kinds_init(&k, all, counts, -1, 0));
+	assert(!results_kind_step(&k, -1) && k.active == RESULT_TRACKS);
+	assert(results_kind_step(&k, 1) && k.active == RESULT_ALBUMS);
+	assert(results_kind_step(&k, 1) && k.active == RESULT_PLAYLISTS);
+	assert(!results_kind_step(&k, 1) && k.active == RESULT_PLAYLISTS);
+	assert(results_kind_step(&k, -1) && k.active == RESULT_ALBUMS);
+	assert(!results_kind_step(&k, 0));
+	assert(results_kinds_init(&k, no_playlists, counts, RESULT_ALBUMS, 0));
+	assert(!results_kind_step(&k, 1) && k.active == RESULT_ALBUMS);
+
+	/* Each kind keeps where it was left. */
+	assert(results_kinds_init(&k, all, counts, -1, 0));
+	results_kind_keep(&k, 5, 2);
+	assert(results_kind_step(&k, 1));
+	results_kind_keep(&k, 7, 4);
+	assert(results_kind_step(&k, -1) && k.active == RESULT_TRACKS);
+	assert(k.selected[RESULT_TRACKS] == 5 && k.first[RESULT_TRACKS] == 2);
+	assert(k.selected[RESULT_ALBUMS] == 7 && k.first[RESULT_ALBUMS] == 4);
+	assert(k.first[RESULT_PLAYLISTS] == -1);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -4330,6 +4386,7 @@ int main(void)
 	test_pf_bodies();
 	test_pf_hash_steps();
 	test_search_derive();
+	test_results_kinds();
 	test_spotify_id();
 	test_meta_parse_track();
 	test_meta_parse_album();

@@ -288,7 +288,7 @@ void view_settings_draw_bottom(void)
 	ui_hint hints[GLYPH_COUNT];
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		hints[i] = (ui_hint){ &letter_text[i], &hint_text[i],
-		                      glyph_colors[i], look.glyph[i] };
+		                      glyph_colors[i], look.glyph[i], NULL };
 	ui_button_bar(settings_hints_rect(), hints, GLYPH_COUNT);
 
 	drawn = look;

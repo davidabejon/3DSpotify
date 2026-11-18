@@ -642,7 +642,7 @@ static void draw_hints(void)
 		hints[i] = (ui_hint){ &letter_text[glyphs[i]],
 		                      show[i] ? labels[i] : NULL,
 		                      glyph_colors[glyphs[i]],
-		                      press_down(&press_glyph[glyphs[i]]) };
+		                      press_down(&press_glyph[glyphs[i]]), NULL };
 	ui_button_bar(bar, hints, count);
 }
 

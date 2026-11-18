@@ -27,7 +27,7 @@ directamente a Spotify por HTTPS.
 
 ## Resumen
 Este repositorio contiene:
-- El cliente nativo para 3DS, con el punto de entrada en `source/main.c` y los módulos de interfaz en [source/ui](source/ui), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
+- El cliente nativo para 3DS, con el punto de entrada en `source/main.c` y los módulos de interfaz en [source/ui](source/ui), que empareja la cuenta desde la consola, busca canciones, artistas, álbumes y playlists, y reproduce audio local con carátula.
 - Probes independientes de protocolo y herramientas de build/tests en `source` y `tests`.
 
 ## Requisitos
@@ -205,20 +205,22 @@ Mientras el teclado está abierto, la canción que suena se pausa y sigue al cer
 
 ### Búsqueda
 
-Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** muestra la lista con miniaturas bajo la barra de pestañas; la superior sigue lo descrito en [Pantalla superior](#pantalla-superior).
+Una búsqueda encuentra canciones, artistas, álbumes y playlists. Los resultados muestran un tipo cada vez, cuatro filas en pantalla, y empiezan por el tipo del mejor resultado de Spotify (un artista para «the killers», un álbum para «ok computer»). La **pantalla inferior** muestra la lista con miniaturas bajo la barra de pestañas; la superior sigue lo descrito en [Pantalla superior](#pantalla-superior).
 
 **Navegación:**
-- Arriba/abajo recorre la lista; la canción resaltada gana un fondo verde más brillante.
-- Izquierda/derecha salta de cuatro en cuatro.
-- Toca una canción para resaltarla; tócala otra vez (o pulsa **A**) para reproducirla: la app pasa a la pestaña **Reproducción**.
+- Arriba/abajo recorre la lista; la fila resaltada gana un fondo verde más brillante.
+- Izquierda/derecha cambia entre Canciones, Artistas, Álbumes y Playlists. Los tipos sin resultados se saltan, y cada tipo conserva por dónde ibas al volver a él.
+- Toca una fila para resaltarla; tócala otra vez (o pulsa **A**) para abrirla: una canción se reproduce (la app pasa a la pestaña **Reproducción**); un artista, un álbum o una playlist abre su detalle ([Detalles](#detalles)).
 - Arrastra la lista con el lápiz para desplazarla; la barra del borde derecho indica por dónde vas.
 
 **Indicadores de acción:**
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — reproduce la canción resaltada
-- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Inicio
-- <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> — abre el detalle de la canción resaltada ([Detalles](#detalles))
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — reproduce la canción resaltada, o abre el artista, el álbum o la playlist resaltada
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pantalla de antes de buscar (y desde ella, a la pestaña Inicio)
+- <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> — abre el detalle de la canción resaltada ([Detalles](#detalles)); solo en canciones
 - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — inicia una nueva búsqueda
-- Izquierda/derecha — salta de cuatro en cuatro
+- Izquierda/derecha — cambia el tipo de resultados
+
+La búsqueda por tipos usa el servicio con el que busca el web player de Spotify. Si deja de responder, la app busca como siempre: canciones, más los artistas y álbumes de esas canciones, y sin playlists.
 
 **Gestos táctiles:**
 - **Tocar una fila:** selecciona la canción; la fila se resalta.
@@ -227,7 +229,7 @@ Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** mues
 - **Arrastrar más de 8 píxeles desde donde tocaste:** el arrastre se confirma; el toque de la fila se cancela.
 
 **Estado de la búsqueda:**
-- Antes de la primera búsqueda, la pestaña ofrece el botón **«Buscar canciones»**.
+- Antes de la primera búsqueda, la pestaña ofrece el botón **«Buscar canciones»** y, debajo, tus tres últimas búsquedas para repetirlas.
 - Si la búsqueda falla, pulsa **A** (o toca el botón de la pantalla) para reintentar.
 - Pulsa **B** para cancelar una búsqueda pendiente cuando termine la petición de red activa.
 

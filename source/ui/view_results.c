@@ -4,6 +4,7 @@
 #include "icons.h"
 #include "list_logic.h"
 #include "press_logic.h"
+#include "results_logic.h"
 #include "tabbar.h"
 #include "theme.h"
 #include "track_list.h"
@@ -28,16 +29,24 @@ typedef enum {
 	MODE_ERROR
 } results_mode;
 
-/* The buttons this view uses (2.5). */
-enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X", "Y" };
+/* The buttons this view uses (2.5); the D-pad's glyph is an icon. */
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_DPAD, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = {
+	"A", "B", "X", "Y", ""
+};
 static const u32 glyph_colors[GLYPH_COUNT] = {
-	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y
+	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y, 0
 };
 
-/* Content. The rows, their focus, scroll and input are the list's. */
+/* Content. The rows, their focus, scroll and input are the list's: one
+ * list, loaded with the kind on screen (results_logic.h keeps where the
+ * others were left). The kinds other than tracks draw as rows of their
+ * kind, which are the view's. */
 static results_mode mode = MODE_IDLE;
 static track_list list;
+static results_content content;
+static results_kinds kinds;
+static track_row kind_rows[RESULT_KINDS][SEARCH_ITEMS_MAX];
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
 /* Nothing searched yet: the recent searches, and the focus among the
@@ -61,7 +70,7 @@ static C2D_Text recent_label_text;
 static C2D_Text recent_text[RECENT_MAX];
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_play, hint_detail, hint_back, hint_search, hint_cancel,
-                hint_retry;
+                hint_retry, hint_open, hint_kind;
 
 /* Interaction (STYLES.md 6). `touch` is the button's, outside the list. */
 static press_state press_button;
@@ -75,6 +84,7 @@ static const press_state *pending_press;
 
 typedef struct {
 	results_mode mode;
+	result_kind kind;
 	track_list_look list;
 	bool button;
 	int idle_focus;
@@ -182,14 +192,80 @@ void view_results_cancelling(void)
 	}
 }
 
-void view_results_show(const sp_track *tracks, int n, int focus)
+/* Loads the list with the active kind, where it was left. The covers of
+ * a kind left are asked again on coming back to it: a few KB, against
+ * keeping four lists. */
+static void load_kind(void)
 {
-	track_list_set(&list, tracks, n, focus);
-	mode = list.count > 0 ? MODE_LIST : MODE_EMPTY;
+	result_kind k = kinds.active;
+	track_list_set(&list, content.items[k], kinds.count[k],
+	               kinds.selected[k]);
+	if (k != RESULT_TRACKS)
+		track_list_set_rows(&list, kind_rows[k]);
+	if (kinds.first[k] >= 0)
+		track_list_scroll_to(&list, kinds.first[k]);
+	stale = true;
+}
+
+void view_results_show(const results_content *c)
+{
+	static const uint8_t ROW_KIND[RESULT_KINDS] = {
+		TRACK_ROW_TRACK, TRACK_ROW_ARTIST, TRACK_ROW_ALBUM,
+		TRACK_ROW_PLAYLIST,
+	};
+	content = *c;
+	int count[RESULT_KINDS];
+	for (int k = 0; k < RESULT_KINDS; k++) {
+		int max = k == RESULT_TRACKS ? TRACK_LIST_WINDOW : SEARCH_ITEMS_MAX;
+		count[k] = !content.items[k] || content.count[k] < 0 ? 0
+		         : content.count[k] > max ? max : content.count[k];
+		content.count[k] = count[k];
+		for (int i = 0; k != RESULT_TRACKS && i < count[k]; i++)
+			kind_rows[k][i] = (track_row){
+				.kind = ROW_KIND[k], .state = DL_DONE, .search = true,
+				.index = (int16_t)i,
+			};
+	}
+	bool any = results_kinds_init(&kinds, content.offered, count,
+	                              content.preferred_kind,
+	                              content.preferred_index);
+	mode = any ? MODE_LIST : MODE_EMPTY;
+	if (any)
+		load_kind();
+	else
+		track_list_set(&list, NULL, 0, 0);
 	reset_interaction();
 	/* Covers now, even before the tab is on screen, unless a list on
 	 * screen has them; on screen, the list claims them anyway. */
 	track_list_offer_thumbs(&list);
+}
+
+result_kind view_results_kind(void)
+{
+	return kinds.active;
+}
+
+/* Left/right: the next kind with results that way, the one left kept
+ * where it was. False at an end. */
+static bool step_kind(int dir)
+{
+	results_kind_keep(&kinds, list.selected, list.first);
+	if (!results_kind_step(&kinds, dir))
+		return false;
+	load_kind();
+	return true;
+}
+
+/* More than one kind to switch between: the D-pad has a use. */
+static bool kinds_switch(void)
+{
+	return mode == MODE_LIST && results_kinds_enabled(&kinds) > 1;
+}
+
+/* The tracks are what X opens a detail of. */
+static bool on_tracks(void)
+{
+	return mode == MODE_LIST && kinds.active == RESULT_TRACKS;
 }
 
 void view_results_error(str_id help)
@@ -250,6 +326,8 @@ static void parse_static(void)
 	parse(&hint_search, static_buf, tr(STR_HINT_SEARCH));
 	parse(&hint_cancel, static_buf, tr(STR_HINT_CANCEL));
 	parse(&hint_retry, static_buf, tr(STR_HINT_RETRY));
+	parse(&hint_open, static_buf, tr(STR_HINT_OPEN));
+	parse(&hint_kind, static_buf, tr(STR_HINT_KIND));
 }
 
 static void ensure_parsed(void)
@@ -268,6 +346,7 @@ static results_look current_look(void)
 {
 	results_look look = {
 		.mode = mode,
+		.kind = kinds.active,
 		.list = track_list_get_look(&list),
 		.button = press_down(&press_button),
 		.idle_focus = idle_focus,
@@ -285,7 +364,8 @@ static results_look current_look(void)
 
 static bool same_look(const results_look *a, const results_look *b)
 {
-	if (a->mode != b->mode || !track_list_same_look(&a->list, &b->list) ||
+	if (a->mode != b->mode || a->kind != b->kind ||
+	    !track_list_same_look(&a->list, &b->list) ||
 	    a->button != b->button || a->idle_focus != b->idle_focus ||
 	    a->bubble != b->bubble || a->loader_step != b->loader_step ||
 	    a->cancelling != b->cancelling)
@@ -370,6 +450,8 @@ static void release_keys(u32 up)
 		press_end(&press_glyph[GLYPH_X]);
 	if (up & KEY_Y)
 		press_end(&press_glyph[GLYPH_Y]);
+	if (up & (KEY_LEFT | KEY_RIGHT))
+		press_end(&press_glyph[GLYPH_DPAD]);
 }
 
 /* Returns true while the stylus owns the input: the list's rows, or the
@@ -464,20 +546,30 @@ results_action view_results_update(u32 down)
 	if (handle_touch(down, held, up) || pending != RESULTS_ACTION_NONE)
 		return RESULTS_ACTION_NONE;
 
-	if (mode == MODE_LIST &&
-	    track_list_realign(&list, down, KEY_A | KEY_X)) {
+	u32 confirm = KEY_A | (on_tracks() ? KEY_X : 0);
+	if (mode == MODE_LIST && track_list_realign(&list, down, confirm)) {
 		/* 6.6: with the focus dragged out of view, the first button press
-		 * only brings the list back to it, on whole rows. A and X still
-		 * show their glyph pressed, but act on nothing they cannot see. */
+		 * only brings the list back to it, on whole rows -- left/right
+		 * too, before they switch the kind. A and X still show their
+		 * glyph pressed, but act on nothing they cannot see. */
 		if (down & KEY_A)
 			press_begin(&press_glyph[GLYPH_A]);
-		if (down & KEY_X)
+		if (down & confirm & KEY_X)
 			press_begin(&press_glyph[GLYPH_X]);
+		if (down & (KEY_LEFT | KEY_RIGHT))
+			press_begin(&press_glyph[GLYPH_DPAD]);
 		return RESULTS_ACTION_NONE;
 	}
 
+	if (mode == MODE_LIST && (down & (KEY_LEFT | KEY_RIGHT))) {
+		/* The kind, without wrapping: at an end nothing moves and the
+		 * glyph held is all the answer (STYLES.md 6.6, 7.4). */
+		press_begin(&press_glyph[GLYPH_DPAD]);
+		step_kind((down & KEY_LEFT) ? -1 : 1);
+		return RESULTS_ACTION_NONE;
+	}
 	if (mode == MODE_LIST)
-		track_list_navigate(&list, down);
+		track_list_navigate(&list, down & (KEY_UP | KEY_DOWN));
 	if (has_recent()) {
 		if ((down & KEY_UP) && idle_focus > 0)
 			idle_focus--;
@@ -496,7 +588,7 @@ results_action view_results_update(u32 down)
 		} else {
 			press_key(GLYPH_A, button_action(), &press_button);
 		}
-	} else if ((down & KEY_X) && mode == MODE_LIST) {
+	} else if ((down & KEY_X) && on_tracks()) {
 		press_key(GLYPH_X, RESULTS_ACTION_DETAIL, NULL);
 	} else if (down & KEY_B) {
 		press_key(GLYPH_B, back_action(), NULL);
@@ -521,11 +613,18 @@ bool view_results_dirty(void)
 
 /* --- Drawing ----------------------------------------------------------- */
 
+/* At most four actions (5.6). On the tracks, with kinds to switch:
+ * Play, Detail, Type, Search -- B still goes back, as on the home grid,
+ * which does not list it either. On the other kinds: Open, Type, Search,
+ * Back. */
 static void draw_bar(const results_look *look)
 {
 	ui_hint hints[4];
 	int n = 0;
 	const C2D_Text *a_label = NULL;
+	bool tracks = mode == MODE_LIST && look->kind == RESULT_TRACKS;
+	bool switches = kinds_switch();
+	C2D_Image dpad = icon_image(ICON_DPAD_LR);
 	switch (mode) {
 	case MODE_SEARCHING:
 		break;
@@ -533,7 +632,7 @@ static void draw_bar(const results_look *look)
 		a_label = &hint_search;
 		break;
 	case MODE_LIST:
-		a_label = &hint_play;
+		a_label = tracks ? &hint_play : &hint_open;
 		break;
 	case MODE_EMPTY:
 		a_label = &hint_search;
@@ -545,20 +644,25 @@ static void draw_bar(const results_look *look)
 	if (a_label)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
-		                        look->glyph[GLYPH_A] };
-	if (mode == MODE_LIST)
+		                        look->glyph[GLYPH_A], NULL };
+	if (tracks)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_detail,
 		                        glyph_colors[GLYPH_X],
-		                        look->glyph[GLYPH_X] };
+		                        look->glyph[GLYPH_X], NULL };
+	if (switches)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_DPAD], &hint_kind,
+		                        glyph_colors[GLYPH_DPAD],
+		                        look->glyph[GLYPH_DPAD], &dpad };
 	if (mode == MODE_LIST || mode == MODE_ERROR)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_Y], &hint_search,
 		                        glyph_colors[GLYPH_Y],
-		                        look->glyph[GLYPH_Y] };
-	hints[n++] = (ui_hint){ &letter_text[GLYPH_B],
-	                        mode == MODE_SEARCHING ? &hint_cancel
-	                                               : &hint_back,
-	                        glyph_colors[GLYPH_B],
-	                        look->glyph[GLYPH_B] };
+		                        look->glyph[GLYPH_Y], NULL };
+	if (n < 4)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_B],
+		                        mode == MODE_SEARCHING ? &hint_cancel
+		                                               : &hint_back,
+		                        glyph_colors[GLYPH_B],
+		                        look->glyph[GLYPH_B], NULL };
 	ui_button_bar(list_hints_rect(), hints, n);
 }
 

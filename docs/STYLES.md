@@ -227,12 +227,17 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
   (1, 2, 3…, continua entre discos) en `t_meta` · `texto_2`, centrada. También en la fila en
   foco: el cuadrado sigue siendo `capa_alta` y `tinta` sobre él apenas se leería. Sin
   descarga de miniaturas.
-- Variante de colección (Descargas, §7.14): un álbum o una playlist entre canciones. Con
-  portada, en su esquina inferior izquierda una insignia: el icono de disco o de líneas
-  (16 px, `texto` sobre `tinta`); sin portada, la nota de siempre y sin insignia. La segunda
-  línea dice «Álbum · Canciones: 12» o «Playlist · 8 de 40», y a la derecha va un chevron
-  `>` en lugar de la duración: A la abre, no la reproduce. Se distingue de una canción sin
-  depender del color, y los estados de foco no cambian.
+- Variante de colección o artista (Descargas, §7.14, y resultados, §7.4): un álbum, una
+  playlist o un artista. Con portada (o retrato), en su esquina inferior izquierda una
+  insignia: el icono de disco, de líneas o de cuenta (16 px, `texto` sobre `tinta`); sin
+  ella, la nota de siempre sin insignia, salvo el artista, que lleva el icono de cuenta
+  centrado en lugar de la nota. A la derecha va un chevron `>` en lugar de la duración: A la
+  abre, no la reproduce. Se distingue de una canción sin depender del color, y los estados de
+  foco no cambian.
+- Segunda línea de la variante de colección: en Descargas, lo descargado («Álbum ·
+  Canciones: 12», «Playlist · 8 de 40»); en resultados, qué es: «Artista», «Álbum ·
+  <artista>» o «Playlist · <propietario>» («Playlist» sin propietario). Sin año: el
+  servicio de búsqueda no lo da.
 - Variante sin descargar (colección descargada, §7.14): título, artista y número en
   `texto_off`, y a la derecha, en lugar de la duración, el icono de su estado (reloj en
   cola, error si falló). No toma el foco ni responde al toque.
@@ -271,6 +276,10 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Cada acción: glifo + etiqueta `t_meta` · `texto_2`.
 - Glifo: rectángulo de 14 px de alto, relleno con el color del botón (§2.5), contorno 1 px
   `tinta`, letra en `tinta`. START y SELECT no tienen color propio: relleno `texto_2`.
+- Glifo de la cruceta: el mismo rectángulo, 20 px de ancho, relleno `capa_alta` con el
+  icono de la cruceta (§5.10) en `texto`; invertido (§6.5), relleno `tinta` e icono
+  `capa_alta`. El icono mide 16 px, pero sus triángulos ocupan las 10 filas centrales y caben
+  dentro del contorno.
 - Máximo cuatro acciones. Si no caben en el ancho, se quitan etiquetas desde la última y
   quedan solo sus glifos.
 
@@ -311,8 +320,9 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Conjunto: reproducir, pausa, anterior, siguiente, volumen, buscar, cuenta, Wi-Fi, error,
   aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador), ajustes
   (engranaje), aleatorio (dos flechas cruzadas) y, para las descargas, descargar (flecha a
-  una bandeja), descargada (check), en cola (reloj), álbum (disco), playlist (líneas) y
-  sin conexión (Wi-Fi tachado).
+  una bandeja), descargada (check), en cola (reloj), álbum (disco), playlist (líneas),
+  sin conexión (Wi-Fi tachado) y cruceta izquierda/derecha (dos triángulos opuestos, para la
+  barra de botones).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 - El logotipo no es un icono: se carga en tiempo de ejecución desde `romfs:/gfx/logo.png`
   (directorio `romfs/` del repositorio, empaquetado en el `.3dsx` y el `.cia`). PNG RGBA de
@@ -519,15 +529,17 @@ Duración:
 - El desplazamiento de la lista se aplica sin transición.
 - Si un arrastre dejó filas cortadas (§6.9), la pulsación ajusta antes la lista a filas
   enteras: con botones siempre se ven 4 filas completas.
-- En la lista de resultados, izquierda/derecha saltan 4 filas. L/R son de la barra de
+- En la lista de resultados, izquierda/derecha cambian de tipo (§7.4): sin dar la vuelta y
+  saltando los tipos vacíos. En el extremo no pasa nada y el glifo de la cruceta se invierte
+  mientras se pulsa. En las demás listas de 1 columna saltan 4 filas. L/R son de la barra de
   pestañas.
 - Si además la fila en foco quedó cortada o fuera de la vista, esa primera pulsación (cruceta,
-  A o X) solo devuelve la lista a ella: no mueve el foco, ni reproduce, ni abre el detalle.
+  A o X) solo devuelve la lista a ella: no mueve el foco, ni cambia de tipo, ni reproduce, ni
+  abre el detalle.
   A y X muestran igualmente su glifo pulsado (§6.5).
 - En una rejilla de teselas (§5.16), arriba/abajo cambian de fila y conservan la columna (si
   la fila de destino es más corta, al último de esa fila); izquierda/derecha cambian de
-  columna dentro de la fila. Con 1 columna, izquierda/derecha saltan una página, como en
-  resultados. En los bordes no hay vuelta: la tesela se desplaza 3 px hacia ese lado durante
+  columna dentro de la fila. Con 1 columna, izquierda/derecha saltan una página. En los bordes no hay vuelta: la tesela se desplaza 3 px hacia ese lado durante
   6 frames.
 
 ### 6.7 Volumen
@@ -665,44 +677,65 @@ Error:
 ### 7.4 Resultados
 
 ```
- SUPERIOR                                  INFERIOR
- ┌────────────────────────────────┐        ┌──────────────────────────┐
- │ Resultados: "rock"   1-4 de 24 │        │ [⌂] [▓⌕▓] [▮▮▮] [⚙]      │ 32 px
- │ ┌────────────────────────────┐ │        │┌───────────────────────┐▓│
- │ │ Título de la fila en foco  │ │        ││┌──┐ Canción uno  3:42 │▓│
- │ │ Artista                    │ │        ││└──┘ Artista           │░│ 4 filas
- │ │ Álbum                      │ │        │└───────────────────────┘░│ × 41 px
- │ │ 3:42                       │ │        │ ...                     ░│
- │ └────────────────────────────┘ │        │──────────────────────────│
- └────────────────────────────────┘        │ [A] Reprod. [X] Detalle [Y]│ 24 px
-                                           └──────────────────────────┘
+ INFERIOR
+ ┌──────────────────────────┐
+ │ [⌂] [▓⌕▓] [▮▮▮] [⚙]      │ 32 px
+ │┌───────────────────────┐▓│
+ ││┌──┐ Hot Fuss         > │▓│
+ ││└──┘ Álbum · The Killers│░│ 4 filas
+ │└───────────────────────┘░│ × 41 px
+ │ ...                     ░│
+ │──────────────────────────│
+ │ [A] Abrir [◀▶] Tipo [Y]… │ 24 px
+ └──────────────────────────┘
 ```
 
 - Inferior: barra de pestañas de 32 px (§5.12) con «Búsqueda» activa, 4 filas de 41 px con
   miniatura (§5.3) separadas 4 px, barra de botones. La primera fila queda a 4 px de la barra
   de pestañas y la última a 4 px de la barra de botones: 4 + 4 × 41 + 3 × 4 + 4 = 184 px,
-  exactamente el espacio entre las barras.
-- Superior: título `t_cabeza` · `texto` («Resultados: "consulta"») a la izquierda y rango
-  visible («1-4 de 24») en `t_meta` · `texto_2` a la derecha, en la misma línea.
-- Antes de la primera búsqueda: mensaje centrado «Todavía no has buscado nada» y botón
-  primario «Buscar canciones».
+  exactamente el espacio entre las barras. Fijar `RESULTS_PER_PAGE` a 4.
+- Superior: lo mismo que en cualquier pestaña (el logotipo, o la ficha de lo que suena); con
+  un detalle abierto, su ficha (§7.12).
+- **Antes de buscar:** mensaje centrado «Todavía no has buscado nada» y botón primario
+  «Buscar canciones». Si hay búsquedas recientes (las 3 últimas, guardadas en la
+  configuración), en lugar del mensaje: el botón, debajo la etiqueta «Búsquedas recientes»
+  en `t_meta` · `texto_2` y una fila por búsqueda con el icono de buscar, con el estilo de
+  foco de las listas. Arriba/abajo pasan del botón a ellas; A o un toque repite esa búsqueda.
+  B vuelve a «Inicio».
+- **Buscando:** filas vacías con la forma de la lista y la burbuja de espera «Buscando…»
+  (§5.9). La búsqueda corre en segundo plano: se puede cambiar de pestaña mientras tanto. B
+  la cancela desde su pestaña y vuelve a «Inicio».
+- **Tipos:** Canciones, Artistas, Álbumes y Playlists, en ese orden fijo y nunca mezclados:
+  la lista muestra un tipo cada vez. Si la búsqueda va por el respaldo (la de siempre, cuando
+  el servicio por tipos no responde), hay 3 tipos: sin Playlists, y artistas y álbumes salen
+  de las canciones encontradas.
+- **Tipo inicial:** el del mejor resultado de Spotify, con el foco en él. Sin mejor
+  resultado (respaldo), Canciones; si un tipo no tiene resultados, el primero que tenga.
+- **Cambio de tipo:** izquierda/derecha (§6.6), sin dar la vuelta y saltando los tipos sin
+  resultados. Cada tipo conserva su foco y su desplazamiento: al volver a él, la lista está
+  como se dejó. Arriba/abajo mueven el foco; no hay saltos de 4 filas. No hay control táctil
+  para el tipo; el táctil enfoca, abre y arrastra como siempre.
 - Desplazamiento continuo: la lista se mueve lo justo para mantener visible la fila en foco.
-  Izquierda/derecha saltan 4 filas. Fijar `RESULTS_PER_PAGE` a 4.
-- Táctil: tocar una fila la pone en foco; tocar la fila en foco la reproduce; arrastrar
-  desplaza la lista (§6.9).
-- Indicador de desplazamiento (§5.11) a la derecha, cuando hay más de 4 resultados.
-- A, o tocar la fila en foco, pasa a la pestaña «Reproducción» con esa canción. No hay
-  pantalla intermedia de canción seleccionada. Una canción suelta no trae lista: la cola es
-  ella y una radio a partir de ella (§7.5).
-- X abre el detalle de la canción en foco (§7.10): es un camino adicional, A sigue sin
-  pantalla intermedia. Barra de botones: `[A] Reproducir [X] Detalle [Y] Buscar [B] Volver`.
+  Táctil: tocar una fila la pone en foco; tocar la fila en foco la abre; arrastrar desplaza la
+  lista (§6.9). Indicador de desplazamiento (§5.11) cuando hay más de 4 filas.
+- **Acciones:**
+  - Canción: A, o tocarla en foco, pasa a «Reproducción» con ella, sin pantalla intermedia.
+    Una canción suelta no trae lista: la cola es ella y una radio a partir de ella (§7.5). X
+    abre su detalle (§7.10).
+  - Artista, álbum o playlist: A, o tocarlo en foco, abre su detalle (§7.11) en la pila de
+    «Búsqueda»; B vuelve a la lista tal cual. X no hace nada.
+- **Barra de botones** (cuatro acciones como mucho, §5.6):
+  - Canciones: `[A] Reproducir [X] Detalle [◀▶] Tipo [Y] Buscar`. «Volver» no cabe y B
+    funciona igual, como en la rejilla de «Inicio».
+  - Otros tipos: `[A] Abrir [◀▶] Tipo [Y] Buscar [B] Volver`.
+  - Con un solo tipo con resultados no hay `[◀▶] Tipo`, y en Canciones vuelve `[B] Volver`.
+- **Vacío:** solo cuando ningún tipo tiene resultados: mensaje centrado «No se encontraron
+  resultados» y botón primario «Buscar otra cosa».
+- **Error:** aviso de error (§5.8) con el consejo según la causa y botón «Reintentar».
+- B en resultados, vacío o error vuelve a la pantalla de antes de buscar.
 - Lanzar una búsqueda nueva cierra los detalles abiertos en «Búsqueda».
-- La búsqueda corre en segundo plano: se puede cambiar de pestaña mientras tanto. B la
-  cancela desde su pestaña y vuelve a «Inicio».
-- B vuelve a «Inicio».
-- Superior: lo mismo que en cualquier pestaña (el logotipo, o la ficha de lo que suena); con un
-  detalle abierto, su ficha (§7.12).
-- El teclado (`swkbd`) se deja con el aspecto del sistema.
+- El teclado (`swkbd`) se deja con el aspecto del sistema; su texto de ayuda dice «Canción,
+  artista, álbum o playlist».
 
 ### 7.5 Reproductor
 

@@ -782,7 +782,7 @@ static void draw_entry(int i, const dlv_look *look)
 static ui_hint hint(int glyph, const C2D_Text *label, const dlv_look *look)
 {
 	return (ui_hint){ &letter_text[glyph], label, glyph_colors[glyph],
-	                  look->glyph[glyph] };
+	                  look->glyph[glyph], NULL };
 }
 
 static void draw_bar(const dlv_look *look)

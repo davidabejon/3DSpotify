@@ -920,7 +920,7 @@ static void draw_header(const detail_look *look)
 static ui_hint hint(int glyph, const C2D_Text *label, const detail_look *look)
 {
 	return (ui_hint){ &letter_text[glyph], label, glyph_colors[glyph],
-	                  look->glyph[glyph] };
+	                  look->glyph[glyph], NULL };
 }
 
 static void draw_bar(const detail_look *look)

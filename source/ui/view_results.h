@@ -1,6 +1,8 @@
 /* The results view, the Search tab (docs/STYLES.md 5.3 and 7.4): nothing
- * searched yet, the search in progress, the list of tracks, no results, or
- * the error, all in one view. Nothing searched yet suggests the last
+ * searched yet, the search in progress, the results, no results, or the
+ * error, all in one view. The results come by kind (results_logic.h):
+ * tracks, artists, albums and playlists, one kind on screen at a time,
+ * switched with left/right. Nothing searched yet suggests the last
  * searches (recent_logic.h) under the search button, when there are any.
  *
  * Bottom screen: under the tab bar (tabbar.h, drawn by the caller), 4 rows
@@ -12,9 +14,9 @@
  * Input follows STYLES.md 6: pressed states for at least ANIM_PRESS_MIN
  * frames, touch acts on lifting the stylus (tapping a row focuses it,
  * tapping the focused row plays it), dragging scrolls the list (6.9) next
- * to a scroll indicator against the right edge (5.11), A/B/X/Y invert
- * their glyph, and the
- * actions that leave the view are returned once the pressed state has been
+ * to a scroll indicator against the right edge (5.11), up/down move the
+ * focus and left/right switch the kind (6.6, no wrapping), A/B/X/Y and
+ * the D-pad invert their glyph, and the actions that leave the view are returned once the pressed state has been
  * seen. Text is parsed when the content, the scroll position or the
  * language changes, never per frame. Main thread only. */
 #ifndef VIEW_RESULTS_H
@@ -22,6 +24,7 @@
 
 #include "lang.h"
 #include "recent_logic.h"
+#include "search_results.h"
 #include "spclient.h"
 
 #include <3ds.h>
@@ -30,10 +33,11 @@
 
 typedef enum {
 	RESULTS_ACTION_NONE,
-	/* A or a tap on the focused row: play view_results_selected(). */
+	/* A or a tap on the focused row: play view_results_selected() of the
+	 * tracks, or open the artist, album or playlist (view_results_kind). */
 	RESULTS_ACTION_OPEN,
-	/* X: the detail of view_results_selected(). Playing stays with A,
-	 * with no screen in between (STYLES.md 7.4). */
+	/* X, on the tracks only: the detail of view_results_selected().
+	 * Playing stays with A, with no screen in between (STYLES.md 7.4). */
 	RESULTS_ACTION_DETAIL,
 	/* B with nothing searched yet: back to the Home tab. */
 	RESULTS_ACTION_BACK,
@@ -70,15 +74,26 @@ const char *view_results_recent_query(void);
 void view_results_searching(void);
 void view_results_cancelling(void);
 
-/* The finished search: `count` tracks (0 for the empty state), `selected`
- * focused and scrolled into view. `tracks` must stay valid while the view
- * is shown. */
-void view_results_show(const sp_track *tracks, int count, int selected);
+/* A finished search, every kind of it. `items` must stay valid while the
+ * view is shown; the tracks are playable sp_tracks, the other kinds rows
+ * as search_results.h fills them. */
+typedef struct {
+	const sp_track *items[RESULT_KINDS];
+	int  count[RESULT_KINDS];
+	bool offered[RESULT_KINDS];   /* the fallback offers no playlists */
+	int  preferred_kind;          /* the best result's kind, -1: none */
+	int  preferred_index;         /* and its row */
+} results_content;
+
+/* The finished search, on its preferred kind (else the first with
+ * results), or the empty state when no kind has any. */
+void view_results_show(const results_content *c);
 
 /* The search failed: `advice` says what to do about it. */
 void view_results_error(str_id advice);
 
-/* The focused track. */
+/* The kind on screen, and the focused row within it. */
+result_kind view_results_kind(void);
 int view_results_selected(void);
 
 /* Switching to the tab: no press or drag carries over. */

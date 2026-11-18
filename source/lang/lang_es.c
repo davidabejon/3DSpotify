@@ -123,7 +123,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_PAIR_OFFLINE] = "Sin conexión, reintentando...",
 
 	/* Búsqueda. */
-	[STR_SEARCH_HINT] = "Nombre de canción o artista",
+	[STR_SEARCH_HINT] = "Canción, artista, álbum o playlist",
 	[STR_SEARCH_CANCELLING] = "Cancelando al terminar la solicitud...",
 	[STR_SEARCH_FAILED_TITLE] = "La búsqueda falló",
 	[STR_SEARCH_HTTP_401] = "La sesión fue rechazada. Vuelve a conectar desde Ajustes.",
@@ -134,9 +134,13 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_ERR_SEARCH_THREAD] = "No se pudo iniciar la tarea de búsqueda.",
 	[STR_ERR_DETAIL_CONNECT_FMT] = "Sin conexión con %s.",
 	[STR_ERR_DETAIL_THREAD] = "No se pudo iniciar la tarea de carga.",
-	[STR_RESULTS_EMPTY] = "No se encontraron canciones.",
+	[STR_RESULTS_EMPTY] = "No se encontraron resultados.",
 	[STR_RESULTS_IDLE] = "Todavía no has buscado nada.",
 	[STR_RESULTS_RECENT] = "Búsquedas recientes",
+	[STR_HINT_KIND] = "Tipo",
+	[STR_RESULT_ARTIST] = "Artista",
+	[STR_RESULT_ALBUM_FMT] = "Álbum · %s",
+	[STR_RESULT_PLAYLIST_FMT] = "Playlist · %s",
 
 	/* Reproducción. */
 	[STR_PLAYER_ART_LOADING] = "Cargando carátula...",

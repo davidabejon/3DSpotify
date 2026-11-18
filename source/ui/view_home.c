@@ -674,15 +674,15 @@ static void draw_bar(const home_look *look)
 	if (a_label)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
-		                        look->glyph[GLYPH_A] };
+		                        look->glyph[GLYPH_A], NULL };
 	if (mode != MODE_EMPTY)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_Y], &hint_search,
 		                        glyph_colors[GLYPH_Y],
-		                        look->glyph[GLYPH_Y] };
+		                        look->glyph[GLYPH_Y], NULL };
 	if (mode == MODE_MORE)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_B], &hint_back,
 		                        glyph_colors[GLYPH_B],
-		                        look->glyph[GLYPH_B] };
+		                        look->glyph[GLYPH_B], NULL };
 	ui_button_bar(home_hints_rect(), hints, n);
 }
 
