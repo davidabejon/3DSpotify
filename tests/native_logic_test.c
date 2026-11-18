@@ -3168,7 +3168,7 @@ static void test_login_layout(void)
 	/* Its 1 px outline and hard shadow on screen and off the bar. */
 	assert(qr.x - OUTLINE_W >= 0 && qr.y - OUTLINE_W >= 0);
 	assert(qr.y + qr.h + OUTLINE_W + SHADOW_OFF + SP_1 <= hints.y);
-	/* Centred in the content height (feature_plan.md: y 34). */
+	/* Centred in the content height (STYLES.md 7.3: y 34). */
 	assert(qr.y == 34 && qr.y * 2 + qr.h == hints.y);
 	ui_rect side = login_pair_side_rect();
 	assert(inside_screen(side, SCREEN_BOTTOM_W));

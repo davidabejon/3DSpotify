@@ -165,6 +165,10 @@ pestañas, cada una con su icono:
   ficha: la carátula o el retrato, el nombre y hasta cuatro líneas (artista, álbum,
   duración y número de pista, año, sello…). Una línea demasiado larga se desplaza de
   lado para poder leerla entera.
+- Con resultados de búsqueda en pantalla, la pestaña **Búsqueda** muestra una franja
+  con los tipos de resultado y cuántos hay de cada uno, con el que está en pantalla
+  resaltado, y debajo la ficha del resultado resaltado (su portada o retrato llega
+  cuando te paras un momento en él).
 
 ### Inicio
 
@@ -379,6 +383,7 @@ anteriores (por ejemplo, los últimos probes usan el token que guarda
 | `probe_meta` | La cadena completa de inicio de sesión y la lectura de la biblioteca y los metadatos de una canción. |
 | `probe_audio` | La decodificación de Ogg Vorbis y su reproducción por NDSP (lee `test.ogg`; sin red). |
 | `probe_play` | Una canción de principio a fin: clave de audio, descarga, descifrado y reproducción. |
+| `probe_search` | La búsqueda por tipos mediante el servicio del web player de Spotify: cómo encontrar el hash de sus consultas en open.spotify.com, las cabeceras que acepta, la forma y los tiempos de cada tipo de resultado, un hash caducado, y la búsqueda de siempre para comparar. Escribe `probe_search.log` y las respuestas (`probe_search_*.json`, con el nombre de usuario tapado) junto al `.3dsx`. |
 
 Compila uno con `--app`, por ejemplo:
 

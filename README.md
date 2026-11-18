@@ -159,6 +159,10 @@ icon:
   the cover or portrait, the name and up to four lines (artist, album, length and
   track number, year, label…). A line too long to fit scrolls sideways so it can be
   read in full.
+- With search results on screen, the **Search** tab shows a strip of the result
+  types with how many of each were found, the one on screen highlighted, and below it
+  the card of the highlighted result (its cover or portrait arrives once you stop on it
+  for a moment).
 
 ### Home
 
@@ -364,6 +368,7 @@ problem.
 | `probe_meta` | The full sign-in chain, then reading the library and a track's metadata. |
 | `probe_audio` | Decoding Ogg Vorbis and playing it through NDSP (reads `test.ogg`; no network). |
 | `probe_play` | One track end to end: every audio file it offers, audio key, download, decryption and playback. Reads the track from `spotify-play-uri.txt` (a URI or share link) next to the `.3dsx` when present. |
+| `probe_search` | Search by type through the service Spotify's web player uses: finding its query hash on open.spotify.com, the headers it accepts, the shape and timing of every kind of result, a stale hash, and today's search for comparison. Writes `probe_search.log` and the replies (`probe_search_*.json`, with the username blotted out) beside the `.3dsx`. |
 
 Build one with `--app`, for example:
 
