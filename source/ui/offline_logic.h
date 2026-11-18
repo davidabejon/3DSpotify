@@ -34,19 +34,31 @@ typedef enum {
 	TRACK_ROW_TRACK,
 	TRACK_ROW_ALBUM,
 	TRACK_ROW_PLAYLIST,
-	TRACK_ROW_ARTIST       /* a search result only */
+	TRACK_ROW_ARTIST,      /* a search result only */
+	TRACK_ROW_HEADER       /* a section's title: `index` is its str_id */
 } track_row_kind;
 
-/* One row of a list that is not only playable tracks: the downloads, or
- * the search results of a kind other than tracks. */
+/* One row of a list that is not only playable tracks: the downloads, the
+ * search results of a kind other than tracks, or an artist's sections. */
 typedef struct {
 	uint8_t kind;      /* track_row_kind */
 	uint8_t state;     /* a track's dl_state */
-	bool    off;       /* not on the card: shown dimmed, never focused */
+	/* Not on the card, or a section's header: never focused. A track off
+	 * shows dimmed. */
+	bool    off;
 	/* A search result: the second line says what it is ("Album · ..."),
 	 * not what is downloaded of it. */
 	bool    search;
-	int16_t index;     /* into idx->tracks or idx->colls */
+	/* A release of an artist's discography: the second line says its type
+	 * and year ("Album · 2004"). */
+	bool    release;
+	uint8_t album_type;    /* a release's SP_ALBUM_* */
+	/* A header with a square button at its right (an artist's biography):
+	 * the button takes the focus and A, so the header is not off. */
+	bool    button;
+	/* Into idx->tracks or idx->colls; an artist's track or release; a
+	 * header's str_id. */
+	int16_t index;
 	int16_t done, count;   /* a collection's tracks on the card, in all */
 } track_row;
 
@@ -88,6 +100,9 @@ static inline int offline_home_rows(const dl_index *idx, track_row *rows,
 		r->state = DL_DONE;
 		r->off = false;
 		r->search = false;
+		r->release = false;
+		r->album_type = 0;
+		r->button = false;
 		r->index = (int16_t)c;
 		r->done = (int16_t)done;
 		r->count = (int16_t)count;
@@ -105,6 +120,9 @@ static inline int offline_home_rows(const dl_index *idx, track_row *rows,
 		r->state = DL_DONE;
 		r->off = false;
 		r->search = false;
+		r->release = false;
+		r->album_type = 0;
+		r->button = false;
 		r->index = scratch[i].index;
 		r->done = r->count = 0;
 	}
@@ -127,6 +145,9 @@ static inline int offline_collection_rows(const dl_index *idx, int c,
 		r->state = (uint8_t)idx->tracks[t].state;
 		r->off = idx->tracks[t].state != DL_DONE;
 		r->search = false;
+		r->release = false;
+		r->album_type = 0;
+		r->button = false;
 		r->index = (int16_t)t;
 		r->done = r->count = 0;
 	}
@@ -180,6 +201,39 @@ static inline int track_row_first_on(const track_row *rows, int count,
 		if (track_row_on(rows, i))
 			return i;
 	return -1;
+}
+
+/* The first visible row once the focus is on `selected`: a section's
+ * first row brings its header into view with it (STYLES.md 6.6), so a
+ * header just above the focus is never left out at the top. Any other
+ * `first` stays. */
+static inline int track_row_show_header(const track_row *rows, int count,
+                                        int selected, int first)
+{
+	if (!rows || selected <= 0 || selected >= count)
+		return first;
+	int above = selected - 1;
+	if (rows[above].kind == TRACK_ROW_HEADER && first > above)
+		return above;
+	return first;
+}
+
+/* The playable span of a list with rows: the first run of track rows,
+ * whether on the card or not (the collections before the Downloads'
+ * tracks, the header and the discography around an artist's). Returns
+ * how many, with `*first` where they start; 0 for none. */
+static inline int track_row_track_span(const track_row *rows, int count,
+                                       int *first)
+{
+	*first = 0;
+	int i = 0;
+	while (i < count && rows[i].kind != TRACK_ROW_TRACK)
+		i++;
+	int n = 0;
+	while (i + n < count && rows[i + n].kind == TRACK_ROW_TRACK)
+		n++;
+	*first = n ? i : 0;
+	return n;
 }
 
 /* The home grid: feed item `i` (0 is Liked Songs) goes to tile `i` for

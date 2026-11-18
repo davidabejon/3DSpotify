@@ -350,18 +350,17 @@ static bool slice_to_buf(const char *p, size_t len, char *buf, size_t cap)
 	return true;
 }
 
-static int metadata_batch_request(const char *host, http_session *sess,
-                                  const char *token,
-                                  const char *const *uris, int n,
-                                  sp_track *out, char *err, size_t errlen)
+/* `n` entities of one kind in one extended-metadata request. On 0, `r`
+ * holds a 200 answer and the caller frees it. */
+static int batch_post(const char *host, http_session *sess,
+                      const char *token, int kind,
+                      const char *const *uris, int n, http_reply *out,
+                      char *err, size_t errlen)
 {
-	if (n <= 0)
-		return 0;
-
 	uint8_t q_store[16];
 	pb q;
 	pb_init(&q, q_store, sizeof(q_store));
-	pb_varint(&q, 1, EXT_KIND_TRACK_V4);
+	pb_varint(&q, 1, (uint64_t)kind);
 
 	size_t cap = (size_t)n * 128 + 64;
 	uint8_t *req_store = malloc(cap);
@@ -385,24 +384,37 @@ static int metadata_batch_request(const char *host, http_session *sess,
 		return -1;
 	}
 
-	http_reply r;
 	int rc = sess
 	    ? http_session_request(sess, "/extended-metadata/v0/extended-metadata",
 	                           "POST", token, "application/x-protobuf",
-	                           "application/x-protobuf", req.p, req.len, 0, &r)
+	                           "application/x-protobuf", req.p, req.len, 0, out)
 	    : http_request(host, "/extended-metadata/v0/extended-metadata", "POST",
 	                   token, "application/x-protobuf", "application/x-protobuf",
-	                   req.p, req.len, 0, &r);
+	                   req.p, req.len, 0, out);
 	free(req_store);
 	if (rc != 0) {
-		snprintf(err, errlen, "metadata batch: %s", r.err);
+		snprintf(err, errlen, "metadata batch: %s", out->err);
 		return -1;
 	}
-	if (r.status != 200) {
-		snprintf(err, errlen, "metadata batch returned HTTP %d", r.status);
-		http_reply_free(&r);
+	if (out->status != 200) {
+		snprintf(err, errlen, "metadata batch returned HTTP %d", out->status);
+		http_reply_free(out);
 		return -1;
 	}
+	return 0;
+}
+
+static int metadata_batch_request(const char *host, http_session *sess,
+                                  const char *token,
+                                  const char *const *uris, int n,
+                                  sp_track *out, char *err, size_t errlen)
+{
+	if (n <= 0)
+		return 0;
+	http_reply r;
+	if (batch_post(host, sess, token, EXT_KIND_TRACK_V4, uris, n, &r, err,
+	               errlen) != 0)
+		return -1;
 
 	/* Placed by URI, not by position: the answer comes back shuffled. */
 	int filled = sp_parse_track_batch((const uint8_t *)r.body, r.len, uris, n,
@@ -411,6 +423,62 @@ static int metadata_batch_request(const char *host, http_session *sess,
 	if (filled == 0)
 		snprintf(err, errlen, "no tracks in a %u byte response", (unsigned)r.len);
 	return filled;
+}
+
+int sp_artist_insights_s(http_session *sess, const char *token,
+                         const char *artist_uri, long *listeners,
+                         char *err, size_t errlen)
+{
+	*listeners = -1;
+	static const char PREFIX[] = "spotify:artist:";
+	if (strncmp(artist_uri, PREFIX, sizeof(PREFIX) - 1) != 0) {
+		snprintf(err, errlen, "not an artist: %s", artist_uri);
+		return -1;
+	}
+	char path[128];
+	snprintf(path, sizeof(path),
+	         "/creatorabout/v0/artist-insights/%.22s?format=json",
+	         artist_uri + sizeof(PREFIX) - 1);
+	http_reply r;
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "insights: %s", r.err);
+		return -1;
+	}
+	if (r.status != 200) {
+		snprintf(err, errlen, "insights returned HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	bool ok = sp_parse_artist_insights(r.body, r.len, listeners);
+	http_reply_free(&r);
+	if (!ok)
+		snprintf(err, errlen, "insights carried no listeners");
+	return ok ? 0 : -1;
+}
+
+int sp_album_metadata_batch_s(http_session *sess, const char *token,
+                              const char *const *uris, int n,
+                              sp_release *out, char *err, size_t errlen)
+{
+	if (n <= 0)
+		return 0;
+	if (n > SP_ALBUM_BATCH) {
+		snprintf(err, errlen, "album batch of %d is over %d", n,
+		         SP_ALBUM_BATCH);
+		return -1;
+	}
+	http_reply r;
+	if (batch_post(NULL, sess, token, EXT_KIND_ALBUM_V4, uris, n, &r, err,
+	               errlen) != 0)
+		return -1;
+	int named = sp_parse_album_batch((const uint8_t *)r.body, r.len, uris, n,
+	                                 out);
+	http_reply_free(&r);
+	if (named == 0)
+		snprintf(err, errlen, "no albums in a %u byte response",
+		         (unsigned)r.len);
+	return named;
 }
 
 int sp_track_metadata_batch(const char *host, const char *token,

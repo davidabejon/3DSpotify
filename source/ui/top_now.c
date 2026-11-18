@@ -217,15 +217,22 @@ static void header_text(const C2D_Text *text, int x, int cy, float scale,
 
 void top_now_draw_header(artwork_state *art, bool centred, int art_y,
                          const C2D_Text *title, const C2D_Text *const *lines,
-                         int count, const int *rolls, int icon)
+                         int count, const int *rolls, int icon,
+                         const C2D_Text *const *meta, int meta_count)
 {
 	int title_h = ui_line_height(TXT_TITULO);
 	int body_h = ui_line_height(TXT_CUERPO);
+	int meta_h = ui_line_height(TXT_META);
 	if (count > NOW_LINES)
 		count = NOW_LINES;
+	if (!meta || !centred)
+		meta_count = 0;
+	if (meta_count > ARTIST_BIO_LINES)
+		meta_count = ARTIST_BIO_LINES;
 	if (art_y < 0)
 		art_y = now_detail_art_rect().y;
-	int dy = centred ? now_detail_text_dy_at(title_h, body_h, count, art_y)
+	int dy = centred ? now_detail_text_dy_meta_at(title_h, body_h, count,
+	                                              meta_h, meta_count, art_y)
 	                 : 0;
 	if (centred)
 		artwork_draw_or(art, now_detail_art_rect_at(art_y), ART_SHADOW_OFF,
@@ -238,6 +245,11 @@ void top_now_draw_header(artwork_state *art, bool centred, int art_y,
 	for (int i = 0; i < count; i++)
 		header_text(lines[i], x, now_line_cy(title_h, body_h, i) + dy,
 		            TXT_CUERPO, COL_TEXTO_2, rolls ? rolls[1 + i] : -1);
+	/* A paragraph, already wrapped to the column: it never rolls. */
+	for (int i = 0; i < meta_count; i++)
+		ui_text(meta[i], x,
+		        now_detail_meta_cy(title_h, body_h, count, meta_h, i, dy),
+		        TXT_META, COL_TEXTO_2);
 }
 
 void top_now_draw_card(artwork_state *art)
@@ -248,7 +260,7 @@ void top_now_draw_card(artwork_state *art)
 	const C2D_Text *lines[] = { &artist_text, &album_text };
 	top_now_draw_header(art, false, -1, &title_text, lines,
 	                    has_album ? 2 : 1,
-	                    NULL, ICON_NOTE);
+	                    NULL, ICON_NOTE, NULL, 0);
 	draw_bar(&look);
 
 	drawn = look;

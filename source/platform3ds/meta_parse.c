@@ -1,11 +1,25 @@
 #include "meta_parse.h"
+#include "json3ds.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void copy_str(char *dst, size_t cap, const pbv *v)
 {
 	size_t n = v->len < cap - 1 ? v->len : cap - 1;
+	memcpy(dst, v->p, n);
+	dst[n] = '\0';
+}
+
+/* copy_str, but a cut never splits a UTF-8 sequence: playlist names are
+ * user text, emoji included, and half a character draws as garbage. */
+static void copy_utf8(char *dst, size_t cap, const pbv *v)
+{
+	size_t n = v->len < cap - 1 ? v->len : cap - 1;
+	if (n < v->len)
+		while (n > 0 && (v->p[n] & 0xC0) == 0x80)
+			n--;
 	memcpy(dst, v->p, n);
 	dst[n] = '\0';
 }
@@ -74,6 +88,24 @@ static int read_year(const pbv *album)
 	if (pb_get_bytes(album->p, album->len, 6, &date))
 		pb_get_sint(date.p, date.len, 1, &year);
 	return year > 0 && year < 10000 ? (int)year : 0;
+}
+
+/* The whole Date at field 6 of an Album as yyyymmdd: 0 without a year, and
+ * month or day 0 when missing or out of range. */
+static int read_date(const pbv *album)
+{
+	pbv date;
+	int year = read_year(album);
+	if (!year || !pb_get_bytes(album->p, album->len, 6, &date))
+		return 0;
+	int64_t month = 0, day = 0;
+	pb_get_sint(date.p, date.len, 2, &month);
+	pb_get_sint(date.p, date.len, 3, &day);
+	if (month < 1 || month > 12)
+		month = day = 0;
+	if (day < 1 || day > 31)
+		day = 0;
+	return year * 10000 + (int)month * 100 + (int)day;
 }
 
 /* The tracks of a Disc or a TopTracks, each only a gid, as URIs. */
@@ -294,6 +326,8 @@ bool sp_parse_album(const pbv *a, sp_album *out)
 	return true;
 }
 
+static void read_releases(const pbv *a, sp_artist *out);
+
 bool sp_parse_artist(const pbv *a, const char *country, sp_artist *out)
 {
 	memset(out, 0, sizeof(*out));
@@ -320,22 +354,266 @@ bool sp_parse_artist(const pbv *a, const char *country, sp_artist *out)
 	if (chosen.p)
 		read_track_gids(&chosen, 2, out->track_uris, SP_ARTIST_MAX_TRACKS,
 		                &out->track_count, NULL);
+
+	/* Several Biography may come; the first with text is the one. */
+	pbv bio, text;
+	at = 0;
+	while (pb_next_bytes(a, 12, &at, &bio)) {
+		if (pb_get_bytes(bio.p, bio.len, 1, &text) && text.len) {
+			sp_bio_clean((const char *)text.p, text.len, out->bio,
+			             sizeof(out->bio));
+			break;
+		}
+	}
+	read_releases(a, out);
 	return true;
 }
 
-/* ------------------------------------------------------------ playlists */
+/* -------------------------------------------------------------- releases */
 
-/* copy_str, but a cut never splits a UTF-8 sequence: playlist names are
- * user text, emoji included, and half a character draws as garbage. */
-static void copy_utf8(char *dst, size_t cap, const pbv *v)
+/* What an Album says about itself: name, type, date and covers. `uri`,
+ * `group` and `order` are the caller's. */
+static void fill_release(const pbv *album, sp_release *r)
 {
-	size_t n = v->len < cap - 1 ? v->len : cap - 1;
-	if (n < v->len)
-		while (n > 0 && (v->p[n] & 0xC0) == 0x80)
-			n--;
-	memcpy(dst, v->p, n);
-	dst[n] = '\0';
+	pbv v;
+	if (pb_get_bytes(album->p, album->len, 2, &v))
+		copy_utf8(r->name, sizeof(r->name), &v);
+	uint64_t type = 0;
+	if (pb_get_varint(album->p, album->len, 4, &type) && type <= SP_ALBUM_EP)
+		r->type = (int)type;
+	r->date = read_date(album);
+	read_art(album, 17, 9, r->art_small, r->art_large, sizeof(r->art_small));
 }
+
+static void read_releases(const pbv *a, sp_artist *out)
+{
+	/* album_group 5, single_group 6, compilation_group 7, one AlbumGroup
+	 * from each in turn: each group comes newest first, so the cap cuts
+	 * the oldest of every kind, not a whole kind. */
+	size_t at[3] = { 0, 0, 0 };
+	bool open[3] = { true, true, true };
+	int left = 3;
+	while (left > 0 && out->release_count < SP_ARTIST_RELEASES_MAX) {
+		for (int g = 0; g < 3; g++) {
+			if (!open[g] || out->release_count >= SP_ARTIST_RELEASES_MAX)
+				continue;
+			pbv ag, album;
+			if (!pb_next_bytes(a, 5 + (uint32_t)g, &at[g], &ag)) {
+				open[g] = false;
+				left--;
+				continue;
+			}
+			sp_release *r = &out->releases[out->release_count];
+			/* The first Album: the others are the same release for other
+			 * markets. */
+			if (!pb_get_bytes(ag.p, ag.len, 1, &album) ||
+			    !read_gid_uri(&album, 1, SP_KIND_ALBUM, r->uri,
+			                  sizeof(r->uri)))
+				continue;
+			fill_release(&album, r);
+			r->group = g;
+			r->order = out->release_count++;
+		}
+	}
+}
+
+int sp_release_cmp(const void *pa, const void *pb_)
+{
+	const sp_release *a = pa, *b = pb_;
+	if (a->date != b->date) {
+		if (!a->date)
+			return 1;
+		if (!b->date)
+			return -1;
+		return a->date > b->date ? -1 : 1;
+	}
+	return (a->order > b->order) - (a->order < b->order);
+}
+
+void sp_sort_releases(sp_release *r, int n)
+{
+	if (r && n > 1)
+		qsort(r, (size_t)n, sizeof(r[0]), sp_release_cmp);
+}
+
+int sp_parse_album_batch(const uint8_t *body, size_t len,
+                         const char *const *uris, int n, sp_release *out)
+{
+	pbv arr;
+	if (n <= 0 || !pb_get_bytes(body, len, 2, &arr))
+		return 0;
+	/* Placed by entity_uri: the service answers in its own order. */
+	int named = 0;
+	size_t at = 0;
+	pbv ed, uri, any, album;
+	while (pb_next_bytes(&arr, 3, &at, &ed)) {
+		if (!pb_get_bytes(ed.p, ed.len, 2, &uri) ||
+		    !pb_get_bytes(ed.p, ed.len, 3, &any) ||
+		    !pb_get_bytes(any.p, any.len, 2, &album))
+			continue;
+		for (int j = 0; j < n; j++) {
+			if (out[j].name[0] || !same_uri(&uri, uris[j]))
+				continue;
+			fill_release(&album, &out[j]);
+			named += out[j].name[0] != '\0';
+			break;
+		}
+	}
+	return named;
+}
+
+bool sp_parse_artist_insights(const char *json, size_t len, long *listeners)
+{
+	long v = -1;
+	/* Top level only: every city in "cities" has "listeners" too. */
+	bool ok = json && json_member_int(json, len, "monthlyListeners", &v) &&
+	          v >= 0;
+	*listeners = ok ? v : -1;
+	return ok;
+}
+
+/* ------------------------------------------------------------- biography */
+
+static bool is_alpha(char c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static int digit(char c, int base)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (base == 16 && c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (base == 16 && c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+static size_t utf8_put(unsigned long cp, char *b)
+{
+	if (cp < 0x80) {
+		b[0] = (char)cp;
+		return 1;
+	}
+	if (cp < 0x800) {
+		b[0] = (char)(0xC0 | (cp >> 6));
+		b[1] = (char)(0x80 | (cp & 0x3F));
+		return 2;
+	}
+	if (cp < 0x10000) {
+		b[0] = (char)(0xE0 | (cp >> 12));
+		b[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+		b[2] = (char)(0x80 | (cp & 0x3F));
+		return 3;
+	}
+	b[0] = (char)(0xF0 | (cp >> 18));
+	b[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+	b[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+	b[3] = (char)(0x80 | (cp & 0x3F));
+	return 4;
+}
+
+/* The entity at `s` (on its '&') into `buf`: its bytes, with `*used` the
+ * input it took; 0 when it is not one this knows. &nbsp; is a space. */
+static size_t entity(const char *s, size_t len, char *buf, size_t *used)
+{
+	static const struct {
+		const char *name;
+		char c;
+	} NAMED[] = {
+		{ "amp;", '&' }, { "lt;", '<' }, { "gt;", '>' }, { "quot;", '"' },
+		{ "apos;", '\'' }, { "nbsp;", ' ' },
+	};
+	for (size_t k = 0; k < sizeof(NAMED) / sizeof(NAMED[0]); k++) {
+		size_t nl = strlen(NAMED[k].name);
+		if (len > nl && memcmp(s + 1, NAMED[k].name, nl) == 0) {
+			buf[0] = NAMED[k].c;
+			*used = 1 + nl;
+			return 1;
+		}
+	}
+	if (len < 4 || s[1] != '#')
+		return 0;
+	int base = 10;
+	size_t i = 2;
+	if (s[2] == 'x' || s[2] == 'X') {
+		base = 16;
+		i = 3;
+	}
+	size_t start = i;
+	unsigned long cp = 0;
+	while (i < len && i < start + 7) {
+		int d = digit(s[i], base);
+		if (d < 0)
+			break;
+		cp = cp * (unsigned long)base + (unsigned long)d;
+		i++;
+	}
+	if (i == start || i >= len || s[i] != ';' || cp == 0 || cp > 0x10FFFF ||
+	    (cp >= 0xD800 && cp <= 0xDFFF))
+		return 0;
+	*used = i + 1;
+	if (cp == 0xA0) {
+		buf[0] = ' ';
+		return 1;
+	}
+	return utf8_put(cp, buf);
+}
+
+void sp_bio_clean(const char *in, size_t len, char *out, size_t cap)
+{
+	if (!out || cap == 0)
+		return;
+	size_t o = 0, i = 0;
+	bool gap = false;               /* a space is owed before what follows */
+	while (in && i < len && in[i]) {
+		unsigned char c = (unsigned char)in[i];
+		if (c == '<' && i + 1 < len &&
+		    (is_alpha(in[i + 1]) || in[i + 1] == '/' || in[i + 1] == '!')) {
+			const char *gt = memchr(in + i, '>', len - i);
+			if (!gt)
+				break;          /* a tag cut short: the rest is markup */
+			i = (size_t)(gt - in) + 1;
+			continue;
+		}
+		char ch[4];
+		size_t n = 1, used = 1;
+		if (c == '&') {
+			n = entity(in + i, len - i, ch, &used);
+			if (!n) {
+				ch[0] = '&';
+				n = used = 1;
+			}
+		} else if (c >= 0x80 && c < 0xC0) {
+			i++;                /* a stray continuation byte */
+			continue;
+		} else if (c >= 0xC0) {
+			n = used = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : 2;
+			if (n > len - i)
+				break;          /* a character cut short */
+			memcpy(ch, in + i, n);
+		} else {
+			ch[0] = (char)c;
+		}
+		i += used;
+		if (n == 1 && (ch[0] == ' ' || ch[0] == '\n' || ch[0] == '\r' ||
+		               ch[0] == '\t')) {
+			gap = o > 0;
+			continue;
+		}
+		if (o + n + (gap ? 1 : 0) > cap - 1)
+			break;
+		if (gap)
+			out[o++] = ' ';
+		gap = false;
+		memcpy(out + o, ch, n);
+		o += n;
+	}
+	out[o] = '\0';
+}
+
+/* ------------------------------------------------------------ playlists */
 
 static bool has_prefix(const uint8_t *p, size_t len, const char *prefix)
 {

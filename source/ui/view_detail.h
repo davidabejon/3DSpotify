@@ -17,7 +17,10 @@
  * focused row, plays the list from that row; X opens that track's detail;
  * Y switches the order the lists play in, which the bar shows, and a bubble
  * confirms. An album's rows show their position, an artist's their cover
- * thumbnail. An album's or playlist's list has three rows under a button
+ * thumbnail. An artist lists its sections, "Popular tracks" and
+ * "Discography", under headers the focus skips: A on a release opens its
+ * album ("[A] Open", and nothing offline), the tracks play among
+ * themselves. An album's or playlist's list has three rows under a button
  * that downloads it all, and then says how far that went; up from the
  * first row reaches it.
  *
@@ -67,7 +70,14 @@ typedef enum {
 	/* An album or playlist on the card: its button, confirmed. */
 	DETAIL_ACTION_REMOVE_ALL,
 	/* The Downloads: A on an album or playlist, open it from the card. */
-	DETAIL_ACTION_OPEN_COLLECTION
+	DETAIL_ACTION_OPEN_COLLECTION,
+	/* An artist: A on a release of its discography, open that album on the
+	 * same tab. Never offline. */
+	DETAIL_ACTION_OPEN_ALBUM,
+	/* An artist: A on the button of the "Popular tracks" header, or B with
+	 * the biography open. The view handles it itself (the biography opens
+	 * or closes on the top screen) and never returns it. */
+	DETAIL_ACTION_BIO
 } detail_action;
 
 /* After ui_init and icons_init. */

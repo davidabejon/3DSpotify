@@ -302,6 +302,7 @@ static void follow_preview(void)
 		preview_still = 0;
 		unsigned serial = preview.serial + 1;
 		memset(&preview, 0, sizeof(preview));
+		preview.listeners = -1;
 		preview.serial = serial;
 		if (index < 0)
 			return;

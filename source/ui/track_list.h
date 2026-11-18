@@ -61,6 +61,7 @@ typedef struct {
 	int pressed;           /* the pressed row, -1 for none */
 	int edge;              /* the focused row's nudge, px */
 	int thumbs;            /* bumped when a thumbnail arrives */
+	bool active;           /* a header's button shows what it opened */
 } track_list_look;
 
 typedef struct {
@@ -95,6 +96,7 @@ typedef struct {
 	C2D_Text duration[TRACK_LIST_WINDOW];
 	C2D_Text number[TRACK_LIST_WINDOW];
 	float duration_width[TRACK_LIST_WINDOW];
+	bool button_active;
 } track_list;
 
 /* After ui_init. False when the text buffers cannot be made. */
@@ -114,6 +116,9 @@ void track_list_set_frame(track_list *l, list_frame frame);
  * result's second line says what it is), rows that are
  * off draw dimmed, take no focus and answer no tap. NULL for none. */
 void track_list_set_rows(track_list *l, const track_row *rows);
+/* A header's button (offline_logic.h) as on: what it shows is open (an
+ * artist's biography on the top screen). */
+void track_list_set_button_active(track_list *l, bool on);
 /* Back to where a list was left: `first` as the first visible row, on
  * whole rows, with the focus kept in view. */
 void track_list_scroll_to(track_list *l, int first);

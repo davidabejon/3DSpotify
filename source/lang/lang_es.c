@@ -41,6 +41,10 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_DETAIL] = "Detalle",
 	[STR_HINT_SHUFFLE_ON] = "Aleatorio",
 	[STR_HINT_SHUFFLE_OFF] = "En orden",
+	[STR_HINT_BIO] = "Biografía",
+	[STR_HINT_CLOSE] = "Cerrar",
+	[STR_HINT_SCROLL] = "Desplazar",
+	[STR_BIO_ENGLISH_ONLY] = "Texto solo disponible en inglés",
 	[STR_SHUFFLE_ON] = "Aleatorio activado",
 	[STR_SHUFFLE_OFF] = "Aleatorio desactivado",
 	[STR_DETAIL_PLAY] = "Reproducir",
@@ -60,6 +64,10 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_ALBUM_TRACKS_FMT] = "%d canciones",
 	[STR_ALBUM_TRACKS_CUT_FMT] = "%d de %d canciones",
 	[STR_ARTIST_TOP_TRACKS] = "Canciones populares",
+	[STR_ARTIST_DISCOGRAPHY] = "Discografía",
+	[STR_RELEASE_FMT] = "%s · %d",
+	[STR_ARTIST_LISTENERS_FMT] = "%s oyentes mensuales",
+	[STR_ARTIST_LISTENER_ONE] = "1 oyente mensual",
 
 	/* Pestaña de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",

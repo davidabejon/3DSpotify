@@ -65,6 +65,13 @@ typedef enum {
 	 * bubble when it changes. */
 	STR_HINT_SHUFFLE_ON,
 	STR_HINT_SHUFFLE_OFF,
+	/* An artist's biography: open it, close it, scroll it. */
+	STR_HINT_BIO,
+	STR_HINT_CLOSE,
+	STR_HINT_SCROLL,
+	/* Over an artist's whole biography, in any language but English:
+	 * Spotify serves it in English only (probe_artist step 2). */
+	STR_BIO_ENGLISH_ONLY,
 	STR_SHUFFLE_ON,
 	STR_SHUFFLE_OFF,
 	STR_DETAIL_PLAY,
@@ -86,6 +93,12 @@ typedef enum {
 	STR_ALBUM_TRACKS_FMT,
 	STR_ALBUM_TRACKS_CUT_FMT,
 	STR_ARTIST_TOP_TRACKS,
+	STR_ARTIST_DISCOGRAPHY,
+	/* A release's second line: its type and its year. */
+	STR_RELEASE_FMT,
+	/* The artist's card: monthly listeners, the number already grouped. */
+	STR_ARTIST_LISTENERS_FMT,
+	STR_ARTIST_LISTENER_ONE,
 
 	/* Settings tab. */
 	STR_SETTINGS_LANGUAGE_FMT,

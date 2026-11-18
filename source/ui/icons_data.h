@@ -26,6 +26,8 @@ typedef enum {
 	ICON_PLAYLIST,
 	ICON_OFFLINE,
 	ICON_DPAD_LR,
+	ICON_DPAD_UD,
+	ICON_INFO,
 	ICON_COUNT
 } icon_id;
 

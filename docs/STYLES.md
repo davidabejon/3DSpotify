@@ -121,7 +121,8 @@ Fuente del sistema (`C2D_FontLoadSystem` o fuente por defecto de citro2d) para t
 - No usar escalas por debajo de `t_meta`.
 - Una línea por dato. Recortar con `...` midiendo con `C2D_TextGetDimensions`. Única
   excepción: la ficha de detalle de la pantalla superior (§7.12), donde el texto que no cabe
-  rueda (§5.15) en vez de recortarse.
+  rueda (§5.15) en vez de recortarse, salvo la biografía del artista, que se ajusta por
+  palabras (§7.12).
 - Mayúscula solo al inicio de frase.
 - Alinear a la izquierda en listas y metadatos; centrar solo en pantallas de un único mensaje.
 - Coordenadas de texto en píxeles enteros.
@@ -241,6 +242,19 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
 - Variante sin descargar (colección descargada, §7.14): título, artista y número en
   `texto_off`, y a la derecha, en lugar de la duración, el icono de su estado (reloj en
   cola, error si falló). No toma el foco ni responde al toque.
+- Cabecera de sección (detalle de artista, §7.11): ocupa el hueco de una fila (41 px) sin
+  superficie. Título en `t_cabeza` · `texto`, alineado con la miniatura (a `e1` del borde de
+  la fila) y apoyado abajo (a `e2` del borde inferior), con una banda de 2 px `clorofila`
+  del ancho del texto en el borde inferior del hueco. Si no cabe, se recorta con «...». No
+  toma el foco ni responde al toque; se desplaza y se arrastra con la lista.
+  - Con botón (la primera cabecera de un artista con biografía, §7.11): un botón
+    secundario cuadrado de solo icono (información), a `e1` del borde derecho y de los
+    bordes superior e inferior de la fila; el título se recorta antes. El botón sí toma el
+    foco (la cruceta llega a él subiendo desde la primera fila) y responde al toque; el
+    resto de la cabecera no. Mientras la biografía está abierta es primario.
+- Lanzamiento de la discografía (§7.11): variante de colección, con portada y chevron, sin
+  insignia. Segunda línea: tipo y año, «Álbum · 2004», «Sencillo · 2019», «EP · 2021»,
+  «Recopilatorio · 2010»; sin año, solo el tipo.
 
 ### 5.4 Barra de progreso
 
@@ -417,7 +431,8 @@ enlace no es un botón:
 ### 5.15 Texto que rueda
 
 Para un dato que no cabe en su línea y que no se ve entero en ningún otro sitio: solo la
-ficha de detalle de la pantalla superior (§7.12).
+ficha de detalle de la pantalla superior (§7.12). La biografía de un artista no rueda: un
+párrafo que se mueve no se puede leer (§7.12).
 
 - Empieza quieto en su sitio durante 1,5 s (`MARQUEE_PAUSE_MS`).
 - Después se desplaza a la izquierda a 30 px/s (`MARQUEE_SPEED`), seguido de una copia del
@@ -590,6 +605,8 @@ Duración:
   la fila de destino es más corta, al último de esa fila); izquierda/derecha cambian de
   columna dentro de la fila. Con 1 columna, izquierda/derecha saltan una página. En los bordes no hay vuelta: la tesela se desplaza 3 px hacia ese lado durante
   6 frames.
+- En una lista con secciones (artista, §7.11), la cruceta salta las cabeceras; la primera
+  fila de una sección trae su cabecera a la vista.
 
 ### 6.7 Volumen
 
@@ -1042,12 +1059,31 @@ Error:
 
 - Lista como resultados (§7.4), con su arrastre (§6.9) e indicador (§5.11). Álbum:
   filas con número (§5.3), en orden de disco; de más de 24 pistas se muestran las 24
-  primeras. Artista: sus canciones populares, con miniatura. Playlist: sus pistas con
+  primeras. Playlist: sus pistas con
   miniatura (cada una es de un álbum distinto), por páginas de 50: la siguiente se pide sola
   cuando la lista muestra una fila a 8 o menos de la última cargada, con la burbuja de
   espera «Cargando...» (§5.9) mientras llega; la lista sigue respondiendo. Hasta 500 pistas.
   Los episodios y archivos locales se omiten.
-- Artista: 4 filas, como resultados. Álbum y playlist: un botón secundario a todo el ancho
+- Artista: una lista en dos secciones, cada una con su cabecera (§5.3) y omitida si está
+  vacía: «Canciones populares» (sus pistas con miniatura) y «Discografía» (álbumes,
+  sencillos y EP, y recopilatorios mezclados, del más reciente al más antiguo; no
+  incluye aquello en lo que solo aparece). Hasta 200 lanzamientos. 4 filas a pantalla
+  completa, como resultados; el foco empieza en la primera canción. La discografía llega
+  después de las canciones (hay que nombrar todos los lanzamientos para ordenarlos):
+  mientras, la burbuja «Cargando...» (§5.9) y la lista ya responde; al llegar, su cabecera
+  y sus filas se añaden al final sin mover la lista ni el foco. Un artista sin canciones
+  populares espera a tenerla entera.
+  - Sobre una canción: A, o tocarla en foco, reproduce las populares desde ella (solo ellas
+    son la cola); X abre su detalle. Barra `[A] Reproducir [X] Detalle [Y] Aleatorio [B]
+    Volver`.
+  - Sobre un lanzamiento: A, o tocarlo en foco, abre su detalle de álbum en la misma
+    pestaña. Barra `[A] Abrir [Y] Aleatorio [B] Volver`. Sin conexión, sin A.
+  - Sobre el botón de la biografía: A, o tocarlo, la abre en la pantalla superior
+    (§7.12); barra `[A] Biografía [Y] Aleatorio [B] Volver`. Abierta, la cruceta la
+    desplaza (arriba/abajo una línea, izquierda/derecha una página), A o B la cierran, y
+    tocar otra fila también; barra `[▲▼] Desplazar [A] Cerrar [B] Cerrar`. Funciona sin
+    conexión.
+- Álbum y playlist: un botón secundario a todo el ancho
   a `e1` de la barra de pestañas (36..68) que los descarga enteros, y debajo 3 filas
   (76..207); las filas arrastradas pasan por debajo del botón, como por debajo de las barras:
 
@@ -1094,7 +1130,21 @@ Error:
   - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
     año.
   - Álbum: artista / «Album - 2004» / «11 canciones» o «24 de 31 canciones» / sello.
-  - Artista: «Canciones populares».
+  - Artista: sus oyentes mensuales, «12.345.678 oyentes mensuales» («12,345,678 monthly
+    listeners» en inglés; «1 oyente mensual»), pedidos en la misma carga que el resto; si
+    el servicio no los da, «Artista». «Canciones populares» encabeza la lista de abajo.
+    Debajo, a `e2`, el principio de su biografía en `t_meta` · `texto_2`, ajustado por
+    palabras a la columna en hasta 5 líneas, sin rodar; la última acaba en «...» si queda
+    texto. Llega en el idioma en que la sirve Spotify. Sin oyentes ni biografía,
+    «Artista». El bloque entero se centra en la altura del retrato (cabe siempre: 120 px
+    como mucho). La biografía se ajusta al parsear la ficha, no al dibujar.
+- Biografía completa (su botón, §7.11): la pantalla superior muestra solo el texto, entero
+  (hasta 16 KB), en `t_cuerpo` · `texto`, ajustado por palabras al ancho de la pantalla
+  menos `e3` a cada lado y el indicador, desde `e3` arriba, sin rodar. Si no cabe, el
+  indicador de §5.11 a la derecha. Se ajusta una vez al abrirla; al desplazarse solo se
+  parsean las líneas a la vista. Spotify solo la sirve en inglés: en cualquier otro
+  idioma, encima del texto, a `e3` del borde y `e2` sobre él, la línea «Texto solo
+  disponible en inglés» en `t_meta` · `texto_2`, que no se desplaza.
   - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
     página). Sin propietario: el
     servicio solo da un id de usuario opaco.
@@ -1102,7 +1152,7 @@ Error:
 - Vista previa de un resultado de búsqueda (§7.4): se hace con los datos de la fila, sin
   pedir nada salvo la imagen, así que no hay recuentos ni año que contar:
   - Canción: la de siempre (es la pista en foco).
-  - Artista: «Artista» en lugar de «Canciones populares».
+  - Artista: «Artista», sin oyentes.
   - Álbum: «Álbum · <artista>», sin más líneas.
   - Playlist: «Playlist · <propietario>» (aquí sí hay nombre), sin «0 canciones».
 - El texto que no cabe en la columna rueda (§5.15).

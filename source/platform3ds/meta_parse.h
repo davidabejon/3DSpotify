@@ -12,13 +12,24 @@
  *   Album  { gid 1, name 2, artist 3 (repeated), type 4, label 5, date 6,
  *            cover 9 (repeated Image), disc 11 (repeated),
  *            cover_group 17 }
- *   Artist { gid 1, name 2, top_track 4 (repeated), portrait 11 (repeated
- *            Image), portrait_group 17 }
- *   Date { year 1 (sint32) }   Disc { number 1, track 3 (repeated) }
+ *   Artist { gid 1, name 2, top_track 4 (repeated), album_group 5,
+ *            single_group 6, compilation_group 7, appears_on_group 8 (each
+ *            repeated AlbumGroup), portrait 11 (repeated Image),
+ *            biography 12 (repeated), portrait_group 17 }
+ *   AlbumGroup { album 1 (repeated Album: regional variants of one
+ *                release, the first is kept) }
+ *   Biography { text 1 (HTML: <a href> links, \r\n), portrait 3 }
+ *   Date { year 1, month 2, day 3 (sint32) }
+ *   Disc { number 1, track 3 (repeated) }
  *   TopTracks { country 1, track 2 (repeated) }
  *   ImageGroup { image 1 (repeated) }   Image { file_id 1, size 2 }
  *
- * The tracks inside a Disc or a TopTracks carry only their gid.
+ * The tracks inside a Disc or a TopTracks carry only their gid, and so do
+ * the Albums inside an artist's AlbumGroups (probe_artist step 3): those
+ * are named by an album batch. Within each group they come newest first.
+ * Month and day are read as sint32 like the year, as metadata.proto
+ * declares them; the console has not shown them yet (probe_artist could
+ * not see a dated Album), so a value out of range reads as unknown.
  */
 #ifndef META_PARSE_H
 #define META_PARSE_H
@@ -58,7 +69,37 @@ int sp_parse_track_batch(const uint8_t *body, size_t len,
 
 /* Clear `out`, then fill it. False when the message carries no gid. */
 bool sp_parse_album(const pbv *album, sp_album *out);
+/* Besides the name, portrait and top tracks: the first Biography with text,
+ * cleaned (sp_bio_clean), and the releases of album_group, single_group
+ * and compilation_group, the first Album of each AlbumGroup, as URIs to be
+ * named later. Up to SP_ARTIST_RELEASES_MAX are kept, taken from the three
+ * groups in turn: each group comes newest first, so an artist with
+ * hundreds of albums still keeps its recent singles. */
 bool sp_parse_artist(const pbv *artist, const char *country, sp_artist *out);
+
+/* A biography for the card: tags dropped (a link keeps its text), the
+ * entities &amp; &lt; &gt; &quot; &apos; &#39; &nbsp; &#N; &#xH; decoded,
+ * line breaks, tabs and runs of spaces made one space, trimmed. Cut to fit
+ * `cap` between characters, never inside one. `in` need not end in NUL;
+ * `out` always does. */
+void sp_bio_clean(const char *in, size_t len, char *out, size_t cap);
+
+/* Newest first (date descending); undated last; equal dates in `order`.
+ * The group plays no part: albums, singles and compilations mix. */
+int  sp_release_cmp(const void *a, const void *b);
+void sp_sort_releases(sp_release *r, int n);
+
+/* An album batch answer for `n` URIs: each Album goes into the out[j] whose
+ * uris[j] its entity_uri names, filling name, type, date and covers;
+ * `uri`, `group` and `order` are left alone. Entries matching nothing are
+ * dropped. Returns how many out[] came named. */
+int  sp_parse_album_batch(const uint8_t *body, size_t len,
+                          const char *const *uris, int n, sp_release *out);
+
+/* creatorabout's artist-insights JSON (probe_artist step 5a): its
+ * top-level monthlyListeners into `*listeners`. False, with -1 there,
+ * when it is absent or negative. */
+bool sp_parse_artist_insights(const char *json, size_t len, long *listeners);
 
 /* ------------------------------------------------------------ playlists
  *

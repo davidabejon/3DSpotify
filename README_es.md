@@ -163,7 +163,7 @@ pestañas, cada una con su icono:
   carga.
 - Con un detalle abierto ([Detalles](#detalles)), la pantalla superior muestra su
   ficha: la carátula o el retrato, el nombre y hasta cuatro líneas (artista, álbum,
-  duración y número de pista, año, sello…). Una línea demasiado larga se desplaza de
+  duración y número de pista, año, sello…; los oyentes mensuales de un artista y el principio de su biografía). Una línea demasiado larga se desplaza de
   lado para poder leerla entera.
 - Con resultados de búsqueda en pantalla, la pestaña **Búsqueda** muestra una franja
   con los tipos de resultado y cuántos hay de cada uno, con el que está en pantalla
@@ -286,8 +286,10 @@ Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su 
   playlist** los descarga enteros; se llega subiendo desde la primera canción. Después
   muestra el progreso («Descargando 8 de 12») y **Descargado**, que abre la copia
   descargada.
-- **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares, con
-  miniaturas. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
+- **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares y, debajo, su
+  discografía (álbumes, sencillos y EP, recopilatorios); A sobre un lanzamiento abre el
+  álbum. El botón de la cabecera «Canciones populares» muestra la biografía entera en la
+  pantalla superior, para desplazarla con la cruceta. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
   siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
   «Cargando…»), hasta 500. Los episodios y archivos locales se omiten; la pantalla
   superior indica cuántas de cuántas hay cargadas.
@@ -384,6 +386,7 @@ anteriores (por ejemplo, los últimos probes usan el token que guarda
 | `probe_audio` | La decodificación de Ogg Vorbis y su reproducción por NDSP (lee `test.ogg`; sin red). |
 | `probe_play` | Una canción de principio a fin: clave de audio, descarga, descifrado y reproducción. |
 | `probe_search` | La búsqueda por tipos mediante el servicio del web player de Spotify: cómo encontrar el hash de sus consultas en open.spotify.com, las cabeceras que acepta, la forma y los tiempos de cada tipo de resultado, un hash caducado, y la búsqueda de siempre para comparar. Escribe `probe_search.log` y las respuestas (`probe_search_*.json`, con el nombre de usuario tapado) junto al `.3dsx`. |
+| `probe_artist` | Lo que traen los metadatos de un artista para su detalle: tamaño y campos de la respuesta, la biografía, los álbumes, sencillos y recopilatorios con sus nombres, fechas y orden, y dos posibles fuentes de oyentes mensuales con sus tiempos. Lee hasta tres artistas más de `probe_artist.txt` (un id, URI o enlace por línea). Escribe `probe_artist.log` y las respuestas (`probe_artist_*.json`, `probe_artist_1_metadata.bin`, con el nombre de usuario tapado) junto al `.3dsx`. |
 
 Compila uno con `--app`, por ejemplo:
 

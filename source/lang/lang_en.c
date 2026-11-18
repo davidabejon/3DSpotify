@@ -40,6 +40,10 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_DETAIL] = "Detail",
 	[STR_HINT_SHUFFLE_ON] = "Shuffle",
 	[STR_HINT_SHUFFLE_OFF] = "In order",
+	[STR_HINT_BIO] = "Biography",
+	[STR_HINT_CLOSE] = "Close",
+	[STR_HINT_SCROLL] = "Scroll",
+	[STR_BIO_ENGLISH_ONLY] = "Text only available in English",
 	[STR_SHUFFLE_ON] = "Shuffle on",
 	[STR_SHUFFLE_OFF] = "Shuffle off",
 	[STR_DETAIL_PLAY] = "Play",
@@ -59,6 +63,10 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_ALBUM_TRACKS_FMT] = "%d tracks",
 	[STR_ALBUM_TRACKS_CUT_FMT] = "%d of %d tracks",
 	[STR_ARTIST_TOP_TRACKS] = "Popular tracks",
+	[STR_ARTIST_DISCOGRAPHY] = "Discography",
+	[STR_RELEASE_FMT] = "%s · %d",
+	[STR_ARTIST_LISTENERS_FMT] = "%s monthly listeners",
+	[STR_ARTIST_LISTENER_ONE] = "1 monthly listener",
 
 	/* Settings tab. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",

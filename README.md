@@ -157,7 +157,7 @@ icon:
   with the loading indicator over the logo or the card.
 - With a detail open ([Details](#details)), the top screen shows its card instead:
   the cover or portrait, the name and up to four lines (artist, album, length and
-  track number, year, label…). A line too long to fit scrolls sideways so it can be
+  track number, year, label…; an artist's monthly listeners and the start of their biography). A line too long to fit scrolls sideways so it can be
   read in full.
 - With search results on screen, the **Search** tab shows a strip of the result
   types with how many of each were found, the one on screen highlighted, and below it
@@ -275,7 +275,10 @@ From a song you can open its detail, and from there its artist and album:
 - **Album and playlist:** a **Download album** / **Download playlist** button above the
   list downloads them whole; up from the first song reaches it. It then shows the progress
   ("Downloading 8 of 12") and **Downloaded**, which opens the downloaded copy.
-- **Album:** its tracks, numbered. **Artist:** their popular tracks, with thumbnails.
+- **Album:** its tracks, numbered. **Artist:** popular tracks, then their discography
+  (albums, singles and EPs, compilations); A on a release opens the album. The button
+  on the "Popular tracks" header shows the whole biography on the top screen, to scroll
+  with the D-pad.
   **Playlist:** its tracks, with thumbnails, loaded 50 at a time: the next page comes by
   itself as you near the end of the list (a "Loading…" bubble shows meanwhile), up to 500.
   Episodes and local files are left out; the top screen says how many of how many are
@@ -369,6 +372,7 @@ problem.
 | `probe_audio` | Decoding Ogg Vorbis and playing it through NDSP (reads `test.ogg`; no network). |
 | `probe_play` | One track end to end: every audio file it offers, audio key, download, decryption and playback. Reads the track from `spotify-play-uri.txt` (a URI or share link) next to the `.3dsx` when present. |
 | `probe_search` | Search by type through the service Spotify's web player uses: finding its query hash on open.spotify.com, the headers it accepts, the shape and timing of every kind of result, a stale hash, and today's search for comparison. Writes `probe_search.log` and the replies (`probe_search_*.json`, with the username blotted out) beside the `.3dsx`. |
+| `probe_artist` | What an artist's metadata carries for its detail view: size and fields of the reply, the biography, the albums, singles and compilations with their names, dates and order, and two candidate sources of monthly listeners with their timings. Reads up to three more artists from `probe_artist.txt` (an id, URI or link per line). Writes `probe_artist.log` and the replies (`probe_artist_*.json`, `probe_artist_1_metadata.bin`, with the username blotted out) beside the `.3dsx`. |
 
 Build one with `--app`, for example:
 
