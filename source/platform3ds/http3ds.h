@@ -41,6 +41,13 @@ int http_request(const char *host, const char *path, const char *method,
                  const char *bearer, const char *ctype, const char *accept,
                  const void *body, size_t len, size_t limit, http_reply *out);
 
+/* The same with `extra` header lines, each ending in "\r\n" (NULL: none).
+ * A User-Agent among them replaces the default one. */
+int http_request_ex(const char *host, const char *path, const char *method,
+                    const char *bearer, const char *ctype, const char *accept,
+                    const char *extra, const void *body, size_t len,
+                    size_t limit, http_reply *out);
+
 /* GET a full https:// URL, for the signed CDN links storage-resolve hands
  * back: those carry host, path and a query that must be passed through
  * untouched. `limit` is required here -- an audio file is megabytes. */
@@ -81,6 +88,12 @@ int  http_session_request(http_session *s, const char *path,
                           const char *ctype, const char *accept,
                           const void *body, size_t len, size_t limit,
                           http_reply *out);
+/* With `extra` header lines, as http_request_ex. */
+int  http_session_request_ex(http_session *s, const char *path,
+                             const char *method, const char *bearer,
+                             const char *ctype, const char *accept,
+                             const char *extra, const void *body, size_t len,
+                             size_t limit, http_reply *out);
 void http_session_close(http_session *s);
 /* 1 when the last request reused the open link, 0 when it reconnected. */
 int  http_session_last_reused(const http_session *s);

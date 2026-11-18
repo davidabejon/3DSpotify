@@ -110,7 +110,8 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
  * the focus in it. A list starts with list_frame_full. */
 void track_list_set_frame(track_list *l, list_frame frame);
 /* What each row is (offline_logic.h), after track_list_set, which forgets
- * it: collections draw stacked with a badge and a chevron, rows that are
+ * it: collections and artists draw with a badge and a chevron (a search
+ * result's second line says what it is), rows that are
  * off draw dimmed, take no focus and answer no tap. NULL for none. */
 void track_list_set_rows(track_list *l, const track_row *rows);
 /* Back to where a list was left: `first` as the first visible row, on

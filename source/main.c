@@ -1,5 +1,6 @@
 #include <3ds.h>
 #include <malloc.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,12 +25,16 @@
 #include "power_logic.h"
 #include "queue_feed.h"
 #include "queue_logic.h"
+#include "pathfinder.h"
+#include "pf_hash.h"
+#include "search_results.h"
 #include "spclient.h"
 #include "tabbar.h"
 #include "thumbs.h"
 #include "track.h"
 #include "tls3ds.h"
 #include "top.h"
+#include "top_logic.h"
 #include "ui.h"
 #include "ui_font.h"
 #include "view_detail.h"
@@ -87,6 +92,16 @@ typedef struct {
 	char library_token[1024];
 	sp_track tracks[SEARCH_LIMIT];
 	int count;
+	/* The other kinds (search_results.h). `offered`: what the source
+	 * gives at all -- pathfinder every kind, the fallback no playlists.
+	 * The best result is one of the four lists, or best_kind -1. */
+	sp_track artists[SEARCH_ITEMS_MAX];
+	sp_track albums[SEARCH_ITEMS_MAX];
+	sp_track playlists[SEARCH_ITEMS_MAX];
+	int kind_count[RESULT_KINDS];
+	bool offered[RESULT_KINDS];
+	int best_kind;
+	int best_index;
 	int result;
 	char error[192];
 	volatile bool cancel_requested;
@@ -1400,6 +1415,9 @@ static const detail_doc *top_detail_sync(void)
 	else if (active_view == VIEW_TABS && active_tab == TAB_HOME)
 		/* The focused tile's card: a preview of what A opens. */
 		doc = view_home_preview();
+	else if (active_view == VIEW_TABS && active_tab == TAB_SEARCH)
+		/* The focused result's card, under the strip of kinds. */
+		doc = view_results_preview();
 	if (doc && strcmp(doc->art, detail_art_url) != 0) {
 		snprintf(detail_art_url, sizeof(detail_art_url), "%s", doc->art);
 		artwork_request(&detail_art, detail_art_url);
@@ -1435,6 +1453,11 @@ static void frame(void)
 		view_player_set(&info);
 		top_set(&info);
 		top_set_detail(top_detail_sync(), &detail_art);
+		results_strip strip;
+		bool listed = view_results_strip(&strip);
+		top_set_results(top_shows_strip(active_tab,
+		                                details_active(active_tab), listed)
+		                ? &strip : NULL);
 		top_set_manager(manager_open);
 		view_settings_set_waiting(downloads_waiting());
 		changed = tabbar_dirty() || top_dirty(active_tab, &cover_art);
@@ -1498,36 +1521,241 @@ static void frame(void)
 
 /* --- Search ------------------------------------------------------------ */
 
+/* Pathfinder off until the app restarts: its hash could not be mended, or
+ * it refused this client (403). Only the search thread touches it, and
+ * one search runs at a time. A 429 does not count: that search alone goes
+ * the old way. */
+static bool pathfinder_off;
+
+#ifdef APP_DEBUG
+/* One line per search in search_trace.log, next to the config, for the
+ * console checks: where the results came from, why not pathfinder, and
+ * what each step took. Never the token, never the query. Debug builds
+ * only; the search thread alone writes it, one search at a time. */
+static struct {
+	char line[256];
+	size_t len;
+} trace;
+
+static void trace_add(const char *fmt, ...)
+	__attribute__((format(printf, 1, 2)));
+static void trace_add(const char *fmt, ...)
+{
+	if (trace.len >= sizeof(trace.line) - 1)
+		return;
+	va_list ap;
+	va_start(ap, fmt);
+	int n = vsnprintf(trace.line + trace.len, sizeof(trace.line) - trace.len,
+	                  fmt, ap);
+	va_end(ap);
+	if (n > 0)
+		trace.len += (size_t)n;
+	if (trace.len > sizeof(trace.line) - 1)
+		trace.len = sizeof(trace.line) - 1;
+}
+
+static void trace_write(void)
+{
+	char path[320];
+	cfg_dir(path, sizeof(path));
+	size_t at = strlen(path);
+	snprintf(path + at, sizeof(path) - at, "search_trace.log");
+	FILE *f = fopen(path, "a");
+	if (!f)
+		return;
+	fprintf(f, "%s\n", trace.line);
+	fclose(f);
+}
+#define TRACE(...) trace_add(__VA_ARGS__)
+#else
+#define TRACE(...) ((void)0)
+#endif
+
+/* Names `n` track URIs into job->tracks with one metadata batch. Returns
+ * how many, or -1. */
+static int search_name_tracks(search_job *job, char uris[][64], int n,
+                              char *error, size_t errlen)
+{
+	const char *uri_ptrs[SEARCH_LIMIT];
+	if (n <= 0)
+		return 0;
+	for (int i = 0; i < n; i++)
+		uri_ptrs[i] = uris[i];
+	int named = sp_track_metadata_batch(job->host, job->library_token,
+	                                    uri_ptrs, n, job->tracks, error,
+	                                    errlen);
+	secure_clear(uri_ptrs, sizeof(uri_ptrs));
+	return named;
+}
+
+/* One sp_search_typed, traced. */
+static int search_typed_once(search_job *job, sp_typed_search *typed,
+                             char *error, size_t errlen)
+{
+	int rc = sp_search_typed(job->library_token, job->query,
+	                         pf_hash_current(), typed,
+	                         &job->cancel_requested, error, errlen);
+	TRACE(" top=%d tracks=%d artists=%d albums=%d playlists=%d",
+	      typed->ms[0], typed->ms[1 + RESULT_TRACKS],
+	      typed->ms[1 + RESULT_ARTISTS], typed->ms[1 + RESULT_ALBUMS],
+	      typed->ms[1 + RESULT_PLAYLISTS]);
+	return rc;
+}
+
+/* Every kind through pathfinder, the tracks then named for their files.
+ * Mends a stale hash once. Returns 0, PF_CANCELLED or -1. */
+static int search_pathfinder(search_job *job, char uris[][64], char *error,
+                             size_t errlen)
+{
+	sp_typed_search typed = {
+		.items = { job->tracks, job->artists, job->albums, job->playlists },
+		.max = { SEARCH_LIMIT, SEARCH_ITEMS_MAX, SEARCH_ITEMS_MAX,
+		         SEARCH_ITEMS_MAX },
+	};
+	TRACE("pathfinder");
+	int rc = search_typed_once(job, &typed, error, errlen);
+	if (rc == PF_STALE_HASH && !job->cancel_requested) {
+		u64 t0 = osGetTime();
+		bool mended = pf_hash_refresh(error, errlen) == 0;
+		TRACE(" hash=%s:%d", mended ? "mended" : "FAILED",
+		      (int)(osGetTime() - t0));
+		(void)t0;
+		if (mended)
+			rc = search_typed_once(job, &typed, error, errlen);
+		/* No new hash, or the new one is stale too: not again this
+		 * run. */
+		if (rc == PF_STALE_HASH)
+			pathfinder_off = true;
+	}
+	if (rc == PF_STALE_HASH)
+		rc = -1;
+	if (rc == -1) {
+		if (typed.status)
+			TRACE(" FAILED HTTP %d", typed.status);
+		else
+			TRACE(" FAILED %s", error);
+		if (typed.status == 403)
+			pathfinder_off = true;
+	}
+	if (rc != 0)
+		return rc;
+
+	/* The tracks come by URI only: the batch names them and brings the
+	 * files to play. */
+	int n = typed.count[RESULT_TRACKS];
+	for (int i = 0; i < n; i++)
+		snprintf(uris[i], 64, "%s", job->tracks[i].uri);
+	u64 t0 = osGetTime();
+	job->count = search_name_tracks(job, uris, n, error, errlen);
+	TRACE(" meta=%d", (int)(osGetTime() - t0));
+	(void)t0;
+	if (job->cancel_requested)
+		return PF_CANCELLED;
+	if (job->count < 0)
+		return -1;
+
+	job->kind_count[RESULT_TRACKS] = job->count;
+	for (int k = RESULT_ARTISTS; k < RESULT_KINDS; k++)
+		job->kind_count[k] = typed.count[k];
+	for (int k = 0; k < RESULT_KINDS; k++)
+		job->offered[k] = true;
+	job->best_kind = -1;
+	int best = typed.best_kind;
+	if (best >= 0 && best < RESULT_KINDS && job->kind_count[best] > 0) {
+		int at = search_find_uri(typed.items[best], job->kind_count[best],
+		                         typed.best_uri);
+		/* Not among the rows kept: the list is still ours, so its first
+		 * one. */
+		job->best_kind = best;
+		job->best_index = at >= 0 ? at : 0;
+	}
+	return 0;
+}
+
+/* Today's search: tracks from context-resolve, artists and albums made up
+ * from them, no playlists. */
+static int search_fallback(search_job *job, char uris[][64], char *error,
+                           size_t errlen)
+{
+	int n = sp_search_tracks(job->host, job->library_token, job->query,
+	                         uris, SEARCH_LIMIT, error, errlen);
+	if (job->cancel_requested)
+		return PF_CANCELLED;
+	if (n < 0)
+		return -1;
+	job->count = search_name_tracks(job, uris, n, error, errlen);
+	if (job->cancel_requested)
+		return PF_CANCELLED;
+	if (job->count < 0)
+		return -1;
+	job->kind_count[RESULT_TRACKS] = job->count;
+	job->kind_count[RESULT_ARTISTS] =
+	    search_derive_artists(job->tracks, job->count, job->artists,
+	                          SEARCH_ITEMS_MAX);
+	job->kind_count[RESULT_ALBUMS] =
+	    search_derive_albums(job->tracks, job->count, job->albums,
+	                         SEARCH_ITEMS_MAX);
+	job->kind_count[RESULT_PLAYLISTS] = 0;
+	job->offered[RESULT_TRACKS] = true;
+	job->offered[RESULT_ARTISTS] = true;
+	job->offered[RESULT_ALBUMS] = true;
+	job->offered[RESULT_PLAYLISTS] = false;
+	job->best_kind = -1;
+	return 0;
+}
+
 static void search_worker(void *arg)
 {
 	search_job *job = arg;
 	char uris[SEARCH_LIMIT][64];
-	const char *uri_ptrs[SEARCH_LIMIT];
 	char error[sizeof(job->error)] = {0};
+	int rc = -1;
+	bool use_pathfinder = !pathfinder_off;
+#ifdef APP_DEBUG
+	trace.len = 0;
+	trace.line[0] = '\0';
+	/* To try the fallback on the console without breaking anything. */
+	char forced[8];
+	if (cfg_get("pf_force_fallback", forced, sizeof(forced)) &&
+	    strcmp(forced, "1") == 0)
+		use_pathfinder = false;
+#endif
+	u64 start = osGetTime();
 
-	job->count = sp_search_tracks(job->host, job->library_token,
-	                              job->query, uris, SEARCH_LIMIT,
-	                              error, sizeof(error));
-	if (!job->cancel_requested && job->count >= 0 && job->count > 0) {
-		for (int i = 0; i < job->count; i++)
-			uri_ptrs[i] = uris[i];
-		job->count = sp_track_metadata_batch(job->host,
-		                                     job->library_token,
-		                                     uri_ptrs, job->count,
-		                                     job->tracks, error,
-		                                     sizeof(error));
+	if (use_pathfinder)
+		rc = search_pathfinder(job, uris, error, sizeof(error));
+	else
+		TRACE("pathfinder %s", pathfinder_off ? "off" : "forced off");
+
+	/* Anything but a cancel goes the old way, without a word: a search
+	 * fails only when that fails too. */
+	if (rc != 0 && rc != PF_CANCELLED && !job->cancel_requested) {
+		memset(job->kind_count, 0, sizeof(job->kind_count));
+		job->count = 0;
+		error[0] = '\0';
+		u64 t0 = osGetTime();
+		rc = search_fallback(job, uris, error, sizeof(error));
+		TRACE(" | fallback=%d%s", (int)(osGetTime() - t0),
+		      rc == 0 ? "" : " FAILED");
+		(void)t0;
 	}
-	if (job->cancel_requested) {
+	TRACE(" | total=%d", (int)(osGetTime() - start));
+	(void)start;
+
+	if (job->cancel_requested || rc == PF_CANCELLED) {
 		job->result = -2;
-	} else if (job->count < 0) {
+	} else if (rc != 0) {
 		snprintf(job->error, sizeof(job->error), "%s",
 		         error[0] ? error : tr(STR_ERR_SEARCH_LOAD));
 		job->result = -1;
 	} else {
 		job->result = 0;
 	}
+#ifdef APP_DEBUG
+	if (job->result != -2)
+		trace_write();
+#endif
 	secure_clear(uris, sizeof(uris));
-	secure_clear(uri_ptrs, sizeof(uri_ptrs));
 	secure_clear(error, sizeof(error));
 	__sync_synchronize();
 	job->done = true;
@@ -1611,7 +1839,17 @@ static void search_poll(void)
 		/* The connection went while it searched. */
 		view_results_error(STR_OFFLINE_SEARCH);
 	} else if (search.result == 0) {
-		view_results_show(search.tracks, search.count, 0);
+		results_content found = {
+			.items = { search.tracks, search.artists, search.albums,
+			           search.playlists },
+			.preferred_kind = search.best_kind,
+			.preferred_index = search.best_index,
+		};
+		for (int k = 0; k < RESULT_KINDS; k++) {
+			found.count[k] = search.kind_count[k];
+			found.offered[k] = search.offered[k];
+		}
+		view_results_show(&found);
 	} else {
 		view_results_error(search_error_advice(search.error));
 	}
@@ -1846,11 +2084,43 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 	switch_tab(TAB_PLAYER);
 }
 
-/* The detail of the focused result, on the Search tab's stack. */
+/* The detail of the focused result, on the Search tab's stack: tracks
+ * only, the view offers X nowhere else. */
 static void open_result_detail(void)
 {
+	if (view_results_kind() != RESULT_TRACKS)
+		return;
 	details_open_track(TAB_SEARCH, search.tracks, search.count,
 	                   view_results_selected(), true);
+	switch_tab(TAB_SEARCH);
+}
+
+/* A on a result: a track plays; an artist, an album or a playlist opens
+ * its detail on the Search tab's stack, B coming back to the list as it
+ * was. */
+static void open_result(spotify_session *session)
+{
+	int i = view_results_selected();
+	result_kind kind = view_results_kind();
+	if (kind == RESULT_TRACKS) {
+		play_from_results(session, i);
+		return;
+	}
+	if (i < 0 || i >= search.kind_count[kind])
+		return;
+	switch (kind) {
+	case RESULT_ARTISTS:
+		details_open_artist(TAB_SEARCH, search.artists[i].uri);
+		break;
+	case RESULT_ALBUMS:
+		details_open_album(TAB_SEARCH, search.albums[i].uri);
+		break;
+	case RESULT_PLAYLISTS:
+		details_open_playlist(TAB_SEARCH, search.playlists[i].uri);
+		break;
+	default:
+		return;
+	}
 	switch_tab(TAB_SEARCH);
 }
 
@@ -2051,7 +2321,7 @@ static void switch_tab(app_tab tab)
 {
 	active_tab = tab;
 	tabbar_set_active(tab);
-	/* A detail left open on the tab is still there (plan 3.1). */
+	/* A detail left open on the tab is still there (STYLES.md 7.9). */
 	if (details_active(tab)) {
 		view_detail_enter();
 		return;
@@ -2329,7 +2599,7 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 			}
 			switch (action) {
 			case RESULTS_ACTION_OPEN:
-				play_from_results(session, view_results_selected());
+				open_result(session);
 				break;
 			case RESULTS_ACTION_DETAIL:
 				open_result_detail();

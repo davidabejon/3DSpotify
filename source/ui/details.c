@@ -141,7 +141,7 @@ static void worker_main(void *arg)
 			job.uris[i] = job.playlist.track_uris[i];
 	} else {
 		/* The service already sends the account country's top tracks, so
-		 * no country is needed to choose them (plan, phase 0). */
+		 * no country is needed to choose them (probe_meta). */
 		rc = sp_artist_metadata(sess, job.token, job.uri, NULL, &job.artist,
 		                        job.error, sizeof(job.error));
 		n = job.artist.track_count;

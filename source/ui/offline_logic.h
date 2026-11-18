@@ -33,14 +33,19 @@
 typedef enum {
 	TRACK_ROW_TRACK,
 	TRACK_ROW_ALBUM,
-	TRACK_ROW_PLAYLIST
+	TRACK_ROW_PLAYLIST,
+	TRACK_ROW_ARTIST       /* a search result only */
 } track_row_kind;
 
-/* One row of a list that is not only playable tracks. */
+/* One row of a list that is not only playable tracks: the downloads, or
+ * the search results of a kind other than tracks. */
 typedef struct {
 	uint8_t kind;      /* track_row_kind */
 	uint8_t state;     /* a track's dl_state */
 	bool    off;       /* not on the card: shown dimmed, never focused */
+	/* A search result: the second line says what it is ("Album · ..."),
+	 * not what is downloaded of it. */
+	bool    search;
 	int16_t index;     /* into idx->tracks or idx->colls */
 	int16_t done, count;   /* a collection's tracks on the card, in all */
 } track_row;
@@ -82,6 +87,7 @@ static inline int offline_home_rows(const dl_index *idx, track_row *rows,
 		                                                 : TRACK_ROW_ALBUM;
 		r->state = DL_DONE;
 		r->off = false;
+		r->search = false;
 		r->index = (int16_t)c;
 		r->done = (int16_t)done;
 		r->count = (int16_t)count;
@@ -98,6 +104,7 @@ static inline int offline_home_rows(const dl_index *idx, track_row *rows,
 		r->kind = TRACK_ROW_TRACK;
 		r->state = DL_DONE;
 		r->off = false;
+		r->search = false;
 		r->index = scratch[i].index;
 		r->done = r->count = 0;
 	}
@@ -119,6 +126,7 @@ static inline int offline_collection_rows(const dl_index *idx, int c,
 		r->kind = TRACK_ROW_TRACK;
 		r->state = (uint8_t)idx->tracks[t].state;
 		r->off = idx->tracks[t].state != DL_DONE;
+		r->search = false;
 		r->index = (int16_t)t;
 		r->done = r->count = 0;
 	}

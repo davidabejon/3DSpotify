@@ -62,22 +62,36 @@ static inline int now_album_cy(int title_h, int body_h)
 
 /* The detail card has no times nor bar: its cover is centred on the
  * screen's height, and its title with `count` lines centred beside it.
- * The text is laid out as on the card, moved down by now_detail_text_dy. */
-static inline ui_rect now_detail_art_rect(void)
+ * The text is laid out as on the card, moved down by now_detail_text_dy.
+ * Under the strip of kinds (STYLES.md 5.17) the cover goes lower instead,
+ * at RESULTS_CARD_Y, so the strip and the card are centred together: the
+ * _at forms take the cover's top. */
+static inline ui_rect now_detail_art_rect_at(int y)
 {
-	ui_rect r = { SP_3, (SCREEN_H - ART_SIZE) / 2, ART_SIZE, ART_SIZE };
+	ui_rect r = { SP_3, y, ART_SIZE, ART_SIZE };
 	return r;
 }
 
-static inline int now_detail_text_dy(int title_h, int body_h, int count)
+static inline ui_rect now_detail_art_rect(void)
+{
+	return now_detail_art_rect_at((SCREEN_H - ART_SIZE) / 2);
+}
+
+static inline int now_detail_text_dy_at(int title_h, int body_h, int count,
+                                        int art_y)
 {
 	if (count < 0)
 		count = 0;
 	if (count > NOW_LINES)
 		count = NOW_LINES;
 	int block_h = title_h + (count > 0 ? SP_1 + count * body_h : 0);
-	ui_rect art = now_detail_art_rect();
-	return art.y + (art.h - block_h) / 2 - SP_3;
+	return art_y + (ART_SIZE - block_h) / 2 - SP_3;
+}
+
+static inline int now_detail_text_dy(int title_h, int body_h, int count)
+{
+	return now_detail_text_dy_at(title_h, body_h, count,
+	                             now_detail_art_rect().y);
 }
 
 /* The times line, e4 under the cover; `meta_h` is t_meta's line. */

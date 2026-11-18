@@ -122,7 +122,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_PAIR_OFFLINE] = "No connection, retrying...",
 
 	/* Search. */
-	[STR_SEARCH_HINT] = "Song or artist name",
+	[STR_SEARCH_HINT] = "Song, artist, album or playlist",
 	[STR_SEARCH_CANCELLING] = "Cancelling after the current request...",
 	[STR_SEARCH_FAILED_TITLE] = "Search failed",
 	[STR_SEARCH_HTTP_401] = "The session was rejected. Reconnect it from Settings.",
@@ -133,9 +133,13 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_ERR_SEARCH_THREAD] = "Could not start the search task.",
 	[STR_ERR_DETAIL_CONNECT_FMT] = "No connection to %s.",
 	[STR_ERR_DETAIL_THREAD] = "Could not start the loading task.",
-	[STR_RESULTS_EMPTY] = "No songs found.",
+	[STR_RESULTS_EMPTY] = "No results found.",
 	[STR_RESULTS_IDLE] = "Nothing searched yet.",
 	[STR_RESULTS_RECENT] = "Recent searches",
+	[STR_HINT_KIND] = "Type",
+	[STR_RESULT_ARTIST] = "Artist",
+	[STR_RESULT_ALBUM_FMT] = "Album · %s",
+	[STR_RESULT_PLAYLIST_FMT] = "Playlist · %s",
 
 	/* Playback. */
 	[STR_PLAYER_ART_LOADING] = "Loading cover art...",

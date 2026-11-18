@@ -381,8 +381,7 @@ class BuildTests(unittest.TestCase):
         logic = (ui_dir / "list_logic.h").read_text(encoding="utf-8")
         self.assertNotIn("#include <3ds", logic)
         self.assertNotIn("#include <citro", logic)
-        # 7.4: four rows per screen, left/right jump as many; L/R are
-        # the tab bar's.
+        # 7.4: four rows per screen; L/R are the tab bar's.
         self.assertIn("#define RESULTS_PER_PAGE 4", logic)
         results = (ui_dir / "view_results.c").read_text(encoding="utf-8")
         # The rows, their focus, scrolling and touch are the list widget's,
@@ -390,9 +389,13 @@ class BuildTests(unittest.TestCase):
         rows = (ui_dir / "track_list.c").read_text(encoding="utf-8")
         self.assertIn('#include "track_list.h"', results)
         self.assertIn("track_list_update_touch(&list", results)
-        self.assertIn("track_list_navigate(&list, down)", results)
-        # Left and right jump a page: the rows of the list's frame
-        # (RESULTS_PER_PAGE, or fewer under an album's download button).
+        # In the results left/right switch the kind (6.6): the list gets
+        # up and down only. Elsewhere they jump a page: the rows of the
+        # list's frame (RESULTS_PER_PAGE, or fewer under an album's
+        # download button).
+        self.assertIn("track_list_navigate(&list, down & (KEY_UP | KEY_DOWN))",
+                      results)
+        self.assertIn("step_kind((down & KEY_LEFT) ? -1 : 1)", results)
         self.assertIn("move_focus(l, l->frame.rows)", rows)
         self.assertIn("else if (down & KEY_RIGHT)\n\t\tmove_focus(l, "
                       "l->frame.rows);", rows)
@@ -419,7 +422,7 @@ class BuildTests(unittest.TestCase):
         search = app[app.index("static void search_start("):
                      app.index("static bool ask_search_query(")]
         self.assertIn("view_results_searching();", search)
-        self.assertIn("view_results_show(search.tracks", search)
+        self.assertIn("view_results_show(&found)", app)
         loop = app[app.index("static tabs_exit run_tabs("):
                    app.index("static void stop_tabs(")]
         self.assertIn("view_results_cancelling()", loop)
@@ -430,6 +433,65 @@ class BuildTests(unittest.TestCase):
         self.assertIn("queue_play_radio(session, &search.tracks[index]);", app)
         self.assertIn("case RESULTS_ACTION_RETRY:", app)
         self.assertIn("search_error_advice(search.error)", app)
+
+    def test_results_open_every_kind(self):
+        import re
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        opening = app[app.index("static void open_result("):]
+        for call in ("details_open_artist(TAB_SEARCH",
+                     "details_open_album(TAB_SEARCH",
+                     "details_open_playlist(TAB_SEARCH",
+                     "play_from_results(session, i)"):
+            self.assertIn(call, opening)
+        # X is a track's detail only.
+        detail = app[app.index("static void open_result_detail("):
+                     app.index("static void open_result(")]
+        self.assertIn("view_results_kind() != RESULT_TRACKS", detail)
+        results = (root / "ui" / "view_results.c").read_text(encoding="utf-8")
+        self.assertIn("(down & KEY_X) && on_tracks()", results)
+        self.assertIn("ICON_DPAD_LR", results)
+        # The new texts, in both languages, with the same conversions.
+        tables = [(root / "lang" / f"lang_{code}.c").read_text(
+            encoding="utf-8") for code in ("en", "es")]
+        for name in ("STR_HINT_KIND", "STR_RESULT_ARTIST",
+                     "STR_RESULT_ALBUM_FMT", "STR_RESULT_PLAYLIST_FMT"):
+            specs = []
+            for table in tables:
+                m = re.search(r"\[" + name + r"\] = \"([^\"]*)\"", table)
+                self.assertIsNotNone(m, name)
+                specs.append(re.findall(r"%[-0-9.]*[a-z]", m.group(1)))
+            self.assertEqual(specs[0], specs[1], name)
+        self.assertIn("ICON_DPAD_LR", (root / "ui" / "icons_data.h").read_text(
+            encoding="utf-8"))
+
+    def test_results_top_screen_strip_and_card(self):
+        import re
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        start = app.index("static const detail_doc *top_detail_sync(")
+        sync = app[start:app.index("\n}\n", start)]
+        self.assertIn("active_tab == TAB_SEARCH)", sync)
+        self.assertIn("doc = view_results_preview();", sync)
+        frame = app[app.index("static void frame(void)"):]
+        self.assertIn("top_set_results(top_shows_strip(active_tab,", frame)
+        top = (root / "ui" / "top.c").read_text(encoding="utf-8")
+        self.assertIn("top_strip_dirty(&strip)", top)
+        self.assertIn("top_strip_draw(&strip)", top)
+        # One delay for every preview's picture.
+        theme = (root / "ui" / "theme.h").read_text(encoding="utf-8")
+        self.assertIn("PREVIEW_DELAY = 18", theme)
+        for name in ("view_home.c", "view_results.c"):
+            self.assertIn("== PREVIEW_DELAY", (root / "ui" / name).read_text(
+                encoding="utf-8"))
+        # Code cites the style guide, never a working plan.
+        cite = re.compile(r"docs/plan|plan_vistas|feature_plan|home plan|"
+                          r"\(plan \d|\(plan, phase|\bplan \d|Plan \d")
+        for path in sorted(root.rglob("*.[ch]")):
+            if "deps" in path.parts or "dist" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            self.assertIsNone(cite.search(text), path.name)
 
     def test_result_thumbnails_follow_style_guide(self):
         ui_dir = build.ROOT / "ui"
@@ -564,8 +626,9 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn(change, drag_end)
         self.assertIn("list_row_whole_in(l->frame, l->selected, l->scroll, "
                       "l->count)", rows)
-        self.assertIn("track_list_realign(&list, down, KEY_A | KEY_X)",
+        self.assertIn("u32 confirm = KEY_A | (on_tracks() ? KEY_X : 0);",
                       results)
+        self.assertIn("track_list_realign(&list, down, confirm)", results)
         for source in (results, rows):
             self.assertNotIn("list_keep_visible", source)
         self.assertIn("list_scroll_thumb_in(l->frame, look->scroll, "
@@ -593,8 +656,8 @@ class BuildTests(unittest.TestCase):
         loop = app[app.index("static tabs_exit run_tabs("):
                    app.index("static void stop_tabs(")]
         self.assertIn("case RESULTS_ACTION_DETAIL:", loop)
-        self.assertIn("play_from_results(session, view_results_selected());",
-                      loop)
+        self.assertIn("open_result(session);", loop)
+        self.assertIn("play_from_results(session, i);", app)
         self.assertIn("details_open_track(TAB_SEARCH, search.tracks, "
                       "search.count,", app)
         # With a detail open, its view has the tab's input and screen.
@@ -733,8 +796,13 @@ class BuildTests(unittest.TestCase):
                         "### 7.11 Detalle de álbum, de artista y de playlist",
                         "### 7.12 Ficha de detalle (pantalla superior)"):
             self.assertIn(section, style)
-        self.assertIn("[A] Reproducir [X] Detalle [Y] Buscar [B] Volver",
+        self.assertIn("[A] Reproducir [X] Detalle [Y] Buscar … [◀▶] Tipo",
                       style)
+        self.assertIn("[A] Abrir [Y] Buscar [B] Volver … [◀▶] Tipo", style)
+        results = (build.ROOT / "ui" / "view_results.c").read_text(
+            encoding="utf-8")
+        self.assertIn("ui_button_bar_split(list_hints_rect(), hints, n, "
+                      "switches ? 1 : 0)", results)
         for readme, heading in (("README.md", "### Details"),
                                 ("README_es.md", "### Detalles")):
             text = (build.ROOT.parent / readme).read_text(encoding="utf-8")
@@ -1098,13 +1166,63 @@ class BuildTests(unittest.TestCase):
                     app.index("static void search_poll(")]
         self.assertIn("background_priority()", start)
         self.assertNotIn("0x18", start)
-        self.assertLess(
-            app.index("if (!job->cancel_requested"),
-            app.index("job->count = sp_track_metadata_batch"),
-        )
+        # A cancel is looked at before the tracks are named, on both ways.
+        fallback = app[app.index("static int search_fallback("):
+                       app.index("static void search_worker(")]
+        self.assertLess(fallback.index("if (job->cancel_requested)"),
+                        fallback.index("search_name_tracks("))
+        typed = app[app.index("static int search_typed_once("):
+                    app.index("static int search_fallback(")]
+        self.assertIn("&job->cancel_requested", typed)
+        self.assertLess(typed.index("if (job->cancel_requested)"),
+                        typed.index("if (job->count < 0)"))
         self.assertTrue(
             (build.ROOT / "ui" / "player_logic.h").is_file()
         )
+
+    def test_typed_search_goes_through_pathfinder_with_a_fallback(self):
+        import re
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        # Both ways stay reachable from the worker: pathfinder first, the
+        # old search whenever it fails.
+        searching = app[app.index("static int search_typed_once("):
+                        app.index("/* What to suggest for a failed search")]
+        self.assertIn("sp_search_typed(", searching)
+        self.assertIn("sp_search_tracks(", searching)
+        worker = searching[searching.index("static void search_worker("):]
+        self.assertLess(worker.index("search_pathfinder("),
+                        worker.index("search_fallback("))
+        self.assertIn("pf_hash_refresh(", searching)
+        # The browser User-Agent pathfinder needs is written once.
+        holders = [f.name for f in sorted((root / "platform3ds").glob("*.[ch]"))
+                   if "Mozilla/5.0" in f.read_text(encoding="utf-8")]
+        self.assertEqual(holders, ["pathfinder.c"])
+        pf_hash = (root / "platform3ds" / "pf_hash.h").read_text(
+            encoding="utf-8")
+        match = re.search(r'#define PF_HASH_DEFAULT\s*\\?\s*"([^"]*)"',
+                          pf_hash)
+        self.assertIsNotNone(match)
+        self.assertRegex(match.group(1), r"^[0-9a-f]{64}$")
+        # The trace exists in debug builds only, and never holds the query
+        # or the token.
+        self.assertIn('["-DAPP_DEBUG"] if args.debug',
+                      (root / "build.py").read_text(encoding="utf-8"))
+        trace = app[app.index("#ifdef APP_DEBUG\n/* One line per search"):
+                    app.index("/* Names `n` track URIs")]
+        self.assertIn("search_trace.log", trace)
+        self.assertEqual(app.count("search_trace.log"),
+                         trace.count("search_trace.log"))
+        traced = re.findall(r"TRACE\(([^;]*)\);", app)
+        self.assertTrue(traced)
+        for call in traced:
+            self.assertNotIn("query", call)
+            self.assertNotIn("token", call)
+        # The pure parts are in the host tests.
+        native = (root.parent / "tests" / "test_native_logic.py").read_text(
+            encoding="utf-8")
+        self.assertIn('"search_results.c"', native)
+        self.assertIn('"json3ds.c"', native)
 
     def test_native_queue_boundaries_and_cleanup_order_are_explicit(self):
         app = (build.ROOT / "main.c").read_text(

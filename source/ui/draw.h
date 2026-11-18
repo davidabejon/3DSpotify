@@ -66,18 +66,30 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color,
 /* The width ui_glyph() will take for `letter`. */
 int ui_glyph_width(const C2D_Text *letter);
 
+/* A D-pad glyph (5.6), the size of a letter's: no colour of its own, so
+ * `texto_2` like START and SELECT, the icon in `tinta`; inverted, `tinta`
+ * with the icon in `texto_2`. Returns its width. */
+int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted);
+int ui_glyph_icon_width(void);
+
 /* One action of the button bar: the button's glyph and what it does. */
 typedef struct {
 	const C2D_Text *letter;
 	const C2D_Text *label;
 	u32 color;      /* the button's colour (2.5) */
 	bool inverted;  /* the button is held (6.5) */
+	/* Not NULL: a D-pad glyph with this icon instead of the letter. */
+	const C2D_Image *icon;
 } ui_hint;
 
 /* The button bar (5.6): a `capa` panel with up to four actions, left to
  * right from the margin. An action whose label is NULL shows its glyph
  * alone, for a bar that would not fit otherwise. */
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count);
+/* The same with the last `trailing` actions against the right margin:
+ * an action that comes and goes with what is on screen keeps its place. */
+void ui_button_bar_split(ui_rect bar, const ui_hint *hints, int count,
+                         int trailing);
 
 /* The progress bar's handle: none, at rest, or dragged by the stylus. */
 typedef enum {
@@ -104,7 +116,7 @@ void ui_loader(int cx, int cy, int step);
  * square; `step` advances every LOADER_STEP frames. */
 void ui_spinner(int cx, int cy, int step);
 /* The ring alone, for a flat background with nothing to veil: the login
- * screens (feature_plan.md, decision 1). */
+ * screens (STYLES.md 7.2). */
 void ui_spinner_ring(int cx, int cy, int step);
 
 /* A notice (5.8): raised `coral` (error) or `ambar` (warning) surface with

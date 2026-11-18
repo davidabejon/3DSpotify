@@ -75,8 +75,8 @@ static void frame(void)
 
 /* ------------------------------------------ album and artist (detail views)
  *
- * Phase 0 of docs/plan_vistas_detalle.md: before the client learns to read
- * albums and artists, this dumps what the service really sends, so the field
+ * Before the client learned to read albums and artists, this dumped
+ * (and still dumps) what the service really sends, so the field
  * numbers below are checked against the wire and not just against
  * librespot's metadata.proto. A wrong field number in protobuf does not fail;
  * it reads nothing.

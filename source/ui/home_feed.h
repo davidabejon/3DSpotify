@@ -1,4 +1,4 @@
-/* The home tab's playlists, loaded in the background (home plan 3.5).
+/* The home tab's playlists, loaded in the background (STYLES.md 7.7).
  *
  * One worker, over one keep-alive connection to spclient: the play history
  * and the decorated rootlist, merged by home_feed_logic.h (recent first,

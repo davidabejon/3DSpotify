@@ -16,7 +16,7 @@
  *   volume   201..207  "Vol." and the volume bar
  *   hints    216..240  button bar
  *
- * The links (docs/plan_vistas_detalle.md 4.4) are touch only, TOUCH_MIN
+ * The links (STYLES.md 5.14) are touch only, TOUCH_MIN
  * high (STYLES.md 4.4): they open the track's, the artist's or the album's
  * detail. At rest only their text shows; there is no focus state, since the
  * D-pad already skips tracks and sets the volume. */

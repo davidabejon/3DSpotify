@@ -29,7 +29,8 @@ section that applies. For bugs, include:
 - The commit or release you built from.
 - Logs, if any. When the problem is network-related, run the probes in order
   (`probe_tls`, `probe_pair`, `probe_ap`, `probe_meta`, `probe_audio`,
-  `probe_play`) and report the first one that fails. `probe_tls` writes
+  `probe_play`) and report the first one that fails; for search problems,
+  `probe_search`. `probe_tls` writes
   `spotify-tls.log` next to the `.3dsx`.
 
 **Never paste credentials.** Remove refresh tokens, access tokens, pairing
@@ -66,8 +67,15 @@ them against pinned checksums. Do not commit anything under `source/dist/`,
 | `source/platform3ds/` | TLS, sockets, Spotify protocol and 3DS platform code. |
 | `source/probe_*/` | Standalone diagnostic apps, one per step of the client. |
 | `source/build.py` | Build script for every target. |
-| `tests/` | Python tests for the build and host-compiled C tests for pure logic. |
+| `tests/` | Python tests for the build and host-compiled C tests for pure logic; `tests/fixtures/` holds trimmed service replies they read. |
 | `assets/` | Banner, icon and packaging assets. |
+
+Search by type is spread over a few files: `platform3ds/pathfinder.[ch]` asks
+the service, `platform3ds/pf_hash.[ch]` keeps its query hash,
+`platform3ds/search_results.[ch]` reads the replies (pure, host-tested),
+`ui/results_logic.h` switches between kinds, and `ui/top_strip.[ch]` draws the
+strip of kinds on the top screen. `source/probe_search/` is where the
+service's behaviour was measured.
 
 ## Making changes
 
@@ -184,6 +192,19 @@ Reviews may ask for changes; push them as new commits to the same branch.
   - the download engine never runs while the player prepares a track or
     downloads the one that plays;
   - the Home tile's `3dspotify:downloads` pseudo-URI never reaches the network.
+- Search by type depends on pathfinder (`api-partner.spotify.com`), the
+  service Spotify's web player searches with. It is not a stable way in, so
+  keep these when you touch it:
+  - today's search (`context-resolve` plus the metadata batch) stays as the
+    fallback and is never removed: any pathfinder failure but a cancel falls
+    back to it without a word, and a search only fails when that fails too;
+  - the query hash mends itself: on HTTP 412 it is found again from
+    open.spotify.com once per run and kept in the config (`pf_hash`), and
+    `PF_HASH_DEFAULT` is checked with every release;
+  - pathfinder only answers a browser's User-Agent, written once, in
+    `pathfinder.c`; the rest of the client keeps its own;
+  - the Web API stays out of it: the desktop client id is rate-limited there
+    (429) and capped in development mode.
 - Never log or display secrets (tokens, keys, signed URLs). The username is only
   shown in Settings and stored in the config, never logged.
 - Do not add Spotify logos or other trademarked assets.

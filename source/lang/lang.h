@@ -59,7 +59,7 @@ typedef enum {
 	STR_HINT_PAIR,
 	STR_HINT_EXIT,
 
-	/* Detail views (docs/plan_vistas_detalle.md). */
+	/* Detail views (STYLES.md 7.9-7.12). */
 	STR_HINT_DETAIL,
 	/* Y in a list: the order its queue plays in, as it is now, and the
 	 * bubble when it changes. */
@@ -140,7 +140,7 @@ typedef enum {
 	STR_PAIR_WAITING,
 	STR_PAIR_CREDENTIALS_UNCHANGED,
 	STR_PAIR_RETRY_NEW_CODE,
-	/* The login screens (feature_plan.md, phase 4). */
+	/* The login screens (STYLES.md 7.2, 7.3). */
 	STR_LOGIN_STEP_FMT,
 	STR_PAIR_HEADING,
 	STR_PAIR_HEADING_EXPIRED,
@@ -164,6 +164,12 @@ typedef enum {
 	STR_RESULTS_EMPTY,
 	STR_RESULTS_IDLE,
 	STR_RESULTS_RECENT,
+	/* Search results by kind: the D-pad action, and the second line of an
+	 * artist, an album or a playlist row. */
+	STR_HINT_KIND,
+	STR_RESULT_ARTIST,
+	STR_RESULT_ALBUM_FMT,
+	STR_RESULT_PLAYLIST_FMT,
 
 	/* Playback. */
 	STR_PLAYER_ART_LOADING,

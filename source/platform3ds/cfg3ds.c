@@ -12,7 +12,8 @@
 #define APP_DATA_DIR "sdmc:/3ds/3DSpotify/"
 #define APP_CONFIG_PATH APP_DATA_DIR CFG_NAME
 /* The refresh token and its scope, the language, the shuffle, the volume,
- * the recent searches, the profile and its picture, with room to grow. */
+ * the recent searches, the profile and its picture, the search hash
+ * (pf_hash.h), with room to grow. */
 #define CFG_MAX_KEYS 16
 #define CFG_VAL_MAX 512
 

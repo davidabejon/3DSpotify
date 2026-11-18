@@ -1,9 +1,11 @@
 #include "view_results.h"
 
+#include "art_cache.h"
 #include "draw.h"
 #include "icons.h"
 #include "list_logic.h"
 #include "press_logic.h"
+#include "results_logic.h"
 #include "tabbar.h"
 #include "theme.h"
 #include "track_list.h"
@@ -28,16 +30,30 @@ typedef enum {
 	MODE_ERROR
 } results_mode;
 
-/* The buttons this view uses (2.5). */
-enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X", "Y" };
+/* The buttons this view uses (2.5); the D-pad's glyph is an icon. */
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_DPAD, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = {
+	"A", "B", "X", "Y", ""
+};
 static const u32 glyph_colors[GLYPH_COUNT] = {
-	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y
+	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y, 0
 };
 
-/* Content. The rows, their focus, scroll and input are the list's. */
+/* Content. The rows, their focus, scroll and input are the list's: one
+ * list, loaded with the kind on screen (results_logic.h keeps where the
+ * others were left). The kinds other than tracks draw as rows of their
+ * kind, which are the view's. */
 static results_mode mode = MODE_IDLE;
 static track_list list;
+static results_content content;
+static results_kinds kinds;
+static track_row kind_rows[RESULT_KINDS][SEARCH_ITEMS_MAX];
+/* The top screen: the focused row's card, and the strip's nudge. */
+static detail_doc preview;
+static result_kind preview_kind;
+static int preview_index = -1;
+static int preview_still;
+static int strip_edge_dir, strip_edge_frames;
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
 /* Nothing searched yet: the recent searches, and the focus among the
@@ -61,7 +77,7 @@ static C2D_Text recent_label_text;
 static C2D_Text recent_text[RECENT_MAX];
 static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_play, hint_detail, hint_back, hint_search, hint_cancel,
-                hint_retry;
+                hint_retry, hint_open, hint_kind;
 
 /* Interaction (STYLES.md 6). `touch` is the button's, outside the list. */
 static press_state press_button;
@@ -75,6 +91,7 @@ static const press_state *pending_press;
 
 typedef struct {
 	results_mode mode;
+	result_kind kind;
 	track_list_look list;
 	bool button;
 	int idle_focus;
@@ -127,6 +144,9 @@ static void reset_interaction(void)
 	pending_press = NULL;
 	stale = true;
 	drawn_valid = false;
+	/* New results, or none: the card is built again from the row. */
+	preview_index = -1;
+	strip_edge_frames = 0;
 }
 
 /* For every list with thumbnails, the details' too: the results are where
@@ -182,14 +202,155 @@ void view_results_cancelling(void)
 	}
 }
 
-void view_results_show(const sp_track *tracks, int n, int focus)
+/* Loads the list with the active kind, where it was left. The covers of
+ * a kind left are asked again on coming back to it: a few KB, against
+ * keeping four lists. */
+static void load_kind(void)
 {
-	track_list_set(&list, tracks, n, focus);
-	mode = list.count > 0 ? MODE_LIST : MODE_EMPTY;
+	result_kind k = kinds.active;
+	track_list_set(&list, content.items[k], kinds.count[k],
+	               kinds.selected[k]);
+	if (k != RESULT_TRACKS)
+		track_list_set_rows(&list, kind_rows[k]);
+	if (kinds.first[k] >= 0)
+		track_list_scroll_to(&list, kinds.first[k]);
+	stale = true;
+}
+
+void view_results_show(const results_content *c)
+{
+	static const uint8_t ROW_KIND[RESULT_KINDS] = {
+		TRACK_ROW_TRACK, TRACK_ROW_ARTIST, TRACK_ROW_ALBUM,
+		TRACK_ROW_PLAYLIST,
+	};
+	content = *c;
+	int count[RESULT_KINDS];
+	for (int k = 0; k < RESULT_KINDS; k++) {
+		int max = k == RESULT_TRACKS ? TRACK_LIST_WINDOW : SEARCH_ITEMS_MAX;
+		count[k] = !content.items[k] || content.count[k] < 0 ? 0
+		         : content.count[k] > max ? max : content.count[k];
+		content.count[k] = count[k];
+		for (int i = 0; k != RESULT_TRACKS && i < count[k]; i++)
+			kind_rows[k][i] = (track_row){
+				.kind = ROW_KIND[k], .state = DL_DONE, .search = true,
+				.index = (int16_t)i,
+			};
+	}
+	bool any = results_kinds_init(&kinds, content.offered, count,
+	                              content.preferred_kind,
+	                              content.preferred_index);
+	mode = any ? MODE_LIST : MODE_EMPTY;
+	if (any)
+		load_kind();
+	else
+		track_list_set(&list, NULL, 0, 0);
 	reset_interaction();
 	/* Covers now, even before the tab is on screen, unless a list on
 	 * screen has them; on screen, the list claims them anyway. */
 	track_list_offer_thumbs(&list);
+}
+
+result_kind view_results_kind(void)
+{
+	return kinds.active;
+}
+
+/* Left/right: the next kind with results that way, the one left kept
+ * where it was. False at an end. */
+static bool step_kind(int dir)
+{
+	results_kind_keep(&kinds, list.selected, list.first);
+	if (!results_kind_step(&kinds, dir)) {
+		/* The top screen's strip nudges its active segment that way. */
+		strip_edge_dir = dir;
+		strip_edge_frames = ANIM_EDGE;
+		return false;
+	}
+	load_kind();
+	return true;
+}
+
+bool view_results_strip(results_strip *out)
+{
+	if (mode != MODE_LIST)
+		return false;
+	for (int k = 0; k < RESULT_KINDS; k++) {
+		out->offered[k] = kinds.offered[k];
+		out->count[k] = kinds.count[k];
+	}
+	out->active = kinds.active;
+	out->edge_dir = strip_edge_dir;
+	out->edge_frames = strip_edge_frames;
+	return true;
+}
+
+/* --- Preview ----------------------------------------------------------- */
+
+/* The card of the focused row, rebuilt when the focus moves: the row's own
+ * data, nothing asked of the network but its picture, and that only once
+ * the focus has rested PREVIEW_DELAY frames (or at once, if it is cached),
+ * so running down the list downloads nothing. */
+static void follow_preview(void)
+{
+	result_kind k = kinds.active;
+	int index = mode == MODE_LIST ? list.selected : -1;
+	if (index >= kinds.count[k])
+		index = -1;
+	if (k != preview_kind || index != preview_index) {
+		preview_kind = k;
+		preview_index = index;
+		preview_still = 0;
+		unsigned serial = preview.serial + 1;
+		memset(&preview, 0, sizeof(preview));
+		preview.serial = serial;
+		if (index < 0)
+			return;
+		const sp_track *t = &content.items[k][index];
+		static const detail_kind KIND[RESULT_KINDS] = {
+			DETAIL_TRACK, DETAIL_ARTIST, DETAIL_ALBUM, DETAIL_PLAYLIST,
+		};
+		preview.kind = KIND[k];
+		preview.state = DETAIL_READY;
+		preview.preview = true;
+		/* Every URI the search keeps fits (pf_parse_best reads them into
+		 * SP_URI_MAX too); a longer one would name another, so none. */
+		size_t uri_len = strlen(t->uri);
+		if (uri_len < sizeof(preview.uri))
+			memcpy(preview.uri, t->uri, uri_len + 1);
+		snprintf(preview.title, sizeof(preview.title), "%s", t->name);
+		snprintf(preview.subtitle, sizeof(preview.subtitle), "%s", t->artist);
+		snprintf(preview.art_small, sizeof(preview.art_small), "%s",
+		         t->art_small);
+		if (k == RESULT_TRACKS) {
+			/* The row itself, read where it is: nothing copied. */
+			preview.tracks = (sp_track *)t;
+			preview.count = preview.capacity = 1;
+			preview.single = true;
+		}
+		if (art_cache_has(t->art_large))
+			snprintf(preview.art, sizeof(preview.art), "%s", t->art_large);
+		return;
+	}
+	if (index >= 0 && ++preview_still == PREVIEW_DELAY)
+		snprintf(preview.art, sizeof(preview.art), "%s",
+		         content.items[k][index].art_large);
+}
+
+const detail_doc *view_results_preview(void)
+{
+	return mode == MODE_LIST && preview_index >= 0 ? &preview : NULL;
+}
+
+/* More than one kind to switch between: the D-pad has a use. */
+static bool kinds_switch(void)
+{
+	return mode == MODE_LIST && results_kinds_enabled(&kinds) > 1;
+}
+
+/* The tracks are what X opens a detail of. */
+static bool on_tracks(void)
+{
+	return mode == MODE_LIST && kinds.active == RESULT_TRACKS;
 }
 
 void view_results_error(str_id help)
@@ -250,6 +411,8 @@ static void parse_static(void)
 	parse(&hint_search, static_buf, tr(STR_HINT_SEARCH));
 	parse(&hint_cancel, static_buf, tr(STR_HINT_CANCEL));
 	parse(&hint_retry, static_buf, tr(STR_HINT_RETRY));
+	parse(&hint_open, static_buf, tr(STR_HINT_OPEN));
+	parse(&hint_kind, static_buf, tr(STR_HINT_KIND));
 }
 
 static void ensure_parsed(void)
@@ -268,6 +431,7 @@ static results_look current_look(void)
 {
 	results_look look = {
 		.mode = mode,
+		.kind = kinds.active,
 		.list = track_list_get_look(&list),
 		.button = press_down(&press_button),
 		.idle_focus = idle_focus,
@@ -285,7 +449,8 @@ static results_look current_look(void)
 
 static bool same_look(const results_look *a, const results_look *b)
 {
-	if (a->mode != b->mode || !track_list_same_look(&a->list, &b->list) ||
+	if (a->mode != b->mode || a->kind != b->kind ||
+	    !track_list_same_look(&a->list, &b->list) ||
 	    a->button != b->button || a->idle_focus != b->idle_focus ||
 	    a->bubble != b->bubble || a->loader_step != b->loader_step ||
 	    a->cancelling != b->cancelling)
@@ -311,6 +476,8 @@ static void tick(void)
 		bubble_frames = -1;
 	if (mode == MODE_SEARCHING)
 		loader_frames++;
+	if (strip_edge_frames > 0)
+		strip_edge_frames--;
 }
 
 /* --- Input ------------------------------------------------------------- */
@@ -370,6 +537,8 @@ static void release_keys(u32 up)
 		press_end(&press_glyph[GLYPH_X]);
 	if (up & KEY_Y)
 		press_end(&press_glyph[GLYPH_Y]);
+	if (up & (KEY_LEFT | KEY_RIGHT))
+		press_end(&press_glyph[GLYPH_DPAD]);
 }
 
 /* Returns true while the stylus owns the input: the list's rows, or the
@@ -444,6 +613,7 @@ results_action view_results_update(u32 down)
 	release_keys(up);
 	/* Uploads happen here, on the main thread, never while drawing. */
 	track_list_thumbs_frame(&list);
+	follow_preview();
 
 	if (pending != RESULTS_ACTION_NONE) {
 		if (!press_shown(pending_press))
@@ -464,20 +634,30 @@ results_action view_results_update(u32 down)
 	if (handle_touch(down, held, up) || pending != RESULTS_ACTION_NONE)
 		return RESULTS_ACTION_NONE;
 
-	if (mode == MODE_LIST &&
-	    track_list_realign(&list, down, KEY_A | KEY_X)) {
+	u32 confirm = KEY_A | (on_tracks() ? KEY_X : 0);
+	if (mode == MODE_LIST && track_list_realign(&list, down, confirm)) {
 		/* 6.6: with the focus dragged out of view, the first button press
-		 * only brings the list back to it, on whole rows. A and X still
-		 * show their glyph pressed, but act on nothing they cannot see. */
+		 * only brings the list back to it, on whole rows -- left/right
+		 * too, before they switch the kind. A and X still show their
+		 * glyph pressed, but act on nothing they cannot see. */
 		if (down & KEY_A)
 			press_begin(&press_glyph[GLYPH_A]);
-		if (down & KEY_X)
+		if (down & confirm & KEY_X)
 			press_begin(&press_glyph[GLYPH_X]);
+		if (down & (KEY_LEFT | KEY_RIGHT))
+			press_begin(&press_glyph[GLYPH_DPAD]);
 		return RESULTS_ACTION_NONE;
 	}
 
+	if (mode == MODE_LIST && (down & (KEY_LEFT | KEY_RIGHT))) {
+		/* The kind, without wrapping: at an end nothing moves and the
+		 * glyph held is all the answer (STYLES.md 6.6, 7.4). */
+		press_begin(&press_glyph[GLYPH_DPAD]);
+		step_kind((down & KEY_LEFT) ? -1 : 1);
+		return RESULTS_ACTION_NONE;
+	}
 	if (mode == MODE_LIST)
-		track_list_navigate(&list, down);
+		track_list_navigate(&list, down & (KEY_UP | KEY_DOWN));
 	if (has_recent()) {
 		if ((down & KEY_UP) && idle_focus > 0)
 			idle_focus--;
@@ -496,7 +676,7 @@ results_action view_results_update(u32 down)
 		} else {
 			press_key(GLYPH_A, button_action(), &press_button);
 		}
-	} else if ((down & KEY_X) && mode == MODE_LIST) {
+	} else if ((down & KEY_X) && on_tracks()) {
 		press_key(GLYPH_X, RESULTS_ACTION_DETAIL, NULL);
 	} else if (down & KEY_B) {
 		press_key(GLYPH_B, back_action(), NULL);
@@ -521,11 +701,19 @@ bool view_results_dirty(void)
 
 /* --- Drawing ----------------------------------------------------------- */
 
+/* At most four actions (5.6). On the tracks, with kinds to switch:
+ * Play, Detail, Search, then Type against the right margin -- B still
+ * goes back, as on the home grid, which does not list it either. On the
+ * other kinds: Open, Search, Back, Type. Type keeps its place whatever
+ * the kind. */
 static void draw_bar(const results_look *look)
 {
 	ui_hint hints[4];
 	int n = 0;
 	const C2D_Text *a_label = NULL;
+	bool tracks = mode == MODE_LIST && look->kind == RESULT_TRACKS;
+	bool switches = kinds_switch();
+	C2D_Image dpad = icon_image(ICON_DPAD_LR);
 	switch (mode) {
 	case MODE_SEARCHING:
 		break;
@@ -533,7 +721,7 @@ static void draw_bar(const results_look *look)
 		a_label = &hint_search;
 		break;
 	case MODE_LIST:
-		a_label = &hint_play;
+		a_label = tracks ? &hint_play : &hint_open;
 		break;
 	case MODE_EMPTY:
 		a_label = &hint_search;
@@ -545,21 +733,27 @@ static void draw_bar(const results_look *look)
 	if (a_label)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
-		                        look->glyph[GLYPH_A] };
-	if (mode == MODE_LIST)
+		                        look->glyph[GLYPH_A], NULL };
+	if (tracks)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_detail,
 		                        glyph_colors[GLYPH_X],
-		                        look->glyph[GLYPH_X] };
+		                        look->glyph[GLYPH_X], NULL };
 	if (mode == MODE_LIST || mode == MODE_ERROR)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_Y], &hint_search,
 		                        glyph_colors[GLYPH_Y],
-		                        look->glyph[GLYPH_Y] };
-	hints[n++] = (ui_hint){ &letter_text[GLYPH_B],
-	                        mode == MODE_SEARCHING ? &hint_cancel
-	                                               : &hint_back,
-	                        glyph_colors[GLYPH_B],
-	                        look->glyph[GLYPH_B] };
-	ui_button_bar(list_hints_rect(), hints, n);
+		                        look->glyph[GLYPH_Y], NULL };
+	if (n < (switches ? 3 : 4))
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_B],
+		                        mode == MODE_SEARCHING ? &hint_cancel
+		                                               : &hint_back,
+		                        glyph_colors[GLYPH_B],
+		                        look->glyph[GLYPH_B], NULL };
+	/* Last, against the right margin: the same place on every kind. */
+	if (switches)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_DPAD], &hint_kind,
+		                        glyph_colors[GLYPH_DPAD],
+		                        look->glyph[GLYPH_DPAD], &dpad };
+	ui_button_bar_split(list_hints_rect(), hints, n, switches ? 1 : 0);
 }
 
 /* The recent searches under the button: a label, then one row each with

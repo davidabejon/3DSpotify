@@ -513,7 +513,7 @@ static void draw_connecting(void)
 		                 meta_h / 2, TXT_META, COL_TEXTO_2);
 }
 
-/* The QR (feature_plan.md, phase 4): `tinta` modules on a `texto` square,
+/* The QR (STYLES.md 5.13): `tinta` modules on a `texto` square,
  * with a 1 px `tinta` outline and the hard shadow, drawn a run of dark
  * modules at a time. */
 static void draw_qr(void)
@@ -642,7 +642,7 @@ static void draw_hints(void)
 		hints[i] = (ui_hint){ &letter_text[glyphs[i]],
 		                      show[i] ? labels[i] : NULL,
 		                      glyph_colors[glyphs[i]],
-		                      press_down(&press_glyph[glyphs[i]]) };
+		                      press_down(&press_glyph[glyphs[i]]), NULL };
 	ui_button_bar(bar, hints, count);
 }
 

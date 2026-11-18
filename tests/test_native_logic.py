@@ -42,6 +42,8 @@ class NativeLogicTests(unittest.TestCase):
                     str(ROOT / "source" / "platform3ds" / "search_path.c"),
                     str(ROOT / "source" / "platform3ds" / "spotify_id.c"),
                     str(ROOT / "source" / "platform3ds" / "meta_parse.c"),
+                    str(ROOT / "source" / "platform3ds" / "json3ds.c"),
+                    str(ROOT / "source" / "platform3ds" / "search_results.c"),
                     str(ROOT / "source" / "platform3ds" / "proto3ds.c"),
                     str(ROOT / "source" / "lang" / "lang.c"),
                     str(ROOT / "source" / "lang" / "lang_en.c"),
