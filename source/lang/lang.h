@@ -69,6 +69,9 @@ typedef enum {
 	STR_HINT_BIO,
 	STR_HINT_CLOSE,
 	STR_HINT_SCROLL,
+	/* Over an artist's whole biography, in any language but English:
+	 * Spotify serves it in English only (probe_artist step 2). */
+	STR_BIO_ENGLISH_ONLY,
 	STR_SHUFFLE_ON,
 	STR_SHUFFLE_OFF,
 	STR_DETAIL_PLAY,

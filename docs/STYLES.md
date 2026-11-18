@@ -1142,7 +1142,9 @@ Error:
   (hasta 16 KB), en `t_cuerpo` · `texto`, ajustado por palabras al ancho de la pantalla
   menos `e3` a cada lado y el indicador, desde `e3` arriba, sin rodar. Si no cabe, el
   indicador de §5.11 a la derecha. Se ajusta una vez al abrirla; al desplazarse solo se
-  parsean las líneas a la vista.
+  parsean las líneas a la vista. Spotify solo la sirve en inglés: en cualquier otro
+  idioma, encima del texto, a `e3` del borde y `e2` sobre él, la línea «Texto solo
+  disponible en inglés» en `t_meta` · `texto_2`, que no se desplaza.
   - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
     página). Sin propietario: el
     servicio solo da un id de usuario opaco.

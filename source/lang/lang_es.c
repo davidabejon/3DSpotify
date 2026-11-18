@@ -44,6 +44,7 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_HINT_BIO] = "Biografía",
 	[STR_HINT_CLOSE] = "Cerrar",
 	[STR_HINT_SCROLL] = "Desplazar",
+	[STR_BIO_ENGLISH_ONLY] = "Texto solo disponible en inglés",
 	[STR_SHUFFLE_ON] = "Aleatorio activado",
 	[STR_SHUFFLE_OFF] = "Aleatorio desactivado",
 	[STR_DETAIL_PLAY] = "Reproducir",

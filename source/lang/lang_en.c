@@ -43,6 +43,7 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_HINT_BIO] = "Biography",
 	[STR_HINT_CLOSE] = "Close",
 	[STR_HINT_SCROLL] = "Scroll",
+	[STR_BIO_ENGLISH_ONLY] = "Text only available in English",
 	[STR_SHUFFLE_ON] = "Shuffle on",
 	[STR_SHUFFLE_OFF] = "Shuffle off",
 	[STR_DETAIL_PLAY] = "Play",

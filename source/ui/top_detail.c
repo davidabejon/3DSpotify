@@ -46,7 +46,9 @@ static unsigned page_serial;
 static const char *page_src;
 static C2D_TextBuf page_buf;
 static C2D_Text page_texts[BIO_PAGE_VISIBLE_MAX];
+static C2D_Text page_note;
 static int page_first = -1, page_shown;
+static lang_id page_lang = LANG_COUNT;
 static bool drawn_page;
 static int drawn_bio_scroll;
 /* When the texts were parsed, the start of every marquee; and how far
@@ -69,7 +71,7 @@ bool top_detail_init(void)
 {
 	text_buf = C2D_TextBufNew(TEXT_GLYPHS);
 	measure_buf = C2D_TextBufNew(TEXT_WRAP_LINE_MAX);
-	page_buf = C2D_TextBufNew(BIO_PAGE_VISIBLE_MAX * TEXT_WRAP_LINE_MAX);
+	page_buf = C2D_TextBufNew((BIO_PAGE_VISIBLE_MAX + 1) * TEXT_WRAP_LINE_MAX);
 	if (!text_buf || !measure_buf || !page_buf) {
 		top_detail_exit();
 		return false;
@@ -371,11 +373,19 @@ static void current_rolls(int *rolls)
  * t_cuerpo, word-wrapped once to the page, a page of lines parsed at a
  * time as it scrolls, never the whole of it. */
 
+/* Spotify serves biographies in English only, whatever the language
+ * asked (probe_artist step 2): in any other, a line over the text says so. */
+static bool bio_page_note(void)
+{
+	return lang_get() != LANG_EN;
+}
+
 static ui_rect bio_page_rect(void)
 {
-	return (ui_rect){ SP_3, SP_3,
+	int top = SP_3 + (bio_page_note() ? ui_line_height(TXT_META) + SP_2 : 0);
+	return (ui_rect){ SP_3, top,
 	                  SCREEN_TOP_W - 2 * SP_3 - SP_2 - BIO_PAGE_SCROLL_W,
-	                  SCREEN_H - 2 * SP_3 };
+	                  SCREEN_H - SP_3 - top };
 }
 
 static int bio_page_lines(void)
@@ -436,8 +446,11 @@ static void draw_bio_page(const detail_doc *d)
 	int max = page_total - visible > 0 ? page_total - visible : 0;
 	int first = d->bio_scroll < 0 ? 0 : d->bio_scroll > max ? max
 	                                                      : d->bio_scroll;
-	if (first != page_first) {
+	if (first != page_first || page_lang != lang_get()) {
 		C2D_TextBufClear(page_buf);
+		ui_parse(&page_note, page_buf, tr(STR_BIO_ENGLISH_ONLY));
+		C2D_TextOptimize(&page_note);
+		page_lang = lang_get();
 		page_shown = 0;
 		for (int i = 0; i < visible && first + i < page_total; i++) {
 			ui_parse(&page_texts[i], page_buf, page_lines[first + i]);
@@ -448,6 +461,9 @@ static void draw_bio_page(const detail_doc *d)
 	}
 	ui_rect r = bio_page_rect();
 	int line_h = ui_line_height(TXT_CUERPO);
+	if (bio_page_note())
+		ui_text(&page_note, r.x, SP_3 + ui_line_height(TXT_META) / 2,
+		        TXT_META, COL_TEXTO_2);
 	for (int i = 0; i < page_shown; i++)
 		ui_text(&page_texts[i], r.x, r.y + i * line_h + line_h / 2,
 		        TXT_CUERPO, COL_TEXTO);
