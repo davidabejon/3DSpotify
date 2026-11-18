@@ -17,8 +17,11 @@
 #include <citro2d.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+/* The most lines of a biography the top screen holds at once. */
+#define BIO_PAGE_VISIBLE_MAX 16
 #define TEXT_GLYPHS    ((1 + NOW_LINES + ARTIST_BIO_LINES) * UI_FIELD_SIZE)
 
 static C2D_TextBuf text_buf;
@@ -31,6 +34,21 @@ static int line_count;
 static C2D_Text bio_texts[ARTIST_BIO_LINES];
 static int bio_count;
 static C2D_TextBuf measure_buf;
+/* The whole biography (top_detail_bio_*). */
+#define BIO_PAGE_LINES_MAX 400
+#define BIO_PAGE_SCROLL_W  SP_1
+
+static char (*page_lines)[TEXT_WRAP_LINE_MAX];
+static int page_total;
+/* What was wrapped: this document, as it was, with this biography. */
+static const detail_doc *page_doc;
+static unsigned page_serial;
+static const char *page_src;
+static C2D_TextBuf page_buf;
+static C2D_Text page_texts[BIO_PAGE_VISIBLE_MAX];
+static int page_first = -1, page_shown;
+static bool drawn_page;
+static int drawn_bio_scroll;
 /* When the texts were parsed, the start of every marquee; and how far
  * each one had rolled when drawn. */
 static u64 parsed_ms;
@@ -51,7 +69,8 @@ bool top_detail_init(void)
 {
 	text_buf = C2D_TextBufNew(TEXT_GLYPHS);
 	measure_buf = C2D_TextBufNew(TEXT_WRAP_LINE_MAX);
-	if (!text_buf || !measure_buf) {
+	page_buf = C2D_TextBufNew(BIO_PAGE_VISIBLE_MAX * TEXT_WRAP_LINE_MAX);
+	if (!text_buf || !measure_buf || !page_buf) {
 		top_detail_exit();
 		return false;
 	}
@@ -66,6 +85,13 @@ void top_detail_exit(void)
 	if (measure_buf)
 		C2D_TextBufDelete(measure_buf);
 	measure_buf = NULL;
+	if (page_buf)
+		C2D_TextBufDelete(page_buf);
+	page_buf = NULL;
+	free(page_lines);
+	page_lines = NULL;
+	page_doc = NULL;
+	page_src = NULL;
 	parsed_doc = NULL;
 	parsed_lang = LANG_COUNT;
 	drawn_valid = false;
@@ -281,11 +307,11 @@ static void parse(const detail_doc *d)
 				snprintf(line, sizeof(line), tr(STR_ARTIST_LISTENERS_FMT),
 				         count);
 			add_line(line);
-		} else if (d->preview || !d->bio[0]) {
+		} else if (d->preview || !d->bio) {
 			/* Neither: the title is not left alone. */
 			add_line(tr(STR_RESULT_ARTIST));
 		}
-		if (!d->preview && d->bio[0])
+		if (!d->preview && d->bio)
 			parse_bio(d->bio);
 	}
 }
@@ -339,9 +365,116 @@ static void current_rolls(int *rolls)
 		               : -1;
 }
 
+/* --- The whole biography ---------------------------------------------- */
+
+/* An artist's biography in full, on its own (its button, STYLES.md 7.12):
+ * t_cuerpo, word-wrapped once to the page, a page of lines parsed at a
+ * time as it scrolls, never the whole of it. */
+
+static ui_rect bio_page_rect(void)
+{
+	return (ui_rect){ SP_3, SP_3,
+	                  SCREEN_TOP_W - 2 * SP_3 - SP_2 - BIO_PAGE_SCROLL_W,
+	                  SCREEN_H - 2 * SP_3 };
+}
+
+static int bio_page_lines(void)
+{
+	int n = bio_page_rect().h / ui_line_height(TXT_CUERPO);
+	return n > BIO_PAGE_VISIBLE_MAX ? BIO_PAGE_VISIBLE_MAX : n;
+}
+
+static bool showing_page(const detail_doc *d)
+{
+	return d && d->kind == DETAIL_ARTIST && d->state == DETAIL_READY &&
+	       !d->preview && d->bio && d->bio_open;
+}
+
+static float measure_body(const char *string, void *ctx)
+{
+	(void)ctx;
+	return ui_measure(measure_buf, string, TXT_CUERPO);
+}
+
+/* Wraps `d`'s biography for the page, once per document and text. */
+static bool wrap_page(const detail_doc *d)
+{
+	if (d == page_doc && d->serial == page_serial && d->bio == page_src)
+		return page_lines != NULL;
+	if (!page_lines)
+		page_lines = malloc(BIO_PAGE_LINES_MAX * sizeof(page_lines[0]));
+	if (!page_lines)
+		return false;
+	page_total = text_wrap(d->bio, (float)bio_page_rect().w,
+	                       BIO_PAGE_LINES_MAX, measure_body, NULL,
+	                       page_lines);
+	page_doc = d;
+	page_serial = d->serial;
+	page_src = d->bio;
+	page_first = -1;
+	return true;
+}
+
+int top_detail_bio_max_scroll(const detail_doc *d)
+{
+	if (!d || !d->bio || !wrap_page(d))
+		return 0;
+	int max = page_total - bio_page_lines();
+	return max > 0 ? max : 0;
+}
+
+int top_detail_bio_page_lines(void)
+{
+	return bio_page_lines();
+}
+
+static void draw_bio_page(const detail_doc *d)
+{
+	if (!wrap_page(d))
+		return;
+	int visible = bio_page_lines();
+	int max = page_total - visible > 0 ? page_total - visible : 0;
+	int first = d->bio_scroll < 0 ? 0 : d->bio_scroll > max ? max
+	                                                      : d->bio_scroll;
+	if (first != page_first) {
+		C2D_TextBufClear(page_buf);
+		page_shown = 0;
+		for (int i = 0; i < visible && first + i < page_total; i++) {
+			ui_parse(&page_texts[i], page_buf, page_lines[first + i]);
+			C2D_TextOptimize(&page_texts[i]);
+			page_shown++;
+		}
+		page_first = first;
+	}
+	ui_rect r = bio_page_rect();
+	int line_h = ui_line_height(TXT_CUERPO);
+	for (int i = 0; i < page_shown; i++)
+		ui_text(&page_texts[i], r.x, r.y + i * line_h + line_h / 2,
+		        TXT_CUERPO, COL_TEXTO);
+	/* 5.11: only when it does not fit. */
+	if (page_total > visible) {
+		ui_rect track = { SCREEN_TOP_W - SP_3 - BIO_PAGE_SCROLL_W, r.y,
+		                  BIO_PAGE_SCROLL_W, r.h };
+		int thumb_h = r.h * visible / page_total;
+		if (thumb_h < SP_3)
+			thumb_h = SP_3;
+		int thumb_y = r.y + (r.h - thumb_h) * first / max;
+		ui_fill(track, COL_CAPA);
+		ui_fill((ui_rect){ track.x, thumb_y, track.w, thumb_h },
+		        COL_CLOROFILA);
+	}
+}
+
 bool top_detail_dirty(const detail_doc *doc, const artwork_state *art)
 {
-	if (!drawn_valid || changed(doc) || artwork_dirty(art))
+	if (!drawn_valid || changed(doc))
+		return true;
+	bool page = showing_page(doc);
+	if (page != drawn_page || (page && doc->bio_scroll != drawn_bio_scroll))
+		return true;
+	if (page)
+		return false;
+	if (artwork_dirty(art))
 		return true;
 	int rolls[1 + NOW_LINES];
 	current_rolls(rolls);
@@ -359,6 +492,13 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y)
 		parsed_listeners = doc->listeners;
 		parsed_lang = lang_get();
 		parsed_ms = osGetTime();
+	}
+	drawn_page = showing_page(doc);
+	drawn_bio_scroll = doc->bio_scroll;
+	if (drawn_page) {
+		draw_bio_page(doc);
+		drawn_valid = true;
+		return;
 	}
 	const C2D_Text *lines[NOW_LINES];
 	for (int i = 0; i < line_count; i++)

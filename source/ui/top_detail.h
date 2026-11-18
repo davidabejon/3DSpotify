@@ -42,4 +42,12 @@ bool top_detail_dirty(const detail_doc *doc, const artwork_state *art);
  * screen's height); RESULTS_CARD_Y under the strip of kinds. */
 void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y);
 
+/* An artist with `bio_open` shows its whole biography instead of the card,
+ * word-wrapped to the screen and scrolled down by `bio_scroll` lines, with
+ * a scroll indicator when it does not fit. For the view that scrolls it:
+ * the furthest `bio_scroll` goes (0 when it all fits; wrapping it the
+ * first time, after ui_init), and how many lines a page shows. */
+int top_detail_bio_max_scroll(const detail_doc *d);
+int top_detail_bio_page_lines(void);
+
 #endif

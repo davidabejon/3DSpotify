@@ -53,6 +53,9 @@ typedef struct {
 	 * and year ("Album · 2004"). */
 	bool    release;
 	uint8_t album_type;    /* a release's SP_ALBUM_* */
+	/* A header with a square button at its right (an artist's biography):
+	 * the button takes the focus and A, so the header is not off. */
+	bool    button;
 	/* Into idx->tracks or idx->colls; an artist's track or release; a
 	 * header's str_id. */
 	int16_t index;
@@ -99,6 +102,7 @@ static inline int offline_home_rows(const dl_index *idx, track_row *rows,
 		r->search = false;
 		r->release = false;
 		r->album_type = 0;
+		r->button = false;
 		r->index = (int16_t)c;
 		r->done = (int16_t)done;
 		r->count = (int16_t)count;
@@ -118,6 +122,7 @@ static inline int offline_home_rows(const dl_index *idx, track_row *rows,
 		r->search = false;
 		r->release = false;
 		r->album_type = 0;
+		r->button = false;
 		r->index = scratch[i].index;
 		r->done = r->count = 0;
 	}
@@ -142,6 +147,7 @@ static inline int offline_collection_rows(const dl_index *idx, int c,
 		r->search = false;
 		r->release = false;
 		r->album_type = 0;
+		r->button = false;
 		r->index = (int16_t)t;
 		r->done = r->count = 0;
 	}

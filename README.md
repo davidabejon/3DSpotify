@@ -276,7 +276,9 @@ From a song you can open its detail, and from there its artist and album:
   list downloads them whole; up from the first song reaches it. It then shows the progress
   ("Downloading 8 of 12") and **Downloaded**, which opens the downloaded copy.
 - **Album:** its tracks, numbered. **Artist:** popular tracks, then their discography
-  (albums, singles and EPs, compilations); A on a release opens the album.
+  (albums, singles and EPs, compilations); A on a release opens the album. The button
+  on the "Popular tracks" header shows the whole biography on the top screen, to scroll
+  with the D-pad.
   **Playlist:** its tracks, with thumbnails, loaded 50 at a time: the next page comes by
   itself as you near the end of the list (a "Loading…" bubble shows meanwhile), up to 500.
   Episodes and local files are left out; the top screen says how many of how many are

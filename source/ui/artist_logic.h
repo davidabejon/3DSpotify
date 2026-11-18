@@ -61,13 +61,21 @@ static inline void artist_row(track_row *r, track_row_kind kind, int index,
  * `max` rows; nothing for no releases. A release's `index` is its position
  * among the releases. Returns how many rows. Also how the discography is
  * appended once it is named, after the popular tracks. */
+static inline void artist_header(track_row *r, int title, bool button)
+{
+	/* A header with the biography's button takes the focus: the button. */
+	artist_row(r, TRACK_ROW_HEADER, title, !button);
+	r->button = button;
+}
+
 static inline int artist_discography_rows(int releases, const int *types,
-                                          track_row *rows, int max)
+                                          track_row *rows, int max,
+                                          bool button)
 {
 	int n = 0;
 	if (releases <= 0 || max <= 0)
 		return 0;
-	artist_row(&rows[n++], TRACK_ROW_HEADER, STR_ARTIST_DISCOGRAPHY, true);
+	artist_header(&rows[n++], STR_ARTIST_DISCOGRAPHY, button);
 	for (int i = 0; i < releases && n < max; i++) {
 		track_row *r = &rows[n++];
 		artist_row(r, TRACK_ROW_ALBUM, i, false);
@@ -82,19 +90,33 @@ static inline int artist_discography_rows(int releases, const int *types,
  * out, header and all. At most `max` rows. Returns how many; `*top_first`
  * is the row of the first popular track (-1 for none), so the tracks are
  * rows[top_first .. top_first + top). A track's `index` is its position
- * among the tracks. */
+ * among the tracks. `bio_button`: the first header carries the button
+ * that shows the biography ("Popular tracks", unless there are none). */
 static inline int artist_rows(int top, int releases, const int *types,
-                              track_row *rows, int max, int *top_first)
+                              track_row *rows, int max, int *top_first,
+                              bool bio_button)
 {
 	int n = 0;
 	*top_first = -1;
 	if (top > 0 && n < max) {
-		artist_row(&rows[n++], TRACK_ROW_HEADER, STR_ARTIST_TOP_TRACKS, true);
+		artist_header(&rows[n++], STR_ARTIST_TOP_TRACKS, bio_button);
+		bio_button = false;
 		*top_first = n < max ? n : -1;
 		for (int i = 0; i < top && n < max; i++)
 			artist_row(&rows[n++], TRACK_ROW_TRACK, i, false);
 	}
-	return n + artist_discography_rows(releases, types, rows + n, max - n);
+	return n + artist_discography_rows(releases, types, rows + n, max - n,
+	                                   bio_button);
+}
+
+/* Where the focus starts: the first track or release, past a header's
+ * button; else whatever takes it (track_row_first_on); -1 for none. */
+static inline int artist_first_item(const track_row *rows, int n)
+{
+	for (int i = 0; i < n; i++)
+		if (rows[i].kind != TRACK_ROW_HEADER && !rows[i].off)
+			return i;
+	return track_row_first_on(rows, n, 0);
 }
 
 /* `n` with `sep` between groups of three digits ("12.345.678" with '.',

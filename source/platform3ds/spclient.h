@@ -100,8 +100,9 @@ typedef struct {
  * sp_parse_artist), then ordered by sp_sort_releases. */
 #define SP_ARTIST_RELEASES_MAX 200
 /* The biography as kept: cleaned (sp_bio_clean), cut on a character
- * boundary. Room for the card's five lines in any script. */
-#define SP_ARTIST_BIO_MAX 640
+ * boundary. Room for the whole of it, which the top screen shows to read
+ * (the longest seen, The Killers', is 11.5 KB with its tags). */
+#define SP_ARTIST_BIO_MAX 16384
 /* Releases named per album metadata batch: 50 took 285 ms and 71 KB on
  * the console (probe_artist step 4). */
 #define SP_ALBUM_BATCH 50

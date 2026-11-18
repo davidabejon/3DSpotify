@@ -1044,7 +1044,7 @@ static void test_artist_rows(void)
 	int top_first;
 
 	/* Both sections: header, 3 tracks, header, 3 releases. */
-	int n = artist_rows(3, 3, TYPES, rows, 32, &top_first);
+	int n = artist_rows(3, 3, TYPES, rows, 32, &top_first, false);
 	assert(n == 8 && top_first == 1);
 	assert(rows[0].kind == TRACK_ROW_HEADER && rows[0].off &&
 	       rows[0].index == STR_ARTIST_TOP_TRACKS);
@@ -1065,20 +1065,20 @@ static void test_artist_rows(void)
 	assert(track_row_track_span(rows, n, &from) == 3 && from == 1);
 
 	/* Popular tracks only; releases only; nothing. */
-	n = artist_rows(2, 0, NULL, rows, 32, &top_first);
+	n = artist_rows(2, 0, NULL, rows, 32, &top_first, false);
 	assert(n == 3 && top_first == 1 && rows[2].kind == TRACK_ROW_TRACK);
-	n = artist_rows(0, 2, TYPES, rows, 32, &top_first);
+	n = artist_rows(0, 2, TYPES, rows, 32, &top_first, false);
 	assert(n == 3 && top_first == -1);
 	assert(rows[0].index == STR_ARTIST_DISCOGRAPHY);
 	assert(track_row_first_on(rows, n, 0) == 1);
 	assert(track_row_track_span(rows, n, &from) == 0 && from == 0);
-	assert(artist_rows(0, 0, TYPES, rows, 32, &top_first) == 0);
+	assert(artist_rows(0, 0, TYPES, rows, 32, &top_first, false) == 0);
 	assert(top_first == -1);
 
 	/* Capped: the rows that fit, in order. */
-	n = artist_rows(3, 3, TYPES, rows, 5, &top_first);
+	n = artist_rows(3, 3, TYPES, rows, 5, &top_first, false);
 	assert(n == 5 && top_first == 1 && rows[4].kind == TRACK_ROW_HEADER);
-	n = artist_rows(3, 3, TYPES, rows, 1, &top_first);
+	n = artist_rows(3, 3, TYPES, rows, 1, &top_first, false);
 	assert(n == 1 && top_first == -1);
 
 	/* A release's type: its own, else its group's. */
@@ -1094,14 +1094,14 @@ static void test_artist_rows(void)
 	/* The discography appended after the popular tracks, once named: the
 	 * same rows artist_rows would have made in one go. */
 	static track_row whole[16];
-	n = artist_rows(3, 3, TYPES, whole, 16, &top_first);
-	int at = artist_rows(3, 0, NULL, rows, 16, &top_first);
+	n = artist_rows(3, 3, TYPES, whole, 16, &top_first, false);
+	int at = artist_rows(3, 0, NULL, rows, 16, &top_first, false);
 	assert(at == 4);
-	assert(artist_discography_rows(3, TYPES, rows + at, 16 - at) == 4);
+	assert(artist_discography_rows(3, TYPES, rows + at, 16 - at, false) == 4);
 	assert(memcmp(rows, whole, (size_t)n * sizeof(rows[0])) == 0);
-	assert(artist_discography_rows(0, TYPES, rows, 16) == 0);
-	assert(artist_discography_rows(3, TYPES, rows, 0) == 0);
-	assert(artist_discography_rows(3, TYPES, rows, 2) == 2);
+	assert(artist_discography_rows(0, TYPES, rows, 16, false) == 0);
+	assert(artist_discography_rows(3, TYPES, rows, 0, false) == 0);
+	assert(artist_discography_rows(3, TYPES, rows, 2, false) == 2);
 }
 
 static void expect_count(long n, char sep, const char *want)
@@ -1229,6 +1229,45 @@ static void test_now_detail_block(void)
 	assert(abs((block_top + h / 2) - (Y + ART_SIZE / 2)) <= 1);
 }
 
+static void test_artist_bio_button(void)
+{
+	static track_row rows[16];
+	static const int TYPES[] = { SP_ALBUM_ALBUM, SP_ALBUM_SINGLE };
+	int top_first;
+	bool bumped;
+
+	/* On "Popular tracks": the header takes the focus, by its button. */
+	int n = artist_rows(2, 2, TYPES, rows, 16, &top_first, true);
+	assert(n == 6 && top_first == 1);
+	assert(rows[0].kind == TRACK_ROW_HEADER && rows[0].button &&
+	       !rows[0].off);
+	assert(!rows[3].button && rows[3].off);   /* "Discography": no button */
+	/* The focus starts on the first track all the same... */
+	assert(artist_first_item(rows, n) == 1);
+	/* ...and up from it reaches the button; up again bumps. */
+	assert(track_row_move(rows, n, 1, -1, &bumped) == 0 && !bumped);
+	assert(track_row_move(rows, n, 0, -1, &bumped) == 0 && bumped);
+	assert(track_row_move(rows, n, 0, 1, &bumped) == 1 && !bumped);
+	/* The other header is still skipped. */
+	assert(track_row_move(rows, n, 2, 1, &bumped) == 4);
+	/* Playing and the track detail take the tracks only. */
+	int from;
+	assert(track_row_track_span(rows, n, &from) == 2 && from == 1);
+
+	/* No popular tracks: the button goes on "Discography". */
+	n = artist_rows(0, 2, TYPES, rows, 16, &top_first, true);
+	assert(n == 3 && rows[0].button && !rows[0].off &&
+	       rows[0].index == STR_ARTIST_DISCOGRAPHY);
+	assert(artist_first_item(rows, n) == 1);
+	/* Without a biography, no button. */
+	n = artist_rows(2, 0, NULL, rows, 16, &top_first, false);
+	assert(!rows[0].button && rows[0].off);
+	assert(artist_first_item(rows, n) == 1);
+	/* A header alone with its button: the button is all there is. */
+	n = artist_rows(0, 0, NULL, rows, 16, &top_first, true);
+	assert(n == 0 && artist_first_item(rows, 0) == -1);
+}
+
 static void test_artist_naming(void)
 {
 	/* Batches of 50: 200 is four, 43 is one, 101 ends with one. */
@@ -1267,7 +1306,7 @@ static void test_section_navigation(void)
 	};
 	int top_first;
 	/* 0 header, 1-3 tracks, 4 header, 5-7 releases. */
-	int n = artist_rows(3, 3, TYPES, rows, 16, &top_first);
+	int n = artist_rows(3, 3, TYPES, rows, 16, &top_first, false);
 	bool bumped;
 
 	/* The D-pad skips the headers, both ways. */
@@ -1287,7 +1326,7 @@ static void test_section_navigation(void)
 	assert(track_row_show_header(rows, n, 0, 0) == 0);
 	assert(track_row_show_header(NULL, n, 5, 5) == 5);
 	/* A short list: everything fits from 0 and stays. */
-	n = artist_rows(1, 1, TYPES, rows, 16, &top_first);
+	n = artist_rows(1, 1, TYPES, rows, 16, &top_first, false);
 	assert(track_row_show_header(rows, n, 3, 0) == 0);
 	assert(track_row_show_header(rows, n, 1, 0) == 0);
 
@@ -5007,6 +5046,7 @@ int main(void)
 	test_bio_clean();
 	test_artist_rows();
 	test_artist_naming();
+	test_artist_bio_button();
 	test_artist_listeners();
 	test_text_wrap();
 	test_now_detail_block();

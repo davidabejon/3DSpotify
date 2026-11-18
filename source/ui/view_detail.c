@@ -8,6 +8,7 @@
 #include "list_logic.h"
 #include "press_logic.h"
 #include "theme.h"
+#include "top_detail.h"
 #include "track_list.h"
 #include "ui.h"
 #include "ui_font.h"
@@ -43,10 +44,12 @@ typedef enum {
 } detail_mode;
 
 /* The button bar (STYLES.md 5.6). */
-enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X", "Y" };
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_DPAD, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = {
+	"A", "B", "X", "Y", ""
+};
 static const u32 glyph_colors[GLYPH_COUNT] = {
-	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y
+	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y, 0
 };
 
 /* What the bubble (5.9) says: the language after SELECT, the order after
@@ -70,6 +73,10 @@ static C2D_Text letter_text[GLYPH_COUNT];
 static C2D_Text hint_open;
 static C2D_Text hint_choose, hint_play, hint_detail, hint_back, hint_cancel,
                 hint_retry, hint_shuffle_on, hint_shuffle_off;
+/* An artist's biography: its button, and the page on the top screen. */
+static C2D_Text hint_bio, hint_close, hint_scroll;
+static bool bio_open;
+static int bio_scroll, bio_max, bio_page;
 static C2D_Text bubble_text, shuffle_on_text, shuffle_off_text, loading_text,
                 empty_text, retry_text;
 static C2D_Text notice_title_text, notice_body_text;
@@ -138,6 +145,7 @@ typedef struct {
 	dl_label dl;
 	str_id notice;
 	bool header, header_focus, header_pressed, header_enabled;
+	bool bio;
 } detail_look;
 static detail_look drawn;
 static bool drawn_valid;
@@ -245,6 +253,9 @@ static void parse_text(const detail_doc *doc)
 	parse(&hint_back, tr(STR_HINT_BACK));
 	parse(&hint_cancel, tr(STR_HINT_CANCEL));
 	parse(&hint_retry, tr(STR_HINT_RETRY));
+	parse(&hint_bio, tr(STR_HINT_BIO));
+	parse(&hint_close, tr(STR_HINT_CLOSE));
+	parse(&hint_scroll, tr(STR_HINT_SCROLL));
 	parse(&hint_shuffle_on, tr(STR_HINT_SHUFFLE_ON));
 	parse(&hint_shuffle_off, tr(STR_HINT_SHUFFLE_OFF));
 	parse(&bubble_text, tr(STR_LANG_NAME));
@@ -472,11 +483,20 @@ static bool focused_collection(void)
 	       list.rows[list.selected].kind != TRACK_ROW_TRACK;
 }
 
+/* The focused row is a header's button: an artist's biography. */
+static bool focused_bio_button(void)
+{
+	return list.rows && list.count > 0 &&
+	       list.rows[list.selected].kind == TRACK_ROW_HEADER &&
+	       list.rows[list.selected].button;
+}
+
 /* The focused row is a release of an artist's discography, which opens
  * its album over the network. */
 static bool focused_release(void)
 {
-	return shown_kind == DETAIL_ARTIST && focused_collection();
+	return shown_kind == DETAIL_ARTIST && focused_collection() &&
+	       !focused_bio_button();
 }
 
 /* A, or a tap, on the focused row: play from it, or open the collection
@@ -486,6 +506,8 @@ static detail_action row_action(void)
 {
 	if (list.count <= 0 || !track_row_on(list.rows, list.selected))
 		return DETAIL_ACTION_NONE;
+	if (focused_bio_button())
+		return DETAIL_ACTION_BIO;
 	if (focused_release())
 		return offline ? DETAIL_ACTION_NONE : DETAIL_ACTION_OPEN_ALBUM;
 	return focused_collection() ? DETAIL_ACTION_OPEN_COLLECTION
@@ -568,6 +590,7 @@ static detail_look current_look(void)
 		.header_focus = header_focus,
 		.header_pressed = press_down(&press_header),
 		.header_enabled = header_enabled,
+		.bio = bio_open,
 	};
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
 		look.button[i] = press_down(&press_button[i]);
@@ -586,7 +609,7 @@ static bool same_look(const detail_look *a, const detail_look *b)
 	    !same_label(a->dl, b->dl) || a->notice != b->notice ||
 	    a->header != b->header || a->header_focus != b->header_focus ||
 	    a->header_pressed != b->header_pressed ||
-	    a->header_enabled != b->header_enabled)
+	    a->header_enabled != b->header_enabled || a->bio != b->bio)
 		return false;
 	for (int i = 0; i < DETAIL_BUTTON_COUNT; i++)
 		if (a->button[i] != b->button[i])
@@ -668,6 +691,8 @@ static void release_keys(u32 up)
 		press_end(&press_glyph[GLYPH_X]);
 	if (up & KEY_Y)
 		press_end(&press_glyph[GLYPH_Y]);
+	if (up & (KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT))
+		press_end(&press_glyph[GLYPH_DPAD]);
 }
 
 /* The buttons of the track and error states, and the one over a list.
@@ -739,6 +764,13 @@ static detail_action update(u32 down)
 			bubble = BUBBLE_SHUFFLE;
 			bubble_frames = 0;
 		}
+		/* The view's own: the biography opens on the top screen from its
+		 * start, or closes. */
+		if (action == DETAIL_ACTION_BIO) {
+			bio_open = !bio_open && focused_bio_button();
+			bio_scroll = 0;
+			return DETAIL_ACTION_NONE;
+		}
 		return action;
 	}
 
@@ -786,8 +818,23 @@ static detail_action update(u32 down)
 				nav &= ~(u32)(KEY_UP | KEY_DOWN);
 			header_focus = next;
 		}
-		if (!header_focus)
+		if (bio_open && focused_bio_button()) {
+			/* The biography has the D-pad while it is open: a line up or
+			 * down, a page left or right. */
+			int step = (down & KEY_UP) ? -1 : (down & KEY_DOWN) ? 1
+			         : (down & KEY_LEFT) ? -bio_page
+			         : (down & KEY_RIGHT) ? bio_page : 0;
+			if (step) {
+				press_begin(&press_glyph[GLYPH_DPAD]);
+				bio_scroll += step;
+				if (bio_scroll > bio_max)
+					bio_scroll = bio_max;
+				if (bio_scroll < 0)
+					bio_scroll = 0;
+			}
+		} else if (!header_focus) {
 			track_list_navigate(&list, nav);
+		}
 	}
 	/* 6.2: the focus moves, and shows, in the same frame. */
 	if (mode == MODE_TRACK && (down & (KEY_UP | KEY_DOWN)))
@@ -807,6 +854,9 @@ static detail_action update(u32 down)
 		press_key(GLYPH_X, DETAIL_ACTION_OPEN_TRACK, NULL);
 	} else if ((down & KEY_Y) && mode == MODE_LIST) {
 		press_key(GLYPH_Y, DETAIL_ACTION_SHUFFLE, NULL);
+	} else if ((down & KEY_B) && bio_open) {
+		/* The biography closes first. */
+		press_key(GLYPH_B, DETAIL_ACTION_BIO, NULL);
 	} else if (down & KEY_B) {
 		/* While loading this cancels: going back forgets the load. */
 		press_key(GLYPH_B, DETAIL_ACTION_BACK, NULL);
@@ -824,7 +874,18 @@ detail_action view_detail_update(detail_doc *doc, u32 down)
 	sync(doc);
 	follow_download(doc, false);
 	parse_download(doc);
+	/* The biography's state is the level's: back to it, it is as left. */
+	bio_open = doc && doc->bio_open;
+	bio_scroll = doc ? doc->bio_scroll : 0;
+	bio_max = bio_open ? top_detail_bio_max_scroll(doc) : 0;
+	bio_page = top_detail_bio_page_lines();
 	detail_action action = update(down);
+	/* Open only while its button has the focus: a tap elsewhere closes it. */
+	if (doc) {
+		doc->bio_open = bio_open && mode == MODE_LIST && focused_bio_button();
+		doc->bio_scroll = doc->bio_open ? bio_scroll : 0;
+	}
+	track_list_set_button_active(&list, doc && doc->bio_open);
 	/* The level keeps where its list was, for "Play", for the track detail
 	 * opened from it, and for coming back to it. */
 	if (mode == MODE_LIST) {
@@ -951,6 +1012,25 @@ static void draw_bar(const detail_look *look)
 			bool coll = list.rows && list.count > 0 &&
 			            list.rows[look->list.selected].kind !=
 			            TRACK_ROW_TRACK;
+			if (focused_bio_button()) {
+				/* The biography's button: open it, or read and close it. */
+				C2D_Image dpad = icon_image(ICON_DPAD_UD);
+				if (look->bio) {
+					hints[n++] = (ui_hint){ &letter_text[GLYPH_DPAD],
+					                        &hint_scroll, 0,
+					                        look->glyph[GLYPH_DPAD], &dpad };
+					hints[n++] = hint(GLYPH_A, &hint_close, look);
+					hints[n++] = hint(GLYPH_B, &hint_close, look);
+				} else {
+					hints[n++] = hint(GLYPH_A, &hint_bio, look);
+					hints[n++] = hint(GLYPH_Y, look->shuffle
+					                  ? &hint_shuffle_on : &hint_shuffle_off,
+					                  look);
+					hints[n++] = hint(GLYPH_B, &hint_back, look);
+				}
+				ui_button_bar(detail_hints_rect(), hints, n);
+				return;
+			}
 			/* A release opens over the network: offline, no A (6.1). */
 			bool release = coll && shown_kind == DETAIL_ARTIST;
 			if (!(release && offline))

@@ -68,10 +68,14 @@ typedef struct {
 	char art_small[80];
 	char label[64];
 	int  year, album_type, total_tracks;
-	/* DETAIL_ARTIST: the start of the biography (sp_bio_clean, "" when
-	 * none), the monthly listeners (-1 while unknown) and how many
-	 * releases its discography holds. */
-	char bio[SP_ARTIST_BIO_MAX];
+	/* DETAIL_ARTIST: the biography (sp_bio_clean) in a buffer of its own,
+	 * NULL when none; the monthly listeners (-1 while unknown) and how
+	 * many releases its discography holds. */
+	char *bio;
+	/* The view's: the top screen shows the whole biography instead of the
+	 * card, scrolled down by `bio_scroll` lines (top_detail.h). */
+	bool bio_open;
+	int  bio_scroll;
 	long listeners;
 	int  release_count;
 	/* DETAIL_ARTIST with popular tracks: its releases as the load found

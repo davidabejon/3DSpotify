@@ -406,6 +406,30 @@ ICONS["DPAD_LR"] = [
     "................",
 ]
 
+# Up and down on the D-pad: the same triangles, turned.
+ICONS["DPAD_UD"] = ["".join(row[i] for row in ICONS["DPAD_LR"])
+                    for i in range(SIZE)]
+
+# Information: an "i" inside a ring, for an artist's biography.
+ICONS["INFO"] = [
+    "................",
+    "....########....",
+    "...##########...",
+    "..##........##..",
+    ".##....##....##.",
+    ".##....##....##.",
+    ".##..........##.",
+    ".##...###....##.",
+    ".##....##....##.",
+    ".##....##....##.",
+    ".##....##....##.",
+    ".##...####...##.",
+    "..##........##..",
+    "...##########...",
+    "....########....",
+    "................",
+]
+
 def render(rows):
     assert len(rows) == SIZE, "an icon has 16 rows"
     mask = []

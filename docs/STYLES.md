@@ -247,6 +247,11 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
   la fila) y apoyado abajo (a `e2` del borde inferior), con una banda de 2 px `clorofila`
   del ancho del texto en el borde inferior del hueco. Si no cabe, se recorta con «...». No
   toma el foco ni responde al toque; se desplaza y se arrastra con la lista.
+  - Con botón (la primera cabecera de un artista con biografía, §7.11): un botón
+    secundario cuadrado de solo icono (información), a `e1` del borde derecho y de los
+    bordes superior e inferior de la fila; el título se recorta antes. El botón sí toma el
+    foco (la cruceta llega a él subiendo desde la primera fila) y responde al toque; el
+    resto de la cabecera no. Mientras la biografía está abierta es primario.
 - Lanzamiento de la discografía (§7.11): variante de colección, con portada y chevron, sin
   insignia. Segunda línea: tipo y año, «Álbum · 2004», «Sencillo · 2019», «EP · 2021»,
   «Recopilatorio · 2010»; sin año, solo el tipo.
@@ -1073,6 +1078,11 @@ Error:
     Volver`.
   - Sobre un lanzamiento: A, o tocarlo en foco, abre su detalle de álbum en la misma
     pestaña. Barra `[A] Abrir [Y] Aleatorio [B] Volver`. Sin conexión, sin A.
+  - Sobre el botón de la biografía: A, o tocarlo, la abre en la pantalla superior
+    (§7.12); barra `[A] Biografía [Y] Aleatorio [B] Volver`. Abierta, la cruceta la
+    desplaza (arriba/abajo una línea, izquierda/derecha una página), A o B la cierran, y
+    tocar otra fila también; barra `[▲▼] Desplazar [A] Cerrar [B] Cerrar`. Funciona sin
+    conexión.
 - Álbum y playlist: un botón secundario a todo el ancho
   a `e1` de la barra de pestañas (36..68) que los descarga enteros, y debajo 3 filas
   (76..207); las filas arrastradas pasan por debajo del botón, como por debajo de las barras:
@@ -1128,6 +1138,11 @@ Error:
     texto. Llega en el idioma en que la sirve Spotify. Sin oyentes ni biografía,
     «Artista». El bloque entero se centra en la altura del retrato (cabe siempre: 120 px
     como mucho). La biografía se ajusta al parsear la ficha, no al dibujar.
+- Biografía completa (su botón, §7.11): la pantalla superior muestra solo el texto, entero
+  (hasta 16 KB), en `t_cuerpo` · `texto`, ajustado por palabras al ancho de la pantalla
+  menos `e3` a cada lado y el indicador, desde `e3` arriba, sin rodar. Si no cabe, el
+  indicador de §5.11 a la derecha. Se ajusta una vez al abrirla; al desplazarse solo se
+  parsean las líneas a la vista.
   - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
     página). Sin propietario: el
     servicio solo da un id de usuario opaco.

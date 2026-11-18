@@ -1598,7 +1598,7 @@ static void trace_artist(const detail_doc *d)
 	snprintf(line, sizeof(line),
 	         "artist: top=%d releases=%d of %d bio=%uB newest=%d%s +%dms",
 	         d->track_rows, d->coll_rows, d->release_count,
-	         (unsigned)strlen(d->bio), d->newest_release,
+	         (unsigned)(d->bio ? strlen(d->bio) : 0), d->newest_release,
 	         d->loading_more ? " naming..." : "",
 	         (int)(osGetTime() - ready_at));
 	trace_append(line);

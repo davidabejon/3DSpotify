@@ -264,7 +264,8 @@ static void append_releases(detail_doc *d)
 	release_types(a->releases, a->release_count, types);
 	int at = d->count;
 	int added = artist_discography_rows(a->release_count, types,
-	                                    d->rows + at, d->capacity - at);
+	                                    d->rows + at, d->capacity - at,
+	                                    at == 0 && d->bio != NULL);
 	for (int i = 0; i < added; i++) {
 		const track_row *r = &d->rows[at + i];
 		if (r->release)
@@ -303,7 +304,8 @@ static bool apply_artist_rows(detail_doc *d)
 		return false;
 	}
 	int top_first;
-	int n = artist_rows(job.count, 0, NULL, rows, max, &top_first);
+	int n = artist_rows(job.count, 0, NULL, rows, max, &top_first,
+	                    d->bio != NULL);
 	for (int i = 0; i < n; i++)
 		if (rows[i].kind == TRACK_ROW_TRACK)
 			owned[i] = job.tracks[rows[i].index];
@@ -326,7 +328,7 @@ static bool apply_artist_rows(detail_doc *d)
 	} else if (job.releases_named) {
 		append_releases(d);
 	}
-	d->selected = d->count > 0 ? track_row_first_on(rows, d->count, 0) : 0;
+	d->selected = d->count > 0 ? artist_first_item(rows, d->count) : 0;
 	if (d->selected < 0)
 		d->selected = 0;
 	d->first = 0;
@@ -382,7 +384,14 @@ static void apply(detail_doc *d)
 		snprintf(d->art, sizeof(d->art), "%s", a->art_large);
 		snprintf(d->art_small, sizeof(d->art_small), "%s", a->art_small);
 		d->total_tracks = a->track_count;
-		memcpy(d->bio, a->bio, sizeof(d->bio));
+		free(d->bio);
+		d->bio = NULL;
+		if (a->bio[0]) {
+			size_t n = strlen(a->bio) + 1;
+			d->bio = malloc(n);   /* without the memory, no biography */
+			if (d->bio)
+				memcpy(d->bio, a->bio, n);
+		}
 		d->release_count = a->release_count;
 		d->listeners = job.listeners;
 		if ((job.count > 0 || a->release_count > 0) && apply_artist_rows(d))
@@ -507,6 +516,7 @@ static detail_doc *push(app_tab tab)
 	free(d->owned);
 	free(d->rows);
 	free(d->releases);
+	free(d->bio);
 	memset(d, 0, sizeof(*d));
 	d->listeners = -1;
 	d->serial = serial;
@@ -829,6 +839,9 @@ void details_stop(void)
 		free(docs[i].owned);
 		free(docs[i].rows);
 		free(docs[i].releases);
+		free(docs[i].bio);
+		docs[i].bio = NULL;
+		docs[i].bio_open = false;
 		docs[i].owned = NULL;
 		docs[i].rows = NULL;
 		docs[i].releases = NULL;

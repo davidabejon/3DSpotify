@@ -73,7 +73,11 @@ typedef enum {
 	DETAIL_ACTION_OPEN_COLLECTION,
 	/* An artist: A on a release of its discography, open that album on the
 	 * same tab. Never offline. */
-	DETAIL_ACTION_OPEN_ALBUM
+	DETAIL_ACTION_OPEN_ALBUM,
+	/* An artist: A on the button of the "Popular tracks" header, or B with
+	 * the biography open. The view handles it itself (the biography opens
+	 * or closes on the top screen) and never returns it. */
+	DETAIL_ACTION_BIO
 } detail_action;
 
 /* After ui_init and icons_init. */

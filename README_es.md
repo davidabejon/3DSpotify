@@ -288,7 +288,8 @@ Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su 
   descargada.
 - **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares y, debajo, su
   discografía (álbumes, sencillos y EP, recopilatorios); A sobre un lanzamiento abre el
-  álbum. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
+  álbum. El botón de la cabecera «Canciones populares» muestra la biografía entera en la
+  pantalla superior, para desplazarla con la cruceta. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
   siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
   «Cargando…»), hasta 500. Los episodios y archivos locales se omiten; la pantalla
   superior indica cuántas de cuántas hay cargadas.

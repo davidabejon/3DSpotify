@@ -125,6 +125,11 @@ void track_list_set(track_list *l, const sp_track *tracks, int count,
 	track_list_reset_input(l);
 }
 
+void track_list_set_button_active(track_list *l, bool on)
+{
+	l->button_active = on;
+}
+
 void track_list_set_rows(track_list *l, const track_row *rows)
 {
 	l->rows = rows;
@@ -140,6 +145,14 @@ static const track_row *row_of(const track_list *l, int index)
 static bool is_header(const track_row *r)
 {
 	return r && r->kind == TRACK_ROW_HEADER;
+}
+
+/* The square button at the right of a header that has one (5.3): as tall
+ * as the row less e1 above and below. */
+static ui_rect header_button_rect(ui_rect row)
+{
+	int side = row.h - 2 * SP_1;
+	return (ui_rect){ row.x + row.w - SP_1 - side, row.y + SP_1, side, side };
 }
 
 /* A row that opens something: a collection, an artist, a release. */
@@ -228,9 +241,12 @@ void track_list_ensure_parsed(track_list *l)
 			/* A section's title alone, across the row (5.3). */
 			parse(&l->duration[i], l->buf, "");
 			l->duration_width[i] = 0;
+			ui_rect row0 = list_row_rect(0);
+			int room = row0.w - 2 * SP_1;
+			if (r->button)
+				room -= header_button_rect(row0).w + SP_2;
 			ui_parse_fitted(&l->title[i], l->buf, l->scratch,
-			                tr((str_id)r->index), TXT_CABEZA,
-			                list_row_rect(0).w - 2 * SP_1);
+			                tr((str_id)r->index), TXT_CABEZA, room);
 			parse(&l->artist[i], l->buf, "");
 			if (l->style == TRACK_LIST_NUMBERS)
 				parse(&l->number[i], l->buf, "");
@@ -309,6 +325,7 @@ track_list_look track_list_get_look(const track_list *l)
 		.pressed = press_down(&l->press) ? l->press_index : -1,
 		.edge = l->edge_frames > 0 ? l->edge_dir * EDGE_SHIFT : 0,
 		.thumbs = l->thumbs.serial,
+		.active = l->button_active,
 	};
 }
 
@@ -316,7 +333,8 @@ bool track_list_same_look(const track_list_look *a, const track_list_look *b)
 {
 	return a->selected == b->selected && a->first == b->first &&
 	       a->scroll == b->scroll && a->pressed == b->pressed &&
-	       a->edge == b->edge && a->thumbs == b->thumbs;
+	       a->edge == b->edge && a->thumbs == b->thumbs &&
+	       a->active == b->active;
 }
 
 void track_list_tick(track_list *l)
@@ -414,6 +432,12 @@ track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
 		hit = list_hit_row_in(l->frame, pos.px, pos.py, l->scroll,
 		                      l->count);
 		if (hit >= 0 && !track_row_on(l->rows, hit))
+			hit = -1;
+		/* A header answers on its button only. */
+		if (hit >= 0 && is_header(row_of(l, hit)) &&
+		    !ui_rect_contains(header_button_rect(
+		                          list_row_at_in(l->frame, hit, l->scroll)),
+		                      pos.px, pos.py))
 			hit = -1;
 	}
 	int control;
@@ -526,8 +550,23 @@ static void draw_collection_cover(const track_list *l, ui_rect row, int index,
 /* 5.3, a section's header: the row's room without a surface, its title
  * aligned with the thumbnails and resting on the bottom, over a 2 px
  * `clorofila` band as wide as the text. It never takes the focus. */
-static void draw_header_row(const track_list *l, ui_rect row, int index)
+static void draw_header_row(const track_list *l, ui_rect row, int index,
+                            const track_list_look *look)
 {
+	const track_row *r = row_of(l, index);
+	if (r && r->button) {
+		/* Its button: focus, press and nudge as any control (5.1). */
+		bool focused = index == look->selected;
+		ui_rect b = header_button_rect(focused
+		    ? ui_rect_offset(row, 0, look->edge) : row);
+		ui_control_look button = {
+			.pressed = index == look->pressed,
+			.focused = focused,
+		};
+		C2D_Image icon = icon_image(ICON_INFO);
+		ui_icon_button(b, look->active ? UI_BUTTON_PRIMARY
+		                               : UI_BUTTON_SECONDARY, button, &icon);
+	}
 	int w = index - l->base;
 	if (w < 0 || w >= TRACK_LIST_WINDOW)
 		return;
@@ -544,7 +583,7 @@ static void draw_row(const track_list *l, ui_rect row, int index,
                      const track_list_look *look)
 {
 	if (l && is_header(row_of(l, index))) {
-		draw_header_row(l, row, index);
+		draw_header_row(l, row, index, look);
 		return;
 	}
 	bool focused = index >= 0 && index == look->selected;

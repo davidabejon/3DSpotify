@@ -65,6 +65,10 @@ typedef enum {
 	 * bubble when it changes. */
 	STR_HINT_SHUFFLE_ON,
 	STR_HINT_SHUFFLE_OFF,
+	/* An artist's biography: open it, close it, scroll it. */
+	STR_HINT_BIO,
+	STR_HINT_CLOSE,
+	STR_HINT_SCROLL,
 	STR_SHUFFLE_ON,
 	STR_SHUFFLE_OFF,
 	STR_DETAIL_PLAY,
