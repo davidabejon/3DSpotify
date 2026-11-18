@@ -384,6 +384,7 @@ anteriores (por ejemplo, los últimos probes usan el token que guarda
 | `probe_audio` | La decodificación de Ogg Vorbis y su reproducción por NDSP (lee `test.ogg`; sin red). |
 | `probe_play` | Una canción de principio a fin: clave de audio, descarga, descifrado y reproducción. |
 | `probe_search` | La búsqueda por tipos mediante el servicio del web player de Spotify: cómo encontrar el hash de sus consultas en open.spotify.com, las cabeceras que acepta, la forma y los tiempos de cada tipo de resultado, un hash caducado, y la búsqueda de siempre para comparar. Escribe `probe_search.log` y las respuestas (`probe_search_*.json`, con el nombre de usuario tapado) junto al `.3dsx`. |
+| `probe_artist` | Lo que traen los metadatos de un artista para su detalle: tamaño y campos de la respuesta, la biografía, los álbumes, sencillos y recopilatorios con sus nombres, fechas y orden, y dos posibles fuentes de oyentes mensuales con sus tiempos. Lee hasta tres artistas más de `probe_artist.txt` (un id, URI o enlace por línea). Escribe `probe_artist.log` y las respuestas (`probe_artist_*.json`, `probe_artist_1_metadata.bin`, con el nombre de usuario tapado) junto al `.3dsx`. |
 
 Compila uno con `--app`, por ejemplo:
 

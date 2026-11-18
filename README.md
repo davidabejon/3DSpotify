@@ -369,6 +369,7 @@ problem.
 | `probe_audio` | Decoding Ogg Vorbis and playing it through NDSP (reads `test.ogg`; no network). |
 | `probe_play` | One track end to end: every audio file it offers, audio key, download, decryption and playback. Reads the track from `spotify-play-uri.txt` (a URI or share link) next to the `.3dsx` when present. |
 | `probe_search` | Search by type through the service Spotify's web player uses: finding its query hash on open.spotify.com, the headers it accepts, the shape and timing of every kind of result, a stale hash, and today's search for comparison. Writes `probe_search.log` and the replies (`probe_search_*.json`, with the username blotted out) beside the `.3dsx`. |
+| `probe_artist` | What an artist's metadata carries for its detail view: size and fields of the reply, the biography, the albums, singles and compilations with their names, dates and order, and two candidate sources of monthly listeners with their timings. Reads up to three more artists from `probe_artist.txt` (an id, URI or link per line). Writes `probe_artist.log` and the replies (`probe_artist_*.json`, `probe_artist_1_metadata.bin`, with the username blotted out) beside the `.3dsx`. |
 
 Build one with `--app`, for example:
 

@@ -66,6 +66,9 @@ APPS = {
     # Typed search results, phase 0: what searchview answers, measured.
     "probe_search": (["probe_search", "platform3ds"], ["-DPROBE_BUILD"],
                      "probe", []),
+    # Artist detail sections, phase 0: what the artist metadata carries.
+    "probe_artist": (["probe_artist", "platform3ds"], ["-DPROBE_BUILD"],
+                     "probe", []),
     # F0 of the citro2d plan: throwaway hardware spike, removed after F1.
     "probe_ui": (["probe_ui", "platform3ds"], ["-DPROBE_BUILD"], "probe",
                  ["deps/stb_vorbis.c"]),
