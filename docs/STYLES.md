@@ -276,10 +276,12 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
 - Cada acción: glifo + etiqueta `t_meta` · `texto_2`.
 - Glifo: rectángulo de 14 px de alto, relleno con el color del botón (§2.5), contorno 1 px
   `tinta`, letra en `tinta`. START y SELECT no tienen color propio: relleno `texto_2`.
-- Glifo de la cruceta: el mismo rectángulo, 20 px de ancho, relleno `capa_alta` con el
-  icono de la cruceta (§5.10) en `texto`; invertido (§6.5), relleno `tinta` e icono
-  `capa_alta`. El icono mide 16 px, pero sus triángulos ocupan las 10 filas centrales y caben
-  dentro del contorno.
+- Glifo de la cruceta: el mismo rectángulo, 16 px de ancho (lo de un glifo de letra). Como
+  START y SELECT, no tiene color propio: relleno `texto_2` con el icono de la cruceta (§5.10)
+  en `tinta`; invertido (§6.5), relleno `tinta` e icono `texto_2`. Los triángulos del icono
+  miden 4×7 px, del tamaño de una letra.
+- Una acción que aparece en unas pantallas y no en otras de la misma vista puede ir pegada al
+  margen derecho, para no cambiar de sitio (el «Tipo» de los resultados, §7.4).
 - Máximo cuatro acciones. Si no caben en el ancho, se quitan etiquetas desde la última y
   quedan solo sus glifos.
 
@@ -321,8 +323,8 @@ Igual que la barra de progreso, 6 px de alto, sin capa de descarga y sin tirador
   aviso, idioma, nota musical, inicio (casa), reproducción (ecualizador), ajustes
   (engranaje), aleatorio (dos flechas cruzadas) y, para las descargas, descargar (flecha a
   una bandeja), descargada (check), en cola (reloj), álbum (disco), playlist (líneas),
-  sin conexión (Wi-Fi tachado) y cruceta izquierda/derecha (dos triángulos opuestos, para la
-  barra de botones).
+  sin conexión (Wi-Fi tachado) y cruceta izquierda/derecha (dos triángulos opuestos de
+  4×7 px, macizos, para el glifo de la barra de botones).
 - Embeberlos como arrays C generados (mismo patrón que `ca_bundle.c`).
 - El logotipo no es un icono: se carga en tiempo de ejecución desde `romfs:/gfx/logo.png`
   (directorio `romfs/` del repositorio, empaquetado en el `.3dsx` y el `.cia`). PNG RGBA de
@@ -686,7 +688,7 @@ Error:
  │└───────────────────────┘░│ × 41 px
  │ ...                     ░│
  │──────────────────────────│
- │ [A] Abrir [◀▶] Tipo [Y]… │ 24 px
+ │ [A] Abrir [Y]… [◀▶] Tipo │ 24 px
  └──────────────────────────┘
 ```
 
@@ -725,9 +727,10 @@ Error:
   - Artista, álbum o playlist: A, o tocarlo en foco, abre su detalle (§7.11) en la pila de
     «Búsqueda»; B vuelve a la lista tal cual. X no hace nada.
 - **Barra de botones** (cuatro acciones como mucho, §5.6):
-  - Canciones: `[A] Reproducir [X] Detalle [◀▶] Tipo [Y] Buscar`. «Volver» no cabe y B
+  - Canciones: `[A] Reproducir [X] Detalle [Y] Buscar … [◀▶] Tipo`. «Volver» no cabe y B
     funciona igual, como en la rejilla de «Inicio».
-  - Otros tipos: `[A] Abrir [◀▶] Tipo [Y] Buscar [B] Volver`.
+  - Otros tipos: `[A] Abrir [Y] Buscar [B] Volver … [◀▶] Tipo`.
+  - `[◀▶] Tipo` va pegado al margen derecho: no se mueve al cambiar de tipo.
   - Con un solo tipo con resultados no hay `[◀▶] Tipo`, y en Canciones vuelve `[B] Volver`.
 - **Vacío:** solo cuando ningún tipo tiene resultados: mensaje centrado «No se encontraron
   resultados» y botón primario «Buscar otra cosa».

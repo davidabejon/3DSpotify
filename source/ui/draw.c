@@ -238,7 +238,7 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color, bool inverted)
 
 int ui_glyph_icon_width(void)
 {
-	return ICON_S + SP_1;
+	return ICON_S;
 }
 
 int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted)
@@ -247,32 +247,59 @@ int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted)
 	ui_rect r = { x, cy - GLYPH_H / 2, w, GLYPH_H };
 	if (inverted)
 		r = ui_rect_offset(r, 0, GLYPH_SHIFT);
-	outlined(r, inverted ? COL_TINTA : COL_CAPA_ALTA);
-	/* The icon is taller than the glyph, but its triangles keep to the
-	 * middle ten rows: centred, they sit inside the outline. */
+	/* A button with no colour of its own, like START and SELECT (5.6):
+	 * `texto_2`, the icon in `tinta`; inverted the other way round (6.5).
+	 * The icon's triangles keep to its middle rows, inside the outline. */
+	outlined(r, inverted ? COL_TINTA : COL_TEXTO_2);
 	ui_icon(icon, r.x + (w - ICON_S) / 2, r.y + r.h / 2 - ICON_S / 2,
-	        inverted ? COL_CAPA_ALTA : COL_TEXTO);
+	        inverted ? COL_TEXTO_2 : COL_TINTA);
 	return w;
+}
+
+static int hint_glyph_width(const ui_hint *h)
+{
+	return h->icon ? ui_glyph_icon_width() : ui_glyph_width(h->letter);
+}
+
+/* One action at `x`; returns where the next one starts. */
+static int draw_hint(const ui_hint *h, int x, int cy)
+{
+	x += h->icon ? ui_glyph_icon(x, cy, h->icon, h->inverted)
+	             : ui_glyph(x, cy, h->letter, h->color, h->inverted);
+	if (!h->label)
+		return x + SP_3;
+	x += SP_1;
+	ui_text(h->label, x, cy, TXT_META, COL_TEXTO_2);
+	return x + ui_px_ceil(ui_text_width(h->label, TXT_META)) + SP_3;
 }
 
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
 {
+	ui_button_bar_split(bar, hints, count, 0);
+}
+
+void ui_button_bar_split(ui_rect bar, const ui_hint *hints, int count,
+                         int trailing)
+{
 	ui_panel(bar);
 	int cy = bar.y + bar.h / 2;
 	int x = bar.x + SP_2;
-	for (int i = 0; i < count; i++) {
-		x += hints[i].icon
-		     ? ui_glyph_icon(x, cy, hints[i].icon, hints[i].inverted)
-		     : ui_glyph(x, cy, hints[i].letter, hints[i].color,
-		                hints[i].inverted);
-		if (!hints[i].label) {
-			x += SP_3;
-			continue;
-		}
-		x += SP_1;
-		ui_text(hints[i].label, x, cy, TXT_META, COL_TEXTO_2);
-		x += ui_px_ceil(ui_text_width(hints[i].label, TXT_META)) + SP_3;
+	int lead = count - trailing;
+	for (int i = 0; i < lead; i++)
+		x = draw_hint(&hints[i], x, cy);
+	/* The trailing ones against the right margin, in the same spacing. */
+	int width = 0;
+	for (int i = lead; i < count; i++) {
+		width += hint_glyph_width(&hints[i]);
+		if (hints[i].label)
+			width += SP_1 + ui_px_ceil(ui_text_width(hints[i].label,
+			                                         TXT_META));
+		if (i < count - 1)
+			width += SP_3;
 	}
+	x = bar.x + bar.w - SP_2 - width;
+	for (int i = lead; i < count; i++)
+		x = draw_hint(&hints[i], x, cy);
 }
 
 void ui_progress(ui_rect r, int download, int progress, ui_handle handle)

@@ -66,9 +66,9 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color,
 /* The width ui_glyph() will take for `letter`. */
 int ui_glyph_width(const C2D_Text *letter);
 
-/* A D-pad glyph (5.6): the icon on `capa_alta` inside a `tinta` outline,
- * in `texto`; inverted, `tinta` with the icon in `capa_alta`. Returns its
- * width. */
+/* A D-pad glyph (5.6), the size of a letter's: no colour of its own, so
+ * `texto_2` like START and SELECT, the icon in `tinta`; inverted, `tinta`
+ * with the icon in `texto_2`. Returns its width. */
 int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted);
 int ui_glyph_icon_width(void);
 
@@ -86,6 +86,10 @@ typedef struct {
  * right from the margin. An action whose label is NULL shows its glyph
  * alone, for a bar that would not fit otherwise. */
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count);
+/* The same with the last `trailing` actions against the right margin:
+ * an action that comes and goes with what is on screen keeps its place. */
+void ui_button_bar_split(ui_rect bar, const ui_hint *hints, int count,
+                         int trailing);
 
 /* The progress bar's handle: none, at rest, or dragged by the stylus. */
 typedef enum {

@@ -768,9 +768,13 @@ class BuildTests(unittest.TestCase):
                         "### 7.11 Detalle de álbum, de artista y de playlist",
                         "### 7.12 Ficha de detalle (pantalla superior)"):
             self.assertIn(section, style)
-        self.assertIn("[A] Reproducir [X] Detalle [◀▶] Tipo [Y] Buscar",
+        self.assertIn("[A] Reproducir [X] Detalle [Y] Buscar … [◀▶] Tipo",
                       style)
-        self.assertIn("[A] Abrir [◀▶] Tipo [Y] Buscar [B] Volver", style)
+        self.assertIn("[A] Abrir [Y] Buscar [B] Volver … [◀▶] Tipo", style)
+        results = (build.ROOT / "ui" / "view_results.c").read_text(
+            encoding="utf-8")
+        self.assertIn("ui_button_bar_split(list_hints_rect(), hints, n, "
+                      "switches ? 1 : 0)", results)
         for readme, heading in (("README.md", "### Details"),
                                 ("README_es.md", "### Detalles")):
             text = (build.ROOT.parent / readme).read_text(encoding="utf-8")

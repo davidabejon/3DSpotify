@@ -614,9 +614,10 @@ bool view_results_dirty(void)
 /* --- Drawing ----------------------------------------------------------- */
 
 /* At most four actions (5.6). On the tracks, with kinds to switch:
- * Play, Detail, Type, Search -- B still goes back, as on the home grid,
- * which does not list it either. On the other kinds: Open, Type, Search,
- * Back. */
+ * Play, Detail, Search, then Type against the right margin -- B still
+ * goes back, as on the home grid, which does not list it either. On the
+ * other kinds: Open, Search, Back, Type. Type keeps its place whatever
+ * the kind. */
 static void draw_bar(const results_look *look)
 {
 	ui_hint hints[4];
@@ -649,21 +650,22 @@ static void draw_bar(const results_look *look)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_detail,
 		                        glyph_colors[GLYPH_X],
 		                        look->glyph[GLYPH_X], NULL };
-	if (switches)
-		hints[n++] = (ui_hint){ &letter_text[GLYPH_DPAD], &hint_kind,
-		                        glyph_colors[GLYPH_DPAD],
-		                        look->glyph[GLYPH_DPAD], &dpad };
 	if (mode == MODE_LIST || mode == MODE_ERROR)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_Y], &hint_search,
 		                        glyph_colors[GLYPH_Y],
 		                        look->glyph[GLYPH_Y], NULL };
-	if (n < 4)
+	if (n < (switches ? 3 : 4))
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_B],
 		                        mode == MODE_SEARCHING ? &hint_cancel
 		                                               : &hint_back,
 		                        glyph_colors[GLYPH_B],
 		                        look->glyph[GLYPH_B], NULL };
-	ui_button_bar(list_hints_rect(), hints, n);
+	/* Last, against the right margin: the same place on every kind. */
+	if (switches)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_DPAD], &hint_kind,
+		                        glyph_colors[GLYPH_DPAD],
+		                        look->glyph[GLYPH_DPAD], &dpad };
+	ui_button_bar_split(list_hints_rect(), hints, n, switches ? 1 : 0);
 }
 
 /* The recent searches under the button: a label, then one row each with

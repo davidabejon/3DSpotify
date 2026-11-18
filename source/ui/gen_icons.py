@@ -385,27 +385,26 @@ ICONS["OFFLINE"] = [
     "................",
 ]
 
-# Left and right on the D-pad: two triangles pointing apart. The button
-# bar shows it where left/right switch the kind of search results.
+# Left and right on the D-pad: two small triangles pointing apart, the
+# size of a letter, so the button bar's glyph matches the A/B/X/Y ones.
 ICONS["DPAD_LR"] = [
     "................",
     "................",
     "................",
-    ".....#....#.....",
-    "....##....##....",
-    "...###....###...",
-    "..####....####..",
-    ".#####....#####.",
-    ".#####....#####.",
-    "..####....####..",
-    "...###....###...",
-    "....##....##....",
-    ".....#....#.....",
+    "................",
+    "................",
+    "......#..#......",
+    ".....##..##.....",
+    "....###..###....",
+    "...####..####...",
+    "....###..###....",
+    ".....##..##.....",
+    "......#..#......",
+    "................",
     "................",
     "................",
     "................",
 ]
-
 
 def render(rows):
     assert len(rows) == SIZE, "an icon has 16 rows"
