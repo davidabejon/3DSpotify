@@ -4382,6 +4382,18 @@ static void test_results_strip(void)
 	b.offered[RESULT_PLAYLISTS] = false;
 	assert(!results_strip_same(&a, &b));
 
+	/* The strip and the card's cover below it, e2 apart, centred
+	 * together on the top screen: 24 px above, 24 below. */
+	assert(RESULTS_STRIP_Y == 24 && RESULTS_CARD_Y == 56);
+	assert(RESULTS_CARD_Y - (RESULTS_STRIP_Y + RESULTS_STRIP_H) == SP_2);
+	assert(SCREEN_H - (RESULTS_CARD_Y + ART_SIZE) == RESULTS_STRIP_Y);
+	/* The card's text follows its cover down. */
+	ui_rect at = now_detail_art_rect_at(RESULTS_CARD_Y);
+	assert(at.y == RESULTS_CARD_Y && at.x == now_detail_art_rect().x);
+	assert(now_detail_text_dy_at(23, 15, 2, RESULTS_CARD_Y) -
+	       now_detail_text_dy(23, 15, 2) ==
+	       RESULTS_CARD_Y - now_detail_art_rect().y);
+
 	/* Only on Search, with the list on screen and no detail over it. */
 	assert(top_shows_strip(TAB_SEARCH, false, true));
 	assert(!top_shows_strip(TAB_SEARCH, true, true));

@@ -215,7 +215,7 @@ static void header_text(const C2D_Text *text, int x, int cy, float scale,
 		                SCREEN_TOP_W);
 }
 
-void top_now_draw_header(artwork_state *art, bool centred,
+void top_now_draw_header(artwork_state *art, bool centred, int art_y,
                          const C2D_Text *title, const C2D_Text *const *lines,
                          int count, const int *rolls, int icon)
 {
@@ -223,9 +223,13 @@ void top_now_draw_header(artwork_state *art, bool centred,
 	int body_h = ui_line_height(TXT_CUERPO);
 	if (count > NOW_LINES)
 		count = NOW_LINES;
-	int dy = centred ? now_detail_text_dy(title_h, body_h, count) : 0;
+	if (art_y < 0)
+		art_y = now_detail_art_rect().y;
+	int dy = centred ? now_detail_text_dy_at(title_h, body_h, count, art_y)
+	                 : 0;
 	if (centred)
-		artwork_draw_or(art, now_detail_art_rect(), ART_SHADOW_OFF, icon);
+		artwork_draw_or(art, now_detail_art_rect_at(art_y), ART_SHADOW_OFF,
+		                icon);
 	else
 		artwork_draw_in(art, now_art_rect(), ART_SHADOW_OFF);
 	int x = now_text_x();
@@ -242,7 +246,8 @@ void top_now_draw_card(artwork_state *art)
 	now_look look = current_look(false);
 
 	const C2D_Text *lines[] = { &artist_text, &album_text };
-	top_now_draw_header(art, false, &title_text, lines, has_album ? 2 : 1,
+	top_now_draw_header(art, false, -1, &title_text, lines,
+	                    has_album ? 2 : 1,
 	                    NULL, ICON_NOTE);
 	draw_bar(&look);
 

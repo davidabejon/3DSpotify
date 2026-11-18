@@ -292,7 +292,7 @@ bool top_detail_dirty(const detail_doc *doc, const artwork_state *art)
 	return memcmp(rolls, drawn_rolls, (1 + line_count) * sizeof(int)) != 0;
 }
 
-void top_detail_draw(const detail_doc *doc, artwork_state *art)
+void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y)
 {
 	if (changed(doc)) {
 		parse(doc);
@@ -307,7 +307,7 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art)
 	for (int i = 0; i < line_count; i++)
 		lines[i] = &texts[1 + i];
 	current_rolls(drawn_rolls);
-	top_now_draw_header(art, true, &texts[0], lines, line_count,
+	top_now_draw_header(art, true, art_y, &texts[0], lines, line_count,
 	                    drawn_rolls, placeholder(doc));
 	drawn_valid = true;
 }

@@ -470,16 +470,20 @@ La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 
 ```
  SUPERIOR (400×240)
  ┌──────────────────────────────────────┐
- │ [▓♪ 20▓][ ☺ 12 ][ ◉ 12 ][ ≡ 12 ]     │ 8..32   franja
+ │                                      │ 0..24   margen
+ │ [▓♪ 20▓][ ☺ 12 ][ ◉ 12 ][ ≡ 12 ]     │ 24..48  franja
  │ ┌──────────┐                         │
- │ │ portada  │  Nombre (t_titulo)      │ 40..200 ficha de §7.12
+ │ │ portada  │  Nombre (t_titulo)      │ 56..216 ficha de §7.12
  │ │ 160×160  │  Álbum · Artista ...    │
- │ └──────────┘                         │
+ │ └──────────┘                         │ 216..240 margen
  └──────────────────────────────────────┘
 ```
 
-- Franja de x 12 a 388 (`e3` de margen) e y 8..32 (`RESULTS_STRIP_Y` = `e2`,
-  `RESULTS_STRIP_H` = `e6`), por encima de la ficha de §7.12, que empieza en y 40.
+- Franja de x 12 a 388 (`e3` de margen) y 24 px de alto (`RESULTS_STRIP_H` = `e6`). Con
+  ella, la ficha de §7.12 baja: franja, `e2` y portada (24 + 8 + 160 = 192 px) van
+  centradas juntas en la altura, con 24 px arriba y abajo. Franja en y 24..48
+  (`RESULTS_STRIP_Y`), portada en y 56..216 (`RESULTS_CARD_Y`), y el texto de la ficha
+  centrado junto a la portada, como siempre.
 - **No es un control:** en la pantalla superior no hay táctil, y el tipo se cambia con
   izquierda/derecha en la inferior (§6.6). Por eso basta con 24 px de alto.
 - Un segmento por tipo que ofrece la búsqueda, separados 4 px (`GRID_GAP`); el resto de la
@@ -741,7 +745,8 @@ Error:
   exactamente el espacio entre las barras. Fijar `RESULTS_PER_PAGE` a 4.
 - Superior, con resultados en pantalla: arriba la franja de tipos (§5.17), con el tipo
   activo resaltado y el recuento de cada uno; debajo, la ficha (§7.12) del elemento en foco
-  como vista previa, igual que hace «Inicio» con sus teselas. La ficha cambia con el foco; su
+  como vista previa, igual que hace «Inicio» con sus teselas; las dos juntas, centradas en
+  la altura (§5.17). La ficha cambia con el foco; su
   imagen grande se pide cuando el foco lleva `PREVIEW_DELAY` (18) frames quieto (antes, si ya
   está en la caché), y mientras llega se ve la miniatura escalada.
 - Superior en los demás estados (buscando, vacío, error, antes de buscar): la de cualquier
@@ -1366,9 +1371,10 @@ enum {
 	TILE_H = TOUCH_MIN,
 	TILE_COVER = TILE_H - 2 * SP_1,
 	GRID_GAP = SP_1,
-	/* §5.17 franja de tipos */
-	RESULTS_STRIP_Y = SP_2,
+	/* §5.17 franja de tipos, centrada en la altura junto con la ficha */
 	RESULTS_STRIP_H = SP_6,
+	RESULTS_STRIP_Y = (SCREEN_H - (RESULTS_STRIP_H + SP_2 + ART_SIZE)) / 2,
+	RESULTS_CARD_Y = RESULTS_STRIP_Y + RESULTS_STRIP_H + SP_2,
 	RESULTS_BAND_H = 2,
 };
 

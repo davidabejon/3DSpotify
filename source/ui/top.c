@@ -122,7 +122,8 @@ void top_draw(app_tab tab, artwork_state *art)
 		top_now_draw_big(art);
 		break;
 	case TOP_DETAIL:
-		top_detail_draw(detail, detail_art);
+		/* Under the strip, the two centred together (5.17). */
+		top_detail_draw(detail, detail_art, strip_on ? RESULTS_CARD_Y : -1);
 		break;
 	case TOP_ABOUT:
 		if (account) {

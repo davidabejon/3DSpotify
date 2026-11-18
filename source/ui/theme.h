@@ -121,8 +121,12 @@ enum {
 	SPINNER_PAD = 8,      /* spinner: velo e2 alrededor; 44 + 2·8 = 60 px */
 	TAB_LIFT_ACTIVE = 2,  /* §5.12 pestaña activa: el borde inferior sube 2 px */
 	TAB_LIFT_PRESSED = 4, /* §5.12 pestaña pulsada: sube 4 px */
-	RESULTS_STRIP_Y = SP_2, /* §5.17 franja de tipos: y 8..32 */
+	/* §5.17 franja de tipos: con la portada de la ficha debajo, a e2,
+	 * el bloque (24 + 8 + 160 = 192 px) va centrado en la altura:
+	 * franja en y 24..48, portada en y 56..216. */
 	RESULTS_STRIP_H = SP_6,
+	RESULTS_STRIP_Y = (SCREEN_H - (RESULTS_STRIP_H + SP_2 + ART_SIZE)) / 2,
+	RESULTS_CARD_Y = RESULTS_STRIP_Y + RESULTS_STRIP_H + SP_2,
 	RESULTS_BAND_H = 2,   /* §5.17 banda inferior del segmento activo */
 };
 

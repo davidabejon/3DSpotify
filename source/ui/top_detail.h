@@ -38,6 +38,8 @@ void top_detail_invalidate(void);
  * drawing clears. */
 bool top_detail_dirty(const detail_doc *doc, const artwork_state *art);
 
-void top_detail_draw(const detail_doc *doc, artwork_state *art);
+/* `art_y`: the cover's top, -1 for the card alone (centred on the
+ * screen's height); RESULTS_CARD_Y under the strip of kinds. */
+void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y);
 
 #endif
