@@ -6,6 +6,7 @@
 #include "http3ds.h"
 #include "list_logic.h"
 #include "lang.h"
+#include "meta_parse.h"
 #include "worker_priority.h"
 
 #include <3ds.h>
@@ -46,6 +47,8 @@ typedef struct {
 	const char *uris[DETAIL_JOB_MAX];
 	sp_track tracks[DETAIL_JOB_MAX];
 	int  count;
+	/* An artist's releases were named (and sorted) by this load. */
+	bool releases_named;
 	int  result;                  /* 0 or -1 */
 	char error[192];
 	volatile bool cancel_requested;
@@ -93,6 +96,31 @@ static void forget_load(int slot)
 
 /* --------------------------------------------------------------- worker */
 
+/* job.artist's releases, which the artist's metadata names by gid alone:
+ * album batches of SP_ALBUM_BATCH on the open link, then the unnamed
+ * dropped (a batch that failed costs its releases, not the detail) and
+ * the rest put newest first. Every batch is needed before any row shows:
+ * mixing albums and singles by date, the newest may be in the last. */
+static void name_releases(http_session *sess)
+{
+	sp_artist *a = &job.artist;
+	int n = a->release_count;
+	int batches = artist_batches(n, SP_ALBUM_BATCH);
+	for (int b = 0; b < batches && !job.cancel_requested; b++) {
+		int from = b * SP_ALBUM_BATCH;
+		int len = artist_batch_len(n, SP_ALBUM_BATCH, b);
+		const char *uris[SP_ALBUM_BATCH];
+		for (int i = 0; i < len; i++)
+			uris[i] = a->releases[from + i].uri;
+		char err[160];
+		sp_album_metadata_batch_s(sess, job.token, uris, len,
+		                          &a->releases[from], err, sizeof(err));
+	}
+	a->release_count = artist_keep_named(a->releases, n);
+	sp_sort_releases(a->releases, a->release_count);
+	job.releases_named = true;
+}
+
 static void worker_main(void *arg)
 {
 	(void)arg;
@@ -103,6 +131,12 @@ static void worker_main(void *arg)
 		snprintf(job.error, sizeof(job.error),
 		         tr(STR_ERR_DETAIL_CONNECT_FMT), job.host);
 		goto done;
+	}
+	if (job.kind == DETAIL_ARTIST && job.page) {
+		/* The discography of an artist already shown: only names. */
+		name_releases(sess);
+		rc = 0;
+		goto close;
 	}
 	if (job.kind == DETAIL_ALBUM) {
 		rc = sp_album_metadata(sess, job.token, job.uri, &job.album,
@@ -160,6 +194,12 @@ static void worker_main(void *arg)
 		else
 			job.count = got;
 	}
+	/* An artist with no popular tracks has nothing to show meanwhile: its
+	 * discography is named in this load rather than in one of its own. */
+	if (rc == 0 && job.kind == DETAIL_ARTIST && job.count == 0 &&
+	    !job.cancel_requested)
+		name_releases(sess);
+close:
 	http_session_close(sess);
 done:
 	job.result = rc;
@@ -199,51 +239,86 @@ static void release_as_track(const sp_release *r, const char *artist,
 	t->year = r->date / 10000;
 }
 
-/* An artist's sections (artist_logic.h) into a buffer of their exact
- * size: the popular tracks named by the load, then the releases that came
- * named. False without the memory: the caller lists the tracks alone. */
-static bool apply_artist_rows(detail_doc *d)
+/* The SP_ALBUM_* each release's row says. */
+static void release_types(const sp_release *r, int n, int *types)
+{
+	for (int i = 0; i < n; i++)
+		types[i] = artist_release_type(r[i].type, r[i].group);
+}
+
+/* The named releases of job.artist (sorted) as the discography's rows at
+ * rows[d->count ...], after what the document lists; the buffer was made
+ * with room for them all. */
+static void append_releases(detail_doc *d)
 {
 	static int types[SP_ARTIST_RELEASES_MAX];
-	static int named[SP_ARTIST_RELEASES_MAX];
 	const sp_artist *a = &job.artist;
-	int releases = 0;
-	for (int i = 0; i < a->release_count; i++) {
-		const sp_release *r = &a->releases[i];
-		if (!r->name[0])
-			continue;   /* never named: no row without a title */
-		named[releases] = i;
-		types[releases++] = artist_release_type(r->type, r->group);
+	release_types(a->releases, a->release_count, types);
+	int at = d->count;
+	int added = artist_discography_rows(a->release_count, types,
+	                                    d->rows + at, d->capacity - at);
+	for (int i = 0; i < added; i++) {
+		const track_row *r = &d->rows[at + i];
+		if (r->release)
+			release_as_track(&a->releases[r->index], d->title,
+			                 &d->tracks[at + i]);
+		else
+			memset(&d->tracks[at + i], 0, sizeof(d->tracks[0]));
 	}
-	int max = 2 + job.count + releases;
+	d->count += added;
+	d->coll_rows = added > 0 ? added - 1 : 0;
+	d->newest_release = a->release_count > 0 ? a->releases[0].date : 0;
+	free(d->releases);
+	d->releases = NULL;
+}
+
+/* An artist's sections (artist_logic.h) into a buffer made for them all:
+ * the popular tracks named by the load, and its discography -- now, when
+ * this load named it, else by a load of its own (`loading_more`), whose
+ * rows go at the end. False without the memory: the caller lists the
+ * tracks alone. */
+static bool apply_artist_rows(detail_doc *d)
+{
+	const sp_artist *a = &job.artist;
+	int max = 2 + job.count + a->release_count;
 	sp_track *owned = calloc((size_t)max, sizeof(sp_track));
 	track_row *rows = malloc((size_t)max * sizeof(track_row));
-	if (!owned || !rows) {
+	/* Waiting for names: the URIs, kept with the document. */
+	sp_release *waiting_names = NULL;
+	bool later = !job.releases_named && a->release_count > 0;
+	if (later)
+		waiting_names = malloc((size_t)a->release_count * sizeof(sp_release));
+	if (!owned || !rows || (later && !waiting_names)) {
 		free(owned);
 		free(rows);
+		free(waiting_names);
 		return false;
 	}
 	int top_first;
-	int n = artist_rows(job.count, releases, types, rows, max, &top_first);
-	for (int i = 0; i < n; i++) {
-		const track_row *r = &rows[i];
-		if (r->kind == TRACK_ROW_TRACK)
-			owned[i] = job.tracks[r->index];
-		else if (r->release)
-			release_as_track(&a->releases[named[r->index]], a->name,
-			                 &owned[i]);
-	}
+	int n = artist_rows(job.count, 0, NULL, rows, max, &top_first);
+	for (int i = 0; i < n; i++)
+		if (rows[i].kind == TRACK_ROW_TRACK)
+			owned[i] = job.tracks[rows[i].index];
 	/* A load applied again (a retry) replaces what an earlier one left. */
 	free(d->owned);
 	free(d->rows);
+	free(d->releases);
 	d->owned = owned;
 	d->rows = rows;
 	d->tracks = owned;
 	d->capacity = max;
 	d->count = n;
+	d->releases = waiting_names;
 	d->track_rows = job.count;
-	d->coll_rows = releases;
-	d->selected = n > 0 ? track_row_first_on(rows, n, 0) : 0;
+	d->coll_rows = 0;
+	if (later) {
+		memcpy(waiting_names, a->releases,
+		       (size_t)a->release_count * sizeof(sp_release));
+		d->loading_more = true;
+	} else if (job.releases_named) {
+		append_releases(d);
+	}
+	d->selected = d->count > 0 ? track_row_first_on(rows, d->count, 0) : 0;
 	if (d->selected < 0)
 		d->selected = 0;
 	d->first = 0;
@@ -330,7 +405,9 @@ static bool reap(void)
 		    d->state != DETAIL_READY || !d->loading_more)
 			return false;   /* still asked for if wanted: started again */
 		d->loading_more = false;
-		if (job.result == 0)
+		if (job.kind == DETAIL_ARTIST)
+			append_releases(d);   /* whatever was named; never again */
+		else if (job.result == 0)
 			append_page(d);
 		else
 			d->retry_at = osGetTime() + DETAIL_MORE_RETRY_MS;
@@ -358,6 +435,14 @@ static void start(int slot, const char *host, const char *token,
 	snprintf(job.token, sizeof(job.token), "%s", token);
 	snprintf(job.username, sizeof(job.username), "%s",
 	         username ? username : "");
+	/* An artist's discography to name: the job works on its own copy. */
+	if (job.page && d->kind == DETAIL_ARTIST && d->releases) {
+		int n = d->release_count < SP_ARTIST_RELEASES_MAX
+		    ? d->release_count : SP_ARTIST_RELEASES_MAX;
+		memcpy(job.artist.releases, d->releases,
+		       (size_t)n * sizeof(sp_release));
+		job.artist.release_count = n;
+	}
 	/* Below the decoder, like every worker that can overlap playback. */
 	worker = threadCreate(worker_main, NULL, DETAIL_WORKER_STACK,
 	                      background_priority(), -2, false);
@@ -411,6 +496,7 @@ static detail_doc *push(app_tab tab)
 	 * re-sets its list before it draws a level again. */
 	free(d->owned);
 	free(d->rows);
+	free(d->releases);
 	memset(d, 0, sizeof(*d));
 	d->listeners = -1;
 	d->serial = serial;
@@ -732,8 +818,11 @@ void details_stop(void)
 	for (int i = 0; i < DETAIL_POOL; i++) {
 		free(docs[i].owned);
 		free(docs[i].rows);
+		free(docs[i].releases);
 		docs[i].owned = NULL;
 		docs[i].rows = NULL;
+		docs[i].releases = NULL;
+		docs[i].loading_more = false;
 		docs[i].tracks = docs[i].inline_tracks;
 		docs[i].capacity = DETAIL_MAX_TRACKS;
 		docs[i].count = 0;

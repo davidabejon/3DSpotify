@@ -1572,20 +1572,35 @@ static void trace_write(void)
 	trace_append(trace.line);
 }
 
-/* One line per artist detail as it turns ready, from the main thread:
- * counts only, never a name or the biography's text. */
+/* One line per artist detail as it turns ready, and one more when its
+ * discography arrives, from the main thread: counts, the newest release's
+ * date (to check how dates decode) and how long the discography took;
+ * never a name or the biography's text. */
 static void trace_artist(const detail_doc *d)
 {
 	static const detail_doc *last;
 	static unsigned last_serial;
+	static bool last_pending;
+	static u64 ready_at;
 	if (!d || d->kind != DETAIL_ARTIST || d->state != DETAIL_READY ||
-	    d->preview || (d == last && d->serial == last_serial))
+	    d->preview)
+		return;
+	bool fresh = d != last || d->serial != last_serial;
+	bool arrived = !fresh && last_pending && !d->loading_more;
+	if (!fresh && !arrived)
 		return;
 	last = d;
 	last_serial = d->serial;
-	char line[96];
-	snprintf(line, sizeof(line), "artist: top=%d releases=%d bio=%uB",
-	         d->count, d->release_count, (unsigned)strlen(d->bio));
+	last_pending = d->loading_more;
+	if (fresh)
+		ready_at = osGetTime();
+	char line[128];
+	snprintf(line, sizeof(line),
+	         "artist: top=%d releases=%d of %d bio=%uB newest=%d%s +%dms",
+	         d->track_rows, d->coll_rows, d->release_count,
+	         (unsigned)strlen(d->bio), d->newest_release,
+	         d->loading_more ? " naming..." : "",
+	         (int)(osGetTime() - ready_at));
 	trace_append(line);
 }
 #define TRACE(...) trace_add(__VA_ARGS__)

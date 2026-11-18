@@ -1061,7 +1061,11 @@ Error:
   vacía: «Canciones populares» (sus pistas con miniatura) y «Discografía» (álbumes,
   sencillos y EP, y recopilatorios mezclados, del más reciente al más antiguo; no
   incluye aquello en lo que solo aparece). Hasta 200 lanzamientos. 4 filas a pantalla
-  completa, como resultados; el foco empieza en la primera canción.
+  completa, como resultados; el foco empieza en la primera canción. La discografía llega
+  después de las canciones (hay que nombrar todos los lanzamientos para ordenarlos):
+  mientras, la burbuja «Cargando...» (§5.9) y la lista ya responde; al llegar, su cabecera
+  y sus filas se añaden al final sin mover la lista ni el foco. Un artista sin canciones
+  populares espera a tenerla entera.
   - Sobre una canción: A, o tocarla en foco, reproduce las populares desde ella (solo ellas
     son la cola); X abre su detalle. Barra `[A] Reproducir [X] Detalle [Y] Aleatorio [B]
     Volver`.

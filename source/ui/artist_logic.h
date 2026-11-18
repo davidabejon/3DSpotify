@@ -57,13 +57,32 @@ static inline void artist_row(track_row *r, track_row_kind kind, int index,
 	r->index = (int16_t)index;
 }
 
-/* The rows of an artist's detail: a header and `top` tracks, then a
- * header and `releases` releases (types[i], an SP_ALBUM_*); a section
- * with nothing is left out, header and all. At most `max` rows. Returns
- * how many; `*top_first` is the row of the first popular track (-1 for
- * none), so the tracks are rows[top_first .. top_first + top). A track's
- * `index` is its position among the tracks, a release's among the
- * releases. */
+/* "Discography" and `releases` releases (types[i], an SP_ALBUM_*), at most
+ * `max` rows; nothing for no releases. A release's `index` is its position
+ * among the releases. Returns how many rows. Also how the discography is
+ * appended once it is named, after the popular tracks. */
+static inline int artist_discography_rows(int releases, const int *types,
+                                          track_row *rows, int max)
+{
+	int n = 0;
+	if (releases <= 0 || max <= 0)
+		return 0;
+	artist_row(&rows[n++], TRACK_ROW_HEADER, STR_ARTIST_DISCOGRAPHY, true);
+	for (int i = 0; i < releases && n < max; i++) {
+		track_row *r = &rows[n++];
+		artist_row(r, TRACK_ROW_ALBUM, i, false);
+		r->release = true;
+		r->album_type = (uint8_t)(types ? types[i] : SP_ALBUM_ALBUM);
+	}
+	return n;
+}
+
+/* The rows of an artist's detail: a header and `top` tracks, then the
+ * discography (artist_discography_rows); a section with nothing is left
+ * out, header and all. At most `max` rows. Returns how many; `*top_first`
+ * is the row of the first popular track (-1 for none), so the tracks are
+ * rows[top_first .. top_first + top). A track's `index` is its position
+ * among the tracks. */
 static inline int artist_rows(int top, int releases, const int *types,
                               track_row *rows, int max, int *top_first)
 {
@@ -75,17 +94,36 @@ static inline int artist_rows(int top, int releases, const int *types,
 		for (int i = 0; i < top && n < max; i++)
 			artist_row(&rows[n++], TRACK_ROW_TRACK, i, false);
 	}
-	if (releases > 0 && n < max) {
-		artist_row(&rows[n++], TRACK_ROW_HEADER, STR_ARTIST_DISCOGRAPHY,
-		           true);
-		for (int i = 0; i < releases && n < max; i++) {
-			track_row *r = &rows[n++];
-			artist_row(r, TRACK_ROW_ALBUM, i, false);
-			r->release = true;
-			r->album_type = (uint8_t)(types ? types[i] : SP_ALBUM_ALBUM);
-		}
+	return n + artist_discography_rows(releases, types, rows + n, max - n);
+}
+
+/* Naming the releases: `n` of them in batches of `size` (SP_ALBUM_BATCH).
+ * How many batches, and how long batch `b` is. */
+static inline int artist_batches(int n, int size)
+{
+	return n > 0 && size > 0 ? (n + size - 1) / size : 0;
+}
+
+static inline int artist_batch_len(int n, int size, int b)
+{
+	int left = n - b * size;
+	return left < 0 ? 0 : left < size ? left : size;
+}
+
+/* Drops the releases that came back without a name (their batch failed,
+ * or the service left them out): no row without a title. The rest close
+ * ranks in their order. Returns how many are left. */
+static inline int artist_keep_named(sp_release *r, int n)
+{
+	int kept = 0;
+	for (int i = 0; i < n; i++) {
+		if (!r[i].name[0])
+			continue;
+		if (kept != i)
+			r[kept] = r[i];
+		kept++;
 	}
-	return n;
+	return kept;
 }
 
 #endif

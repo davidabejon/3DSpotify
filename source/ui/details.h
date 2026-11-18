@@ -74,6 +74,12 @@ typedef struct {
 	char bio[SP_ARTIST_BIO_MAX];
 	long listeners;
 	int  release_count;
+	/* DETAIL_ARTIST with popular tracks: its releases as the load found
+	 * them, URIs only, waiting to be named by a load of their own
+	 * (`loading_more`); let go once their rows are appended. Then the
+	 * newest one's date (yyyymmdd, 0 if none), for the debug trace. */
+	sp_release *releases;
+	int  newest_release;
 	/* DETAIL_TRACK: a copy of the list it came from; the track shown is
 	 * tracks[selected] and "Play" queues the whole list. DETAIL_ALBUM,
 	 * DETAIL_ARTIST and DETAIL_PLAYLIST: their tracks. `tracks` points at

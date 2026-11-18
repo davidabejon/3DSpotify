@@ -1089,6 +1089,48 @@ static void test_artist_rows(void)
 	assert(artist_release_type(9, SP_GROUP_SINGLE) == SP_ALBUM_SINGLE);
 	assert(artist_type_label(SP_ALBUM_SINGLE) == STR_ALBUM_TYPE_SINGLE);
 	assert(artist_type_label(0) == STR_ALBUM_TYPE_ALBUM);
+
+	/* The discography appended after the popular tracks, once named: the
+	 * same rows artist_rows would have made in one go. */
+	static track_row whole[16];
+	n = artist_rows(3, 3, TYPES, whole, 16, &top_first);
+	int at = artist_rows(3, 0, NULL, rows, 16, &top_first);
+	assert(at == 4);
+	assert(artist_discography_rows(3, TYPES, rows + at, 16 - at) == 4);
+	assert(memcmp(rows, whole, (size_t)n * sizeof(rows[0])) == 0);
+	assert(artist_discography_rows(0, TYPES, rows, 16) == 0);
+	assert(artist_discography_rows(3, TYPES, rows, 0) == 0);
+	assert(artist_discography_rows(3, TYPES, rows, 2) == 2);
+}
+
+static void test_artist_naming(void)
+{
+	/* Batches of 50: 200 is four, 43 is one, 101 ends with one. */
+	assert(artist_batches(200, SP_ALBUM_BATCH) == 4);
+	assert(artist_batches(43, SP_ALBUM_BATCH) == 1);
+	assert(artist_batches(101, SP_ALBUM_BATCH) == 3);
+	assert(artist_batches(0, SP_ALBUM_BATCH) == 0);
+	assert(artist_batches(5, 0) == 0);
+	assert(artist_batch_len(101, 50, 0) == 50);
+	assert(artist_batch_len(101, 50, 2) == 1);
+	assert(artist_batch_len(101, 50, 3) == 0);
+	assert(artist_batch_len(43, 50, 0) == 43);
+
+	/* A failed batch leaves its releases unnamed: they go, the rest keep
+	 * their order. */
+	static sp_release r[5];
+	static const char *const NAMES[5] = { "A", "", "C", "", "E" };
+	for (int i = 0; i < 5; i++) {
+		memset(&r[i], 0, sizeof(r[i]));
+		snprintf(r[i].name, sizeof(r[i].name), "%s", NAMES[i]);
+		r[i].order = i;
+	}
+	assert(artist_keep_named(r, 5) == 3);
+	assert(r[0].order == 0 && r[1].order == 2 && r[2].order == 4);
+	assert(strcmp(r[1].name, "C") == 0);
+	assert(artist_keep_named(r, 0) == 0);
+	memset(r, 0, sizeof(r));
+	assert(artist_keep_named(r, 5) == 0);
 }
 
 static void test_section_navigation(void)
@@ -4838,6 +4880,7 @@ int main(void)
 	test_meta_parse_album_batch();
 	test_bio_clean();
 	test_artist_rows();
+	test_artist_naming();
 	test_section_navigation();
 	test_meta_parse_batch();
 	test_meta_parse_rootlist();
