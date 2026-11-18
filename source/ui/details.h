@@ -1,6 +1,6 @@
 /* The detail screens' data: one document per open level, the per-tab
- * stacks of detail_nav.h, and the background loader for albums and artists
- * (docs/plan_vistas_detalle.md 3.1-3.3).
+ * stacks of detail_nav.h, and the background loader for albums, artists
+ * and playlists (STYLES.md 7.9-7.11).
  *
  * A track detail needs no network: it is a copy of the list it was opened
  * from, so "Play" can use that list as the queue however the original
@@ -100,6 +100,10 @@ typedef struct {
 	/* Bumped every time the document is (re)used, so a load that finishes
 	 * late cannot fill a level opened since. */
 	unsigned serial;
+	/* Not an open detail but a search result's card, built from the row
+	 * (view_results_preview): no tracks, no year, no counts to tell, so
+	 * the card leaves those lines out (STYLES.md 7.12). */
+	bool preview;
 } detail_doc;
 
 /* True while `tab` shows a detail instead of its own view. */

@@ -1,4 +1,4 @@
-/* Which playlists the home tab shows, in what order (home plan 3.1).
+/* Which playlists the home tab shows, in what order (STYLES.md 7.7).
  * Pure C with no 3DS headers, tested in tests/native_logic_test.c.
  *
  * The play history names playlists by URI only and in the order they were

@@ -465,6 +465,49 @@ La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 
   indicador (§5.11) como en las listas.
 - Lógica pura en `grid_logic.h`; widget en `tile_grid.[ch]`.
 
+### 5.17 Selector de tipo (pantalla superior)
+
+```
+ SUPERIOR (400×240)
+ ┌──────────────────────────────────────┐
+ │ [▓♪ 20▓][ ☺ 12 ][ ◉ 12 ][ ≡ 12 ]     │ 8..32   franja
+ │ ┌──────────┐                         │
+ │ │ portada  │  Nombre (t_titulo)      │ 40..200 ficha de §7.12
+ │ │ 160×160  │  Álbum · Artista ...    │
+ │ └──────────┘                         │
+ └──────────────────────────────────────┘
+```
+
+- Franja de x 12 a 388 (`e3` de margen) e y 8..32 (`RESULTS_STRIP_Y` = `e2`,
+  `RESULTS_STRIP_H` = `e6`), por encima de la ficha de §7.12, que empieza en y 40.
+- **No es un control:** en la pantalla superior no hay táctil, y el tipo se cambia con
+  izquierda/derecha en la inferior (§6.6). Por eso basta con 24 px de alto.
+- Un segmento por tipo que ofrece la búsqueda, separados 4 px (`GRID_GAP`); el resto de la
+  división va a los primeros, como en la rejilla:
+
+  | Tipos | Anchos           | x de cada segmento |
+  |------:|------------------|--------------------|
+  | 4     | 91, 91, 91, 91   | 12, 107, 202, 297  |
+  | 3     | 123, 123, 122    | 12, 139, 266       |
+
+- Contenido centrado: icono 16 px (nota, cuenta, disco, líneas) + `e1` + recuento en
+  `t_meta`. Sin nombre: no cabe en 91 px en los dos idiomas, y la ficha ya dice el tipo.
+- Estados:
+  - En reposo: `capa` con contorno 1 px `tinta`, sin relieve (§5.1). Icono y número en
+    `texto`.
+  - Activo: relleno `clorofila`, banda inferior 2 px `musgo` (`RESULTS_BAND_H`), contorno
+    `tinta`. Icono y número en `tinta`.
+  - Sin resultados: `capa`, icono y número en `texto_off` (§2.6). Izquierda/derecha se lo
+    saltan.
+- **Empujón:** al intentar pasar del primer o del último tipo con resultados, el segmento
+  activo se desplaza `EDGE_SHIFT` (3 px) hacia ese lado durante `ANIM_EDGE` (6) frames y
+  vuelve, por encima de su vecino.
+- Solo en «Búsqueda», con la lista de resultados en pantalla y sin detalle abierto.
+  Buscando, con error, vacío o antes de buscar, la superior es la de siempre.
+- El spinner de descarga (centro de la pantalla) puede taparla: va encima de todo.
+- Lógica pura en `results_logic.h` (`results_strip_layout`) y `top_logic.h`
+  (`top_shows_strip`); dibujo en `top_strip.[ch]`.
+
 ---
 
 ## 6. Estados e interacción
@@ -696,8 +739,14 @@ Error:
   miniatura (§5.3) separadas 4 px, barra de botones. La primera fila queda a 4 px de la barra
   de pestañas y la última a 4 px de la barra de botones: 4 + 4 × 41 + 3 × 4 + 4 = 184 px,
   exactamente el espacio entre las barras. Fijar `RESULTS_PER_PAGE` a 4.
-- Superior: lo mismo que en cualquier pestaña (el logotipo, o la ficha de lo que suena); con
-  un detalle abierto, su ficha (§7.12).
+- Superior, con resultados en pantalla: arriba la franja de tipos (§5.17), con el tipo
+  activo resaltado y el recuento de cada uno; debajo, la ficha (§7.12) del elemento en foco
+  como vista previa, igual que hace «Inicio» con sus teselas. La ficha cambia con el foco; su
+  imagen grande se pide cuando el foco lleva `PREVIEW_DELAY` (18) frames quieto (antes, si ya
+  está en la caché), y mientras llega se ve la miniatura escalada.
+- Superior en los demás estados (buscando, vacío, error, antes de buscar): la de cualquier
+  pestaña (el logotipo, o la ficha de lo que suena). Con un detalle abierto, su ficha, sin
+  franja.
 - **Antes de buscar:** mensaje centrado «Todavía no has buscado nada» y botón primario
   «Buscar canciones». Si hay búsquedas recientes (las 3 últimas, guardadas en la
   configuración), en lugar del mensaje: el botón, debajo la etiqueta «Búsquedas recientes»
@@ -869,7 +918,8 @@ Error:
   es un control (§5.9).
 - Superior: con una tesela en foco, su ficha (§7.12) como vista previa: portada, nombre,
   «N canciones» y «Lo ultimo: <canción - artista>» si la hay. La portada se pide cuando
-  el foco lleva 18 frames (300 ms) quieto, para no descargar al recorrer la rejilla. Con
+  el foco lleva `PREVIEW_DELAY` (18 frames, 300 ms) quieto, para no descargar al recorrer
+  la rejilla. Con
   el foco en «Mostrar más» o mientras carga, logotipo o la ficha de lo que suena; con un
   detalle abierto, su ficha.
   Volver a conectar y emparejar están en «Ajustes».
@@ -1034,7 +1084,7 @@ Error:
 - Carátula, portada o retrato a 160×160 con contorno y sombra dura de 3 px, como la ficha de
   §7.5, pero sin tiempos ni barra: la carátula va centrada en la altura (y 40) y el bloque de
   textos, centrado junto a ella. Sin imagen, o mientras llega, el icono de nota (la flecha
-  para «Descargas»).
+  para «Descargas», la cuenta para un artista).
 - Título en `t_titulo` · `texto` y hasta 4 líneas en `t_cuerpo` · `texto_2`:
   - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
     año.
@@ -1044,6 +1094,12 @@ Error:
     página). Sin propietario: el
     servicio solo da un id de usuario opaco.
   - Cargando o con error: su estado como título.
+- Vista previa de un resultado de búsqueda (§7.4): se hace con los datos de la fila, sin
+  pedir nada salvo la imagen, así que no hay recuentos ni año que contar:
+  - Canción: la de siempre (es la pista en foco).
+  - Artista: «Artista» en lugar de «Canciones populares».
+  - Álbum: «Álbum · <artista>», sin más líneas.
+  - Playlist: «Playlist · <propietario>» (aquí sí hay nombre), sin «0 canciones».
 - El texto que no cabe en la columna rueda (§5.15).
 - La imagen es la del detalle, nunca la de la pista que suena.
 
@@ -1195,6 +1251,9 @@ botones con el foco en «Descargas».
   propio del documento, hecho al abrirlo y liberado al reutilizarlo. La lista solo prepara
   el texto y las miniaturas de una ventana de 24 filas alrededor de lo visible; al moverse
   la ventana, las miniaturas que ya estaban se recolocan sin volver a descargarse.
+- En los resultados, la pantalla superior solo marca `dirty` cuando cambia el tipo o el
+  foco, llega una imagen, rueda un texto (§5.15) o empieza y acaba el empujón de la franja
+  (§5.17). Nada por frame: el audio no da tirones al recorrer la lista.
 - Las playlists de «Inicio» se cargan una vez al entrar en las pestañas, en otro hilo por
   debajo del decodificador y con una sesión keep-alive (historial, carpeta y la cabecera de
   las recientes que no están en ella). La rejilla solo marca `dirty` por pulsación, llegada
@@ -1307,6 +1366,10 @@ enum {
 	TILE_H = TOUCH_MIN,
 	TILE_COVER = TILE_H - 2 * SP_1,
 	GRID_GAP = SP_1,
+	/* §5.17 franja de tipos */
+	RESULTS_STRIP_Y = SP_2,
+	RESULTS_STRIP_H = SP_6,
+	RESULTS_BAND_H = 2,
 };
 
 /* Movimiento (frames a 60 Hz) */
@@ -1317,6 +1380,9 @@ enum {
 	LOADER_STEP = 6,
 	BUBBLE_SHOW = 60,
 };
+
+/* §7.4, §7.7: foco quieto antes de pedir la imagen de una vista previa */
+enum { PREVIEW_DELAY = 18 };
 
 /* Escalas de texto */
 #define TXT_TITULO 0.75f

@@ -1,5 +1,5 @@
 /* The screens before the session is up: connecting, pairing and the start-up
- * error (feature_plan.md, phases 2 and 4). Layout, hit testing, the QR's URL
+ * error (STYLES.md 7.2, 7.3). Layout, hit testing, the QR's URL
  * and scale, and the step counter. Pure C with no 3DS headers, tested in
  * tests/native_logic_test.c. Every measure comes from theme.h (STYLES.md 4),
  * in whole pixels; text heights are measured at draw time.

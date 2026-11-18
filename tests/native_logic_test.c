@@ -4337,6 +4337,59 @@ static void test_results_kinds(void)
 	assert(k.first[RESULT_PLAYLISTS] == -1);
 }
 
+static void test_results_strip(void)
+{
+	int x[RESULT_KINDS], w[RESULT_KINDS];
+	/* Four kinds: 91 each, GRID_GAP apart, inside e3. */
+	results_strip_layout(4, x, w);
+	int sum = 0;
+	for (int i = 0; i < 4; i++) {
+		assert(w[i] == 91);
+		sum += w[i];
+		if (i > 0)
+			assert(x[i] == x[i - 1] + w[i - 1] + GRID_GAP);
+	}
+	assert(x[0] == SP_3 && sum + 3 * GRID_GAP == 376);
+	assert(x[3] + w[3] == SCREEN_TOP_W - SP_3);
+	/* Three (the fallback): the remainder to the first ones. */
+	results_strip_layout(3, x, w);
+	assert(w[0] == 123 && w[1] == 123 && w[2] == 122);
+	assert(x[0] == 12 && x[1] == 139 && x[2] == 266);
+	assert(x[2] + w[2] == 388);
+	assert(w[0] + w[1] + w[2] + 2 * GRID_GAP == 376);
+
+	/* The strip looks the same unless what it shows changes: the nudge
+	 * counts while it lasts, not frame by frame. */
+	results_strip a = { .offered = { true, true, true, true },
+	                    .count = { 20, 12, 12, 12 },
+	                    .active = RESULT_ARTISTS };
+	results_strip b = a;
+	assert(results_strip_same(&a, &b));
+	b.edge_dir = 1;
+	assert(results_strip_same(&a, &b));
+	b.edge_frames = ANIM_EDGE;
+	assert(!results_strip_same(&a, &b));
+	a.edge_dir = 1;
+	a.edge_frames = 2;
+	assert(results_strip_same(&a, &b));
+	b = a;
+	b.active = RESULT_ALBUMS;
+	assert(!results_strip_same(&a, &b));
+	b = a;
+	b.count[RESULT_PLAYLISTS] = 5;
+	assert(!results_strip_same(&a, &b));
+	b = a;
+	b.offered[RESULT_PLAYLISTS] = false;
+	assert(!results_strip_same(&a, &b));
+
+	/* Only on Search, with the list on screen and no detail over it. */
+	assert(top_shows_strip(TAB_SEARCH, false, true));
+	assert(!top_shows_strip(TAB_SEARCH, true, true));
+	assert(!top_shows_strip(TAB_SEARCH, false, false));
+	assert(!top_shows_strip(TAB_HOME, false, true));
+	assert(!top_shows_strip(TAB_PLAYER, false, true));
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -4387,6 +4440,7 @@ int main(void)
 	test_pf_hash_steps();
 	test_search_derive();
 	test_results_kinds();
+	test_results_strip();
 	test_spotify_id();
 	test_meta_parse_track();
 	test_meta_parse_album();

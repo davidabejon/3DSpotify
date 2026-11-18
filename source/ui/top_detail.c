@@ -126,7 +126,17 @@ static void parse_track(const sp_track *t)
 
 static void parse_album(const detail_doc *d)
 {
-	set_text(&texts[0], d->title, TXT_TITULO);
+	set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNTITLED),
+	         TXT_TITULO);
+	if (d->preview) {
+		/* A search result: what it is and by whom, as on its row. Nothing
+		 * else is known without opening it. */
+		char what[192];
+		snprintf(what, sizeof(what), tr(STR_RESULT_ALBUM_FMT),
+		         d->subtitle[0] ? d->subtitle : tr(STR_UNKNOWN_ARTIST));
+		add_line(what);
+		return;
+	}
 	add_line(d->subtitle);
 	/* "Album - 2004", or whichever half is known. */
 	char line[64];
@@ -150,17 +160,25 @@ static void parse_album(const detail_doc *d)
 	add_line(d->label);
 }
 
-/* Plan 3.6: the name, what it is, and how many of its tracks the list
- * shows. The owner is left out: the service only names it by an opaque
- * user id (probe_meta step 15), nothing a person would recognise. */
+/* The name, what it is, and how many of its tracks the list shows. An
+ * open playlist leaves its owner out: the service only names it by an
+ * opaque user id (probe_meta step 15), nothing a person would recognise.
+ * A search result's preview has the owner's name (pathfinder gives it):
+ * "Playlist - <owner>". */
 static void parse_playlist(const detail_doc *d)
 {
 	bool liked = strcmp(d->uri, SP_LIKED_URI) == 0;
 	set_text(&texts[0], liked ? tr(STR_LIKED_SONGS)
 	                    : d->title[0] ? d->title : tr(STR_UNTITLED),
 	         TXT_TITULO);
-	add_line(tr(STR_PLAYLIST_TYPE));
 	char line[192];
+	if (d->preview && d->subtitle[0]) {
+		snprintf(line, sizeof(line), tr(STR_RESULT_PLAYLIST_FMT),
+		         d->subtitle);
+		add_line(line);
+	} else {
+		add_line(tr(STR_PLAYLIST_TYPE));
+	}
 	/* The home tab's preview may not know the length (Liked Songs): no
 	 * line then rather than "0 tracks". */
 	if (d->total_tracks > d->count)
@@ -232,7 +250,8 @@ static void parse(const detail_doc *d)
 	} else {
 		set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNKNOWN_ARTIST),
 		    TXT_TITULO);
-		add_line(tr(STR_ARTIST_TOP_TRACKS));
+		/* A search result's preview: what it is, not what it lists. */
+		add_line(tr(d->preview ? STR_RESULT_ARTIST : STR_ARTIST_TOP_TRACKS));
 	}
 }
 
@@ -247,10 +266,11 @@ static bool changed(const detail_doc *d)
 
 /* What shows where the cover goes until it comes, or when there is none:
  * the note, as everywhere; the Downloads, which has no cover, its arrow, as
- * on its tile. */
+ * on its tile; an artist the user, as in the list (5.3). */
 static int placeholder(const detail_doc *d)
 {
-	return d->kind == DETAIL_DOWNLOADS ? ICON_DOWNLOAD : ICON_NOTE;
+	return d->kind == DETAIL_DOWNLOADS ? ICON_DOWNLOAD
+	     : d->kind == DETAIL_ARTIST ? ICON_USER : ICON_NOTE;
 }
 
 /* How far every text has rolled by now: -1 for one that fits. */

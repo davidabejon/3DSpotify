@@ -297,7 +297,7 @@ static void follow_preview(void)
 	}
 	if (index >= 0 && index < item_count &&
 	    strcmp(items[index].uri, DL_HOME_URI) != 0 &&
-	    ++preview_still == HOME_PREVIEW_DELAY)
+	    ++preview_still == PREVIEW_DELAY)
 		snprintf(preview.art, sizeof(preview.art), "%s", items[index].art);
 }
 

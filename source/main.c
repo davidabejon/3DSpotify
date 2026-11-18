@@ -34,6 +34,7 @@
 #include "track.h"
 #include "tls3ds.h"
 #include "top.h"
+#include "top_logic.h"
 #include "ui.h"
 #include "ui_font.h"
 #include "view_detail.h"
@@ -1414,6 +1415,9 @@ static const detail_doc *top_detail_sync(void)
 	else if (active_view == VIEW_TABS && active_tab == TAB_HOME)
 		/* The focused tile's card: a preview of what A opens. */
 		doc = view_home_preview();
+	else if (active_view == VIEW_TABS && active_tab == TAB_SEARCH)
+		/* The focused result's card, under the strip of kinds. */
+		doc = view_results_preview();
 	if (doc && strcmp(doc->art, detail_art_url) != 0) {
 		snprintf(detail_art_url, sizeof(detail_art_url), "%s", doc->art);
 		artwork_request(&detail_art, detail_art_url);
@@ -1449,6 +1453,11 @@ static void frame(void)
 		view_player_set(&info);
 		top_set(&info);
 		top_set_detail(top_detail_sync(), &detail_art);
+		results_strip strip;
+		bool listed = view_results_strip(&strip);
+		top_set_results(top_shows_strip(active_tab,
+		                                details_active(active_tab), listed)
+		                ? &strip : NULL);
 		top_set_manager(manager_open);
 		view_settings_set_waiting(downloads_waiting());
 		changed = tabbar_dirty() || top_dirty(active_tab, &cover_art);
@@ -2312,7 +2321,7 @@ static void switch_tab(app_tab tab)
 {
 	active_tab = tab;
 	tabbar_set_active(tab);
-	/* A detail left open on the tab is still there (plan 3.1). */
+	/* A detail left open on the tab is still there (STYLES.md 7.9). */
 	if (details_active(tab)) {
 		view_detail_enter();
 		return;

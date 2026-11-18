@@ -465,6 +465,34 @@ class BuildTests(unittest.TestCase):
         self.assertIn("ICON_DPAD_LR", (root / "ui" / "icons_data.h").read_text(
             encoding="utf-8"))
 
+    def test_results_top_screen_strip_and_card(self):
+        import re
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        start = app.index("static const detail_doc *top_detail_sync(")
+        sync = app[start:app.index("\n}\n", start)]
+        self.assertIn("active_tab == TAB_SEARCH)", sync)
+        self.assertIn("doc = view_results_preview();", sync)
+        frame = app[app.index("static void frame(void)"):]
+        self.assertIn("top_set_results(top_shows_strip(active_tab,", frame)
+        top = (root / "ui" / "top.c").read_text(encoding="utf-8")
+        self.assertIn("top_strip_dirty(&strip)", top)
+        self.assertIn("top_strip_draw(&strip)", top)
+        # One delay for every preview's picture.
+        theme = (root / "ui" / "theme.h").read_text(encoding="utf-8")
+        self.assertIn("PREVIEW_DELAY = 18", theme)
+        for name in ("view_home.c", "view_results.c"):
+            self.assertIn("== PREVIEW_DELAY", (root / "ui" / name).read_text(
+                encoding="utf-8"))
+        # Code cites the style guide, never a working plan.
+        cite = re.compile(r"docs/plan|plan_vistas|feature_plan|home plan|"
+                          r"\(plan \d|\(plan, phase|\bplan \d|Plan \d")
+        for path in sorted(root.rglob("*.[ch]")):
+            if "deps" in path.parts or "dist" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            self.assertIsNone(cite.search(text), path.name)
+
     def test_result_thumbnails_follow_style_guide(self):
         ui_dir = build.ROOT / "ui"
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")

@@ -1,5 +1,6 @@
 #include "view_results.h"
 
+#include "art_cache.h"
 #include "draw.h"
 #include "icons.h"
 #include "list_logic.h"
@@ -47,6 +48,12 @@ static track_list list;
 static results_content content;
 static results_kinds kinds;
 static track_row kind_rows[RESULT_KINDS][SEARCH_ITEMS_MAX];
+/* The top screen: the focused row's card, and the strip's nudge. */
+static detail_doc preview;
+static result_kind preview_kind;
+static int preview_index = -1;
+static int preview_still;
+static int strip_edge_dir, strip_edge_frames;
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
 /* Nothing searched yet: the recent searches, and the focus among the
@@ -137,6 +144,9 @@ static void reset_interaction(void)
 	pending_press = NULL;
 	stale = true;
 	drawn_valid = false;
+	/* New results, or none: the card is built again from the row. */
+	preview_index = -1;
+	strip_edge_frames = 0;
 }
 
 /* For every list with thumbnails, the details' too: the results are where
@@ -250,10 +260,85 @@ result_kind view_results_kind(void)
 static bool step_kind(int dir)
 {
 	results_kind_keep(&kinds, list.selected, list.first);
-	if (!results_kind_step(&kinds, dir))
+	if (!results_kind_step(&kinds, dir)) {
+		/* The top screen's strip nudges its active segment that way. */
+		strip_edge_dir = dir;
+		strip_edge_frames = ANIM_EDGE;
 		return false;
+	}
 	load_kind();
 	return true;
+}
+
+bool view_results_strip(results_strip *out)
+{
+	if (mode != MODE_LIST)
+		return false;
+	for (int k = 0; k < RESULT_KINDS; k++) {
+		out->offered[k] = kinds.offered[k];
+		out->count[k] = kinds.count[k];
+	}
+	out->active = kinds.active;
+	out->edge_dir = strip_edge_dir;
+	out->edge_frames = strip_edge_frames;
+	return true;
+}
+
+/* --- Preview ----------------------------------------------------------- */
+
+/* The card of the focused row, rebuilt when the focus moves: the row's own
+ * data, nothing asked of the network but its picture, and that only once
+ * the focus has rested PREVIEW_DELAY frames (or at once, if it is cached),
+ * so running down the list downloads nothing. */
+static void follow_preview(void)
+{
+	result_kind k = kinds.active;
+	int index = mode == MODE_LIST ? list.selected : -1;
+	if (index >= kinds.count[k])
+		index = -1;
+	if (k != preview_kind || index != preview_index) {
+		preview_kind = k;
+		preview_index = index;
+		preview_still = 0;
+		unsigned serial = preview.serial + 1;
+		memset(&preview, 0, sizeof(preview));
+		preview.serial = serial;
+		if (index < 0)
+			return;
+		const sp_track *t = &content.items[k][index];
+		static const detail_kind KIND[RESULT_KINDS] = {
+			DETAIL_TRACK, DETAIL_ARTIST, DETAIL_ALBUM, DETAIL_PLAYLIST,
+		};
+		preview.kind = KIND[k];
+		preview.state = DETAIL_READY;
+		preview.preview = true;
+		/* Every URI the search keeps fits (pf_parse_best reads them into
+		 * SP_URI_MAX too); a longer one would name another, so none. */
+		size_t uri_len = strlen(t->uri);
+		if (uri_len < sizeof(preview.uri))
+			memcpy(preview.uri, t->uri, uri_len + 1);
+		snprintf(preview.title, sizeof(preview.title), "%s", t->name);
+		snprintf(preview.subtitle, sizeof(preview.subtitle), "%s", t->artist);
+		snprintf(preview.art_small, sizeof(preview.art_small), "%s",
+		         t->art_small);
+		if (k == RESULT_TRACKS) {
+			/* The row itself, read where it is: nothing copied. */
+			preview.tracks = (sp_track *)t;
+			preview.count = preview.capacity = 1;
+			preview.single = true;
+		}
+		if (art_cache_has(t->art_large))
+			snprintf(preview.art, sizeof(preview.art), "%s", t->art_large);
+		return;
+	}
+	if (index >= 0 && ++preview_still == PREVIEW_DELAY)
+		snprintf(preview.art, sizeof(preview.art), "%s",
+		         content.items[k][index].art_large);
+}
+
+const detail_doc *view_results_preview(void)
+{
+	return mode == MODE_LIST && preview_index >= 0 ? &preview : NULL;
 }
 
 /* More than one kind to switch between: the D-pad has a use. */
@@ -391,6 +476,8 @@ static void tick(void)
 		bubble_frames = -1;
 	if (mode == MODE_SEARCHING)
 		loader_frames++;
+	if (strip_edge_frames > 0)
+		strip_edge_frames--;
 }
 
 /* --- Input ------------------------------------------------------------- */
@@ -526,6 +613,7 @@ results_action view_results_update(u32 down)
 	release_keys(up);
 	/* Uploads happen here, on the main thread, never while drawing. */
 	track_list_thumbs_frame(&list);
+	follow_preview();
 
 	if (pending != RESULTS_ACTION_NONE) {
 		if (!press_shown(pending_press))

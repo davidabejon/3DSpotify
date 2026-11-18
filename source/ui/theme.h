@@ -121,6 +121,13 @@ enum {
 	SPINNER_PAD = 8,      /* spinner: velo e2 alrededor; 44 + 2·8 = 60 px */
 	TAB_LIFT_ACTIVE = 2,  /* §5.12 pestaña activa: el borde inferior sube 2 px */
 	TAB_LIFT_PRESSED = 4, /* §5.12 pestaña pulsada: sube 4 px */
+	RESULTS_STRIP_Y = SP_2, /* §5.17 franja de tipos: y 8..32 */
+	RESULTS_STRIP_H = SP_6,
+	RESULTS_BAND_H = 2,   /* §5.17 banda inferior del segmento activo */
 };
+
+/* Frames que el foco debe quedarse quieto antes de pedir la imagen grande
+ * de una vista previa (§7.4, §7.7): recorrer la lista no descarga nada. */
+enum { PREVIEW_DELAY = 18 };
 
 #endif

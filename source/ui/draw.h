@@ -116,7 +116,7 @@ void ui_loader(int cx, int cy, int step);
  * square; `step` advances every LOADER_STEP frames. */
 void ui_spinner(int cx, int cy, int step);
 /* The ring alone, for a flat background with nothing to veil: the login
- * screens (feature_plan.md, decision 1). */
+ * screens (STYLES.md 7.2). */
 void ui_spinner_ring(int cx, int cy, int step);
 
 /* A notice (5.8): raised `coral` (error) or `ambar` (warning) surface with

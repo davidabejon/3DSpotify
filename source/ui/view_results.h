@@ -9,7 +9,9 @@
  * of ROW_H with the cover thumbnail (thumbs.h; the placeholder of 5.3
  * until it arrives), scrolled just enough to keep the focused row visible.
  * While searching, a "Searching..." bubble with the loading indicator sits
- * over the skeleton rows. The top screen belongs to top.h.
+ * over the skeleton rows. The top screen belongs to top.h, which this
+ * view feeds while the results are on screen: the strip of kinds
+ * (view_results_strip) and the focused row's card (view_results_preview).
  *
  * Input follows STYLES.md 6: pressed states for at least ANIM_PRESS_MIN
  * frames, touch acts on lifting the stylus (tapping a row focuses it,
@@ -22,8 +24,10 @@
 #ifndef VIEW_RESULTS_H
 #define VIEW_RESULTS_H
 
+#include "details.h"
 #include "lang.h"
 #include "recent_logic.h"
+#include "results_logic.h"
 #include "search_results.h"
 #include "spclient.h"
 
@@ -95,6 +99,17 @@ void view_results_error(str_id advice);
 /* The kind on screen, and the focused row within it. */
 result_kind view_results_kind(void);
 int view_results_selected(void);
+
+/* The top screen's strip of kinds (STYLES.md 5.17): false, and `out`
+ * untouched, unless the results are on screen. */
+bool view_results_strip(results_strip *out);
+
+/* The focused row's card for the top screen (STYLES.md 7.4, 7.12), or NULL
+ * when no results are on screen. Built from the row: a track's is that
+ * track (DETAIL_TRACK, single); an artist's, album's or playlist's is a
+ * preview (detail_doc.preview). Its large picture is named only once the
+ * focus has rested PREVIEW_DELAY frames, unless it is already cached. */
+const detail_doc *view_results_preview(void);
 
 /* Switching to the tab: no press or drag carries over. */
 void view_results_enter(void);

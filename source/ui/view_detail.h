@@ -1,4 +1,4 @@
-/* The detail screens on the bottom screen (docs/plan_vistas_detalle.md 4):
+/* The detail screens on the bottom screen (STYLES.md 7.9-7.11):
  * a track, an album or an artist, whichever is on top of the active tab's
  * detail stack (details.h). The top screen belongs to top.h.
  *

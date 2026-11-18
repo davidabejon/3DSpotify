@@ -1,5 +1,6 @@
-/* The top screen while a detail is open (docs/plan_vistas_detalle.md 3.5
- * and 4): the card of the track, album or artist on top of the active tab,
+/* The top screen while a detail is open (STYLES.md 7.12): the card of the
+ * track, album, artist or playlist on top of the active tab -- or of the
+ * focused home tile or search result, as a preview --
  * laid out like the "now playing" card (STYLES.md 7.5, top_now.h) with a
  * different source -- the cover or portrait at 160x160, the name in
  * t_titulo and up to NOW_LINES lines of t_cuerpo:
@@ -7,7 +8,7 @@
  *   track   artist / album / "3:42 - track 2 - disc 2" / year
  *   album   artist / "Album - 2004" / "11 tracks" or "24 of 31 tracks" /
  *           label
- *   artist  "Popular tracks"
+ *   artist  "Popular tracks" ("Artist" for a search result's preview)
  *
  * The image is the caller's `detail_art`, never the playing track's
  * cover_art: the player waits for that one before preparing a track, and

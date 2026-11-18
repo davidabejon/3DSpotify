@@ -9,6 +9,7 @@
 #define RESULTS_LOGIC_H
 
 #include "search_results.h"
+#include "theme.h"
 
 #include <stdbool.h>
 #include <string.h>
@@ -87,6 +88,51 @@ static inline void results_kind_keep(results_kinds *k, int selected,
 {
 	k->selected[k->active] = selected;
 	k->first[k->active] = first;
+}
+
+/* What the top screen's strip of kinds shows (STYLES.md 5.17): one
+ * segment per kind offered, its count, the active one, and the nudge when
+ * left/right found no kind that way (edge_dir -1/+1 for edge_frames). */
+typedef struct {
+	bool offered[RESULT_KINDS];
+	int  count[RESULT_KINDS];
+	result_kind active;
+	int  edge_dir, edge_frames;
+} results_strip;
+
+/* The strip's span: the top screen inside e3. */
+#define RESULTS_STRIP_X0 SP_3
+#define RESULTS_STRIP_W  (SCREEN_TOP_W - 2 * SP_3)
+
+/* `n` segments across the strip, GRID_GAP apart; the remainder of the
+ * division goes to the first ones, one pixel each, as on the home grid.
+ * 4: 91 each; 3: 123, 123, 122. */
+static inline void results_strip_layout(int n, int x[], int w[])
+{
+	if (n <= 0)
+		return;
+	int room = RESULTS_STRIP_W - (n - 1) * GRID_GAP;
+	int base = room / n, extra = room % n;
+	int at = RESULTS_STRIP_X0;
+	for (int i = 0; i < n; i++) {
+		w[i] = base + (i < extra ? 1 : 0);
+		x[i] = at;
+		at += w[i] + GRID_GAP;
+	}
+}
+
+/* The strip as it looks: its segment of the active kind nudged or not. */
+static inline bool results_strip_same(const results_strip *a,
+                                      const results_strip *b)
+{
+	if (a->active != b->active ||
+	    (a->edge_frames > 0 ? a->edge_dir : 0) !=
+	    (b->edge_frames > 0 ? b->edge_dir : 0))
+		return false;
+	for (int i = 0; i < RESULT_KINDS; i++)
+		if (a->offered[i] != b->offered[i] || a->count[i] != b->count[i])
+			return false;
+	return true;
 }
 
 #endif

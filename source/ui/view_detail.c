@@ -788,7 +788,7 @@ static detail_action update(u32 down)
 	} else if ((down & KEY_A) && mode == MODE_LIST && header_focus) {
 		press_key(GLYPH_A, header_action(), &press_header);
 	} else if ((down & KEY_A) && mode == MODE_LIST) {
-		/* The album or artist from this row (plan 8.1). */
+		/* The album or artist from this row (STYLES.md 7.11). */
 		press_key(GLYPH_A, row_action(), track_list_focused_press(&list));
 	} else if ((down & KEY_A) && mode == MODE_FAILED) {
 		press_key(GLYPH_A, DETAIL_ACTION_RETRY, &press_retry);

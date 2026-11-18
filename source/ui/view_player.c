@@ -698,7 +698,7 @@ bool view_player_dirty(void)
 
 /* --- Drawing ---------------------------------------------------------- */
 
-/* A link (plan 4.4, STYLES.md 5.14): text, not a button. At rest it is
+/* A link (STYLES.md 5.14): text, not a button. At rest it is
  * plain text in `rest`; pressed (6.3) the text turns `lima` and gets a
  * BEVEL_W underline in the same colour, with no panel and no shift, so it
  * still reads as the text it was. `lima` is the accent that keeps 4.5:1

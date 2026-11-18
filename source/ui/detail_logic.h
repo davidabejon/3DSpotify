@@ -1,5 +1,5 @@
-/* Layout, hit testing and focus of the track detail (docs/plan_vistas_
- * detalle.md 4.1). Pure C with no 3DS headers, tested in
+/* Layout, hit testing and focus of the track detail (STYLES.md 7.10).
+ * Pure C with no 3DS headers, tested in
  * tests/native_logic_test.c.
  *
  * The same geometry as the Settings tab (STYLES.md 7.8), so the two screens

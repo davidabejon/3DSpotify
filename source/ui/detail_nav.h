@@ -1,5 +1,5 @@
 /* The detail stacks: which detail screen each tab shows, and how to go back
- * (docs/plan_vistas_detalle.md 3.1).
+ * (STYLES.md 7.9).
  *
  * The Search, Playing and Home tabs each keep a stack of open details
  * (track, album, artist, and on Home the playlist it starts from). While a tab's stack is not empty its top replaces the
