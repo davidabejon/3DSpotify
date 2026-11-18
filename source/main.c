@@ -1554,7 +1554,7 @@ static void trace_add(const char *fmt, ...)
 		trace.len = sizeof(trace.line) - 1;
 }
 
-static void trace_write(void)
+static void trace_append(const char *line)
 {
 	char path[320];
 	cfg_dir(path, sizeof(path));
@@ -1563,8 +1563,30 @@ static void trace_write(void)
 	FILE *f = fopen(path, "a");
 	if (!f)
 		return;
-	fprintf(f, "%s\n", trace.line);
+	fprintf(f, "%s\n", line);
 	fclose(f);
+}
+
+static void trace_write(void)
+{
+	trace_append(trace.line);
+}
+
+/* One line per artist detail as it turns ready, from the main thread:
+ * counts only, never a name or the biography's text. */
+static void trace_artist(const detail_doc *d)
+{
+	static const detail_doc *last;
+	static unsigned last_serial;
+	if (!d || d->kind != DETAIL_ARTIST || d->state != DETAIL_READY ||
+	    d->preview || (d == last && d->serial == last_serial))
+		return;
+	last = d;
+	last_serial = d->serial;
+	char line[96];
+	snprintf(line, sizeof(line), "artist: top=%d releases=%d bio=%uB",
+	         d->count, d->release_count, (unsigned)strlen(d->bio));
+	trace_append(line);
 }
 #define TRACE(...) trace_add(__VA_ARGS__)
 #else
@@ -2538,6 +2560,9 @@ static tabs_exit run_tabs(spotify_session *session, bool still_offline)
 		search_poll();
 		details_poll(active_tab, session->host, session->library_token,
 		             session->username);
+#ifdef APP_DEBUG
+		trace_artist(details_top(active_tab));
+#endif
 		home_feed_poll();
 		/* Not stopped on leaving the tab: it only fetches the rows on
 		 * screen and the next ones anyway. */

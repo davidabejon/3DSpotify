@@ -217,6 +217,8 @@ static void apply(detail_doc *d)
 		snprintf(d->art, sizeof(d->art), "%s", a->art_large);
 		snprintf(d->art_small, sizeof(d->art_small), "%s", a->art_small);
 		d->total_tracks = a->track_count;
+		memcpy(d->bio, a->bio, sizeof(d->bio));
+		d->release_count = a->release_count;
 	}
 	d->count = job.count;
 	memcpy(d->tracks, job.tracks, (size_t)job.count * sizeof(d->tracks[0]));
@@ -326,6 +328,7 @@ static detail_doc *push(app_tab tab)
 	free(d->owned);
 	free(d->rows);
 	memset(d, 0, sizeof(*d));
+	d->listeners = -1;
 	d->serial = serial;
 	d->tracks = d->inline_tracks;
 	d->capacity = DETAIL_MAX_TRACKS;

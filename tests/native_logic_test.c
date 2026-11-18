@@ -795,6 +795,279 @@ static void test_meta_parse_artist(void)
 	assert(sp_parse_artist(&av, "", &a) && a.track_count == 2);
 	assert(sp_parse_artist(&av, "E", &a) && a.track_count == 2);
 	assert(sp_parse_artist(&av, "FR", &a) && a.track_count == 2);
+	/* No biography, no releases. */
+	assert(!a.bio[0] && a.release_count == 0);
+}
+
+/* An Album with a gid and, when given, a name, a type and a Date whose
+ * fields are sint32 (zigzag: twice the value). */
+static void build_album(pb *album, uint8_t *store, size_t cap, int seed,
+                        const char *name, int type, int y, int m, int d)
+{
+	pb_init(album, store, cap);
+	add_gid(album, 1, seed);
+	if (name)
+		pb_str(album, 2, name);
+	if (type)
+		pb_varint(album, 4, (uint64_t)type);
+	if (y) {
+		uint8_t date_s[24];
+		pb date;
+		pb_init(&date, date_s, sizeof(date_s));
+		pb_varint(&date, 1, (uint64_t)y * 2);
+		if (m)
+			pb_varint(&date, 2, (uint64_t)m * 2);
+		if (d)
+			pb_varint(&date, 3, (uint64_t)d * 2);
+		pb_sub(album, 6, &date);
+	}
+}
+
+/* An AlbumGroup of `variants` bare Albums under `field`: seed, seed + 128,
+ * ... (fake_gid only looks at the seed's low byte). */
+static void add_album_group(pb *artist, uint32_t field, int seed, int variants)
+{
+	uint8_t ag_s[128];
+	pb ag;
+	pb_init(&ag, ag_s, sizeof(ag_s));
+	for (int v = 0; v < variants; v++) {
+		uint8_t al_s[40];
+		pb al;
+		build_album(&al, al_s, sizeof(al_s), seed + 128 * v, NULL, 0, 0, 0,
+		            0);
+		pb_sub(&ag, 1, &al);
+	}
+	pb_sub(artist, field, &ag);
+}
+
+static void add_biography(pb *artist, const char *text)
+{
+	uint8_t bio_s[256];
+	pb bio;
+	pb_init(&bio, bio_s, sizeof(bio_s));
+	if (text)
+		pb_str(&bio, 1, text);
+	pb_sub(artist, 12, &bio);
+}
+
+static void test_meta_parse_artist_releases(void)
+{
+	static uint8_t artist_s[8192];
+	static sp_artist a;
+	pb artist;
+
+	pb_init(&artist, artist_s, sizeof(artist_s));
+	add_gid(&artist, 1, 3);
+	pb_str(&artist, 2, "The Killers");
+	/* An empty Biography first: the first with text is the one. */
+	add_biography(&artist, NULL);
+	add_biography(&artist, "<a href=\"spotify:artist:x\">The Killers</a> are"
+	              "\r\n\r\na band &amp; more");
+	add_biography(&artist, "Not this one");
+	/* Two albums with two variants each (the first is kept), a single, a
+	 * compilation, and an appearance that is not the artist's. */
+	add_album_group(&artist, 5, 10, 2);
+	add_album_group(&artist, 5, 11, 2);
+	add_album_group(&artist, 6, 20, 1);
+	add_album_group(&artist, 7, 30, 1);
+	add_album_group(&artist, 8, 40, 1);
+	assert(pb_ok(&artist));
+
+	pbv av = { artist.p, artist.len };
+	assert(sp_parse_artist(&av, NULL, &a));
+	assert(strcmp(a.bio, "The Killers are a band & more") == 0);
+	/* One from each group in turn. */
+	assert(a.release_count == 4);
+	static const int SEED[] = { 10, 20, 30, 11 };
+	static const int GROUP[] = {
+		SP_GROUP_ALBUM, SP_GROUP_SINGLE, SP_GROUP_COMPILATION, SP_GROUP_ALBUM,
+	};
+	for (int i = 0; i < 4; i++) {
+		expect_uri(a.releases[i].uri, SP_KIND_ALBUM, SEED[i]);
+		assert(a.releases[i].group == GROUP[i]);
+		assert(a.releases[i].order == i);
+		/* Bare gids: nothing else until named. */
+		assert(!a.releases[i].name[0] && a.releases[i].date == 0);
+		assert(a.releases[i].type == 0 && !a.releases[i].art_small[0]);
+	}
+
+	/* Over the cap: 180 albums, 30 singles, 5 compilations. Turn by turn,
+	 * so the few singles and compilations all stay. */
+	pb_init(&artist, artist_s, sizeof(artist_s));
+	add_gid(&artist, 1, 3);
+	for (int i = 0; i < 180; i++)
+		add_album_group(&artist, 5, i, 1);
+	for (int i = 0; i < 30; i++)
+		add_album_group(&artist, 6, i, 1);
+	for (int i = 0; i < 5; i++)
+		add_album_group(&artist, 7, i, 1);
+	assert(pb_ok(&artist));
+	av.p = artist.p;
+	av.len = artist.len;
+	assert(sp_parse_artist(&av, NULL, &a));
+	assert(a.release_count == SP_ARTIST_RELEASES_MAX);
+	int per[3] = { 0, 0, 0 };
+	for (int i = 0; i < a.release_count; i++)
+		per[a.releases[i].group]++;
+	assert(per[SP_GROUP_ALBUM] == 165 && per[SP_GROUP_SINGLE] == 30 &&
+	       per[SP_GROUP_COMPILATION] == 5);
+	assert(a.releases[0].group == SP_GROUP_ALBUM &&
+	       a.releases[1].group == SP_GROUP_SINGLE &&
+	       a.releases[2].group == SP_GROUP_COMPILATION);
+	assert(a.releases[199].group == SP_GROUP_ALBUM);
+	assert(!a.bio[0]);
+}
+
+static char *read_fixture(const char *name, size_t *len);
+
+/* The Killers as the service sent them (probe_artist, 2026-11-18). */
+static void test_meta_parse_artist_fixture(void)
+{
+	size_t len;
+	char *body = read_fixture("artist_killers.bin", &len);
+	static sp_artist a;
+	pbv av;
+	assert(sp_parse_entity((const uint8_t *)body, len, &av));
+	assert(sp_parse_artist(&av, NULL, &a));
+	assert(strcmp(a.uri, "spotify:artist:0C0XlULifJtAgn6ZNCW2eu") == 0);
+	assert(strcmp(a.name, "The Killers") == 0);
+	assert(a.track_count > 0);
+	/* 12 albums, 28 singles, 3 compilations; 523 appearances left out. */
+	assert(a.release_count == 43);
+	/* Album groups come newest first: Pressure Machine (Deluxe). */
+	assert(strcmp(a.releases[0].uri,
+	              "spotify:album:01Go8OwdhESlkxPwrx6515") == 0);
+	assert(strncmp(a.bio, "As they've matured from their indie", 35) == 0);
+	assert(!strchr(a.bio, '<') && !strchr(a.bio, '\r') &&
+	       !strchr(a.bio, '\n'));
+	size_t bl = strlen(a.bio);
+	assert(bl > 500 && bl < SP_ARTIST_BIO_MAX && a.bio[bl - 1] != ' ');
+	free(body);
+}
+
+static void test_release_sort(void)
+{
+	static sp_release r[6];
+	static const int DATE[6] = {
+		20040607, 20190000, 0, 20190315, 20040607, 0,
+	};
+	for (int i = 0; i < 6; i++) {
+		memset(&r[i], 0, sizeof(r[i]));
+		r[i].date = DATE[i];
+		r[i].order = i;
+		r[i].group = i % 2 ? SP_GROUP_SINGLE : SP_GROUP_ALBUM;
+	}
+	sp_sort_releases(r, 6);
+	/* Newest first whatever the group (a single of 2019 before an album
+	 * of 2004); a year alone after that year's full dates; equal dates in
+	 * the order kept; undated last. */
+	static const int WANT[6] = { 3, 1, 0, 4, 2, 5 };
+	for (int i = 0; i < 6; i++)
+		assert(r[i].order == WANT[i]);
+	sp_sort_releases(r, 0);
+	sp_sort_releases(NULL, 3);
+}
+
+static void add_album_entry(pb *arr, const char *uri, const pb *album)
+{
+	uint8_t any_s[256], ed_s[320];
+	pb any, ed;
+	pb_init(&any, any_s, sizeof(any_s));
+	pb_sub(&any, 2, album);
+	pb_init(&ed, ed_s, sizeof(ed_s));
+	pb_str(&ed, 2, uri);
+	pb_sub(&ed, 3, &any);
+	pb_sub(arr, 3, &ed);
+}
+
+static void test_meta_parse_album_batch(void)
+{
+	static const char *const ASK[] = {
+		"spotify:album:a", "spotify:album:b", "spotify:album:c",
+	};
+	static sp_release out[3];
+	static uint8_t arr_s[1024], body_s[1200];
+	uint8_t al_s[200];
+	pb arr, body, al;
+	for (int i = 0; i < 3; i++) {
+		memset(&out[i], 0, sizeof(out[i]));
+		snprintf(out[i].uri, sizeof(out[i].uri), "%s", ASK[i]);
+		out[i].group = SP_GROUP_SINGLE;
+		out[i].order = 7 + i;
+	}
+
+	/* Shuffled, a stray, and b left out. A month out of range keeps the
+	 * year alone. */
+	pb_init(&arr, arr_s, sizeof(arr_s));
+	build_album(&al, al_s, sizeof(al_s), 1, "C", SP_ALBUM_SINGLE, 2019, 3,
+	            15);
+	uint8_t cg_s[64];
+	pb cg;
+	pb_init(&cg, cg_s, sizeof(cg_s));
+	add_image(&cg, 1, 0xcc, 0);
+	pb_sub(&al, 17, &cg);
+	add_album_entry(&arr, "spotify:album:c", &al);
+	build_album(&al, al_s, sizeof(al_s), 2, "Z", SP_ALBUM_ALBUM, 2000, 1, 1);
+	add_album_entry(&arr, "spotify:album:zzz", &al);
+	build_album(&al, al_s, sizeof(al_s), 3, "A", SP_ALBUM_ALBUM, 2004, 13,
+	            5);
+	add_album_entry(&arr, "spotify:album:a", &al);
+	pb_init(&body, body_s, sizeof(body_s));
+	pb_sub(&body, 2, &arr);
+	assert(pb_ok(&body));
+
+	assert(sp_parse_album_batch(body.p, body.len, ASK, 3, out) == 2);
+	assert(strcmp(out[0].name, "A") == 0 && out[0].type == SP_ALBUM_ALBUM);
+	assert(out[0].date == 20040000);
+	assert(!out[1].name[0] && out[1].date == 0);
+	assert(strcmp(out[2].name, "C") == 0 && out[2].type == SP_ALBUM_SINGLE);
+	assert(out[2].date == 20190315);
+	assert(strcmp(out[2].art_large, "https://i.scdn.co/image/"
+	              "cccccccccccccccccccccccccccccccccccccccc") == 0);
+	/* What the caller set is left alone. */
+	for (int i = 0; i < 3; i++) {
+		assert(strcmp(out[i].uri, ASK[i]) == 0);
+		assert(out[i].group == SP_GROUP_SINGLE && out[i].order == 7 + i);
+	}
+	assert(sp_parse_album_batch(body.p, 0, ASK, 3, out) == 0);
+	assert(sp_parse_album_batch(body.p, body.len, ASK, 0, out) == 0);
+}
+
+static void expect_bio(const char *in, size_t cap, const char *want)
+{
+	char out[128];
+	assert(cap <= sizeof(out));
+	sp_bio_clean(in, in ? strlen(in) : 0, out, cap);
+	assert(strcmp(out, want) == 0);
+}
+
+static void test_bio_clean(void)
+{
+	expect_bio("<a href=\"spotify:artist:x\">Nombre</a>", 128, "Nombre");
+	expect_bio("Tom &amp; Jerry &lt;3 &quot;hi&quot; it&#39;s&nbsp;ok "
+	           "&apos;&#241;&#xF1; &bogus; & &#0; &#xD800;", 128,
+	           "Tom & Jerry <3 \"hi\" it's ok '\xC3\xB1\xC3\xB1 &bogus; & "
+	           "&#0; &#xD800;");
+	expect_bio("  line1\r\n\r\n  line2\t\tend  ", 128, "line1 line2 end");
+	expect_bio("a < b", 128, "a < b");
+	expect_bio("x <a href", 128, "x");
+	/* A stray continuation byte goes; a character cut short ends it. */
+	expect_bio("a\x80" "b", 128, "ab");
+	expect_bio("ab\xC3", 128, "ab");
+	/* Cut between characters: never half an n with tilde or an emoji. */
+	expect_bio("a\xC3\xB1o", 3, "a");
+	expect_bio("a\xC3\xB1o", 4, "a\xC3\xB1");
+	expect_bio("ok \xF0\x9F\x98\x80", 7, "ok");
+	expect_bio("ok \xF0\x9F\x98\x80", 8, "ok \xF0\x9F\x98\x80");
+	expect_bio("", 128, "");
+	expect_bio(NULL, 128, "");
+	expect_bio("abc", 1, "");
+
+	/* `len` bounds the input, which need not end in NUL. */
+	char out[8];
+	sp_bio_clean("abcdef", 2, out, sizeof(out));
+	assert(strcmp(out, "ab") == 0);
+	sp_bio_clean("abc", 3, out, 0);   /* nothing to write into */
 }
 
 static void test_detail_stack(void)
@@ -4457,6 +4730,11 @@ int main(void)
 	test_meta_parse_track();
 	test_meta_parse_album();
 	test_meta_parse_artist();
+	test_meta_parse_artist_releases();
+	test_meta_parse_artist_fixture();
+	test_release_sort();
+	test_meta_parse_album_batch();
+	test_bio_clean();
 	test_meta_parse_batch();
 	test_meta_parse_rootlist();
 	test_meta_parse_playlist();

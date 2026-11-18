@@ -95,9 +95,40 @@ typedef struct {
 	char track_uris[SP_ALBUM_MAX_TRACKS][SP_URI_MAX];
 } sp_album;
 
-/* An artist's name, portrait and popular tracks. The service sends one
- * TopTracks group already chosen for the account's country; when several
- * come, the one matching `country` wins, else the first. */
+/* An artist's releases kept for its discography: SP_ARTIST_RELEASES_MAX at
+ * most, shared out among its albums, singles and compilations (see
+ * sp_parse_artist), then ordered by sp_sort_releases. */
+#define SP_ARTIST_RELEASES_MAX 200
+/* The biography as kept: cleaned (sp_bio_clean), cut on a character
+ * boundary. Room for the card's five lines in any script. */
+#define SP_ARTIST_BIO_MAX 640
+/* Releases named per album metadata batch: 50 took 285 ms and 71 KB on
+ * the console (probe_artist step 4). */
+#define SP_ALBUM_BATCH 50
+
+/* Where a release comes from: Artist.album_group, single_group or
+ * compilation_group (appears_on_group is left out: not the artist's). */
+typedef enum { SP_GROUP_ALBUM, SP_GROUP_SINGLE, SP_GROUP_COMPILATION } sp_group;
+
+/* One release of an artist. The artist's metadata names it by gid alone
+ * (probe_artist step 3), so everything but `uri`, `group` and `order`
+ * stays empty until an album batch names it (sp_parse_album_batch). */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];               /* empty until named */
+	char art_small[80];
+	char art_large[80];
+	int  type;                    /* SP_ALBUM_*, 0 when unknown */
+	int  date;                    /* yyyymmdd (month, day 0 if unknown);
+	                               * 0 when unknown */
+	int  group;                   /* sp_group */
+	int  order;                   /* position as kept, for a stable sort */
+} sp_release;
+
+/* An artist's name, portrait, popular tracks, biography and releases. The
+ * service sends one TopTracks group already chosen for the account's
+ * country; when several come, the one matching `country` wins, else the
+ * first. ~70 KB: never on a thread's stack. */
 typedef struct {
 	char uri[SP_URI_MAX];
 	char name[128];
@@ -105,6 +136,9 @@ typedef struct {
 	char art_large[80];
 	int  track_count;
 	char track_uris[SP_ARTIST_MAX_TRACKS][SP_URI_MAX];
+	char bio[SP_ARTIST_BIO_MAX];  /* "" when none */
+	int  release_count;
+	sp_release releases[SP_ARTIST_RELEASES_MAX];
 } sp_artist;
 
 /* One playlist as the home tab shows it. `art` is an i.scdn.co URL (the
@@ -183,6 +217,13 @@ int  sp_album_metadata(http_session *sess, const char *token,
 int  sp_artist_metadata(http_session *sess, const char *token,
                         const char *artist_uri, const char *country,
                         sp_artist *out, char *err, size_t errlen);
+
+/* Names releases: `n` (at most SP_ALBUM_BATCH) album URIs in one batch,
+ * each answer into the out[] whose index matches its URI in `uris`
+ * (sp_parse_album_batch). Returns how many were named, or -1. */
+int  sp_album_metadata_batch_s(http_session *sess, const char *token,
+                               const char *const *uris, int n,
+                               sp_release *out, char *err, size_t errlen);
 
 /* Searching the catalogue. Needs no library, which is what makes a fresh
  * account usable: the answer is a list of track URIs, which

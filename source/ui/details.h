@@ -63,6 +63,12 @@ typedef struct {
 	char art_small[80];
 	char label[64];
 	int  year, album_type, total_tracks;
+	/* DETAIL_ARTIST: the start of the biography (sp_bio_clean, "" when
+	 * none), the monthly listeners (-1 while unknown) and how many
+	 * releases its discography holds. */
+	char bio[SP_ARTIST_BIO_MAX];
+	long listeners;
+	int  release_count;
 	/* DETAIL_TRACK: a copy of the list it came from; the track shown is
 	 * tracks[selected] and "Play" queues the whole list. DETAIL_ALBUM,
 	 * DETAIL_ARTIST and DETAIL_PLAYLIST: their tracks. `tracks` points at
