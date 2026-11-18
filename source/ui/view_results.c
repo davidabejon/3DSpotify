@@ -1,25 +1,25 @@
 #include "view_results.h"
 
+#include "art_cache.h"
 #include "draw.h"
 #include "icons.h"
 #include "list_logic.h"
 #include "press_logic.h"
+#include "results_logic.h"
 #include "tabbar.h"
-#include "thumbs.h"
 #include "theme.h"
+#include "track_list.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
 #include <stdio.h>
 #include <string.h>
 
-#define MAX_TRACKS 24
-
 #define STATIC_GLYPHS 1024
-#define ROW_GLYPHS    3072
 #define SCRATCH_GLYPHS UI_FIELD_SIZE
 
-/* Control ids for touch tracking: rows are their track index. */
+/* Control id for touch tracking: the rows are the list's own. */
 #define CONTROL_BUTTON 1000
 
 typedef enum {
@@ -30,31 +30,40 @@ typedef enum {
 	MODE_ERROR
 } results_mode;
 
-/* The buttons this view uses (2.5). */
-enum { GLYPH_A, GLYPH_B, GLYPH_Y, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "Y" };
+/* The buttons this view uses (2.5); the D-pad's glyph is an icon. */
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_Y, GLYPH_DPAD, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = {
+	"A", "B", "X", "Y", ""
+};
 static const u32 glyph_colors[GLYPH_COUNT] = {
-	COL_BTN_A, COL_BTN_B, COL_BTN_Y
+	COL_BTN_A, COL_BTN_B, COL_BTN_X, COL_BTN_Y, 0
 };
 
-/* Content. */
+/* Content. The rows, their focus, scroll and input are the list's: one
+ * list, loaded with the kind on screen (results_logic.h keeps where the
+ * others were left). The kinds other than tracks draw as rows of their
+ * kind, which are the view's. */
 static results_mode mode = MODE_IDLE;
-static const sp_track *tracks;
-static int count;
-static int selected;
-static int first;       /* first visible row: scroll / LIST_PITCH */
-static int scroll;      /* px; whole rows except while dragging */
+static track_list list;
+static results_content content;
+static results_kinds kinds;
+static track_row kind_rows[RESULT_KINDS][SEARCH_ITEMS_MAX];
+/* The top screen: the focused row's card, and the strip's nudge. */
+static detail_doc preview;
+static result_kind preview_kind;
+static int preview_index = -1;
+static int preview_still;
+static int strip_edge_dir, strip_edge_frames;
 static str_id advice = STR_SEARCH_CHECK_WIFI;
 static bool cancelling;
-/* Bumped whenever a thumbnail arrives, so the list repaints. */
-static int thumbs_serial;
-/* Whether the thumbnails may download now (STYLES.md 9: not while the
- * audio downloads), and whether thumbs.c holds this list. */
-static bool thumbs_allowed = true;
-static bool thumbs_synced;
+/* Nothing searched yet: the recent searches, and the focus among the
+ * search button (0) and them (1 + their index). */
+static recent_list recent;
+static int idle_focus;
+static int recent_choice;
 
 /* Parsed text. `stale`: content or language changed. */
-static C2D_TextBuf static_buf, row_buf, scratch_buf;
+static C2D_TextBuf static_buf, scratch_buf;
 static bool stale = true;
 static lang_id parsed_lang = LANG_COUNT;
 
@@ -64,22 +73,17 @@ static C2D_Text button_text;        /* empty: new search; error: retry */
 static C2D_Text notice_title_text;
 static C2D_Text notice_body_text;
 static C2D_Text bubble_text;
+static C2D_Text recent_label_text;
+static C2D_Text recent_text[RECENT_MAX];
 static C2D_Text letter_text[GLYPH_COUNT];
-static C2D_Text hint_play, hint_back, hint_search, hint_cancel, hint_retry;
-static C2D_Text row_title[MAX_TRACKS];
-static C2D_Text row_artist[MAX_TRACKS];
-static C2D_Text row_duration[MAX_TRACKS];
-static float row_duration_width[MAX_TRACKS];
+static C2D_Text hint_play, hint_detail, hint_back, hint_search, hint_cancel,
+                hint_retry, hint_open, hint_kind;
 
-/* Interaction (STYLES.md 6). */
-static press_state press_row;
-static int press_row_index = -1;
+/* Interaction (STYLES.md 6). `touch` is the button's, outside the list. */
 static press_state press_button;
+static press_state press_recent[RECENT_MAX];
 static press_state press_glyph[GLYPH_COUNT];
 static touch_track touch = { -1 };
-static list_drag drag;
-static int edge_frames;
-static int edge_dir;
 static int bubble_frames = -1;
 static int loader_frames;
 static results_action pending = RESULTS_ACTION_NONE;
@@ -87,15 +91,15 @@ static const press_state *pending_press;
 
 typedef struct {
 	results_mode mode;
-	int selected, first, scroll;
-	int pressed_row;      /* -1: none */
+	result_kind kind;
+	track_list_look list;
 	bool button;
+	int idle_focus;
+	bool recent[RECENT_MAX];
 	bool glyph[GLYPH_COUNT];
-	int edge;             /* the focused row's nudge, px */
 	bool bubble;
 	int loader_step;
 	bool cancelling;
-	int thumbs;
 } results_look;
 static results_look drawn;
 static bool drawn_valid;
@@ -105,9 +109,9 @@ static bool drawn_valid;
 bool view_results_init(void)
 {
 	static_buf = C2D_TextBufNew(STATIC_GLYPHS);
-	row_buf = C2D_TextBufNew(ROW_GLYPHS);
 	scratch_buf = C2D_TextBufNew(SCRATCH_GLYPHS);
-	if (!static_buf || !row_buf || !scratch_buf) {
+	if (!static_buf || !scratch_buf ||
+	    !track_list_init(&list, TRACK_LIST_THUMBS)) {
 		view_results_exit();
 		return false;
 	}
@@ -116,66 +120,65 @@ bool view_results_init(void)
 
 void view_results_exit(void)
 {
-	C2D_TextBuf *bufs[] = {
-		&static_buf, &row_buf, &scratch_buf
-	};
+	C2D_TextBuf *bufs[] = { &static_buf, &scratch_buf };
 	for (size_t i = 0; i < sizeof(bufs) / sizeof(bufs[0]); i++) {
 		if (*bufs[i])
 			C2D_TextBufDelete(*bufs[i]);
 		*bufs[i] = NULL;
 	}
+	track_list_exit(&list);
 }
 
 static void reset_interaction(void)
 {
-	press_reset(&press_row);
-	press_row_index = -1;
+	track_list_reset_input(&list);
 	press_reset(&press_button);
+	for (int i = 0; i < RECENT_MAX; i++)
+		press_reset(&press_recent[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_reset(&press_glyph[i]);
 	touch.target = -1;
-	drag.down = drag.dragging = false;
-	edge_frames = 0;
 	bubble_frames = -1;
 	loader_frames = 0;
 	pending = RESULTS_ACTION_NONE;
 	pending_press = NULL;
 	stale = true;
 	drawn_valid = false;
+	/* New results, or none: the card is built again from the row. */
+	preview_index = -1;
+	strip_edge_frames = 0;
 }
 
-/* Gives thumbs.c this list when allowed; until then nothing it holds is
- * drawn. */
-static void sync_thumbs(void)
-{
-	thumbs_synced = false;
-	if (!thumbs_allowed || mode != MODE_LIST)
-		return;
-	thumbs_set_tracks(tracks, count);
-	thumbs_set_window(first);
-	thumbs_synced = true;
-}
-
+/* For every list with thumbnails, the details' too: the results are where
+ * the caller has always asked. */
 void view_results_allow_thumbs(bool allow)
 {
-	if (allow == thumbs_allowed)
-		return;
-	thumbs_allowed = allow;
-	/* Stopped, what was fetched stays usable; nothing new arrives. */
-	if (allow)
-		sync_thumbs();
-	else
-		thumbs_stop();
+	track_list_allow_thumbs(allow);
 }
 
 void view_results_idle(void)
 {
 	mode = MODE_IDLE;
-	tracks = NULL;
-	count = selected = first = scroll = 0;
+	track_list_set(&list, NULL, 0, 0);
 	cancelling = false;
-	thumbs_synced = false;
+	idle_focus = 0;
 	reset_interaction();
+}
+
+void view_results_set_recent(const recent_list *r)
+{
+	recent = *r;
+	if (recent.count < 0 || recent.count > RECENT_MAX)
+		recent.count = 0;
+	if (idle_focus > recent.count)
+		idle_focus = recent.count;
+	stale = true;
+}
+
+const char *view_results_recent_query(void)
+{
+	return recent_choice >= 0 && recent_choice < recent.count
+	       ? recent.items[recent_choice] : "";
 }
 
 void view_results_enter(void)
@@ -186,10 +189,8 @@ void view_results_enter(void)
 void view_results_searching(void)
 {
 	mode = MODE_SEARCHING;
-	tracks = NULL;
-	count = selected = first = scroll = 0;
+	track_list_set(&list, NULL, 0, 0);
 	cancelling = false;
-	thumbs_synced = false;
 	reset_interaction();
 }
 
@@ -201,47 +202,176 @@ void view_results_cancelling(void)
 	}
 }
 
-void view_results_show(const sp_track *list, int n, int focus)
+/* Loads the list with the active kind, where it was left. The covers of
+ * a kind left are asked again on coming back to it: a few KB, against
+ * keeping four lists. */
+static void load_kind(void)
 {
-	tracks = list;
-	count = n < 0 ? 0 : n > MAX_TRACKS ? MAX_TRACKS : n;
-	mode = count > 0 ? MODE_LIST : MODE_EMPTY;
-	selected = list_clamp(focus, count);
-	first = list_scroll(0, selected, count, RESULTS_PER_PAGE);
-	scroll = first * LIST_PITCH;
+	result_kind k = kinds.active;
+	track_list_set(&list, content.items[k], kinds.count[k],
+	               kinds.selected[k]);
+	if (k != RESULT_TRACKS)
+		track_list_set_rows(&list, kind_rows[k]);
+	if (kinds.first[k] >= 0)
+		track_list_scroll_to(&list, kinds.first[k]);
+	stale = true;
+}
+
+void view_results_show(const results_content *c)
+{
+	static const uint8_t ROW_KIND[RESULT_KINDS] = {
+		TRACK_ROW_TRACK, TRACK_ROW_ARTIST, TRACK_ROW_ALBUM,
+		TRACK_ROW_PLAYLIST,
+	};
+	content = *c;
+	int count[RESULT_KINDS];
+	for (int k = 0; k < RESULT_KINDS; k++) {
+		int max = k == RESULT_TRACKS ? TRACK_LIST_WINDOW : SEARCH_ITEMS_MAX;
+		count[k] = !content.items[k] || content.count[k] < 0 ? 0
+		         : content.count[k] > max ? max : content.count[k];
+		content.count[k] = count[k];
+		for (int i = 0; k != RESULT_TRACKS && i < count[k]; i++)
+			kind_rows[k][i] = (track_row){
+				.kind = ROW_KIND[k], .state = DL_DONE, .search = true,
+				.index = (int16_t)i,
+			};
+	}
+	bool any = results_kinds_init(&kinds, content.offered, count,
+	                              content.preferred_kind,
+	                              content.preferred_index);
+	mode = any ? MODE_LIST : MODE_EMPTY;
+	if (any)
+		load_kind();
+	else
+		track_list_set(&list, NULL, 0, 0);
 	reset_interaction();
-	/* Covers: visible rows first (STYLES.md 9). */
-	sync_thumbs();
+	/* Covers now, even before the tab is on screen, unless a list on
+	 * screen has them; on screen, the list claims them anyway. */
+	track_list_offer_thumbs(&list);
+}
+
+result_kind view_results_kind(void)
+{
+	return kinds.active;
+}
+
+/* Left/right: the next kind with results that way, the one left kept
+ * where it was. False at an end. */
+static bool step_kind(int dir)
+{
+	results_kind_keep(&kinds, list.selected, list.first);
+	if (!results_kind_step(&kinds, dir)) {
+		/* The top screen's strip nudges its active segment that way. */
+		strip_edge_dir = dir;
+		strip_edge_frames = ANIM_EDGE;
+		return false;
+	}
+	load_kind();
+	return true;
+}
+
+bool view_results_strip(results_strip *out)
+{
+	if (mode != MODE_LIST)
+		return false;
+	for (int k = 0; k < RESULT_KINDS; k++) {
+		out->offered[k] = kinds.offered[k];
+		out->count[k] = kinds.count[k];
+	}
+	out->active = kinds.active;
+	out->edge_dir = strip_edge_dir;
+	out->edge_frames = strip_edge_frames;
+	return true;
+}
+
+/* --- Preview ----------------------------------------------------------- */
+
+/* The card of the focused row, rebuilt when the focus moves: the row's own
+ * data, nothing asked of the network but its picture, and that only once
+ * the focus has rested PREVIEW_DELAY frames (or at once, if it is cached),
+ * so running down the list downloads nothing. */
+static void follow_preview(void)
+{
+	result_kind k = kinds.active;
+	int index = mode == MODE_LIST ? list.selected : -1;
+	if (index >= kinds.count[k])
+		index = -1;
+	if (k != preview_kind || index != preview_index) {
+		preview_kind = k;
+		preview_index = index;
+		preview_still = 0;
+		unsigned serial = preview.serial + 1;
+		memset(&preview, 0, sizeof(preview));
+		preview.listeners = -1;
+		preview.serial = serial;
+		if (index < 0)
+			return;
+		const sp_track *t = &content.items[k][index];
+		static const detail_kind KIND[RESULT_KINDS] = {
+			DETAIL_TRACK, DETAIL_ARTIST, DETAIL_ALBUM, DETAIL_PLAYLIST,
+		};
+		preview.kind = KIND[k];
+		preview.state = DETAIL_READY;
+		preview.preview = true;
+		/* Every URI the search keeps fits (pf_parse_best reads them into
+		 * SP_URI_MAX too); a longer one would name another, so none. */
+		size_t uri_len = strlen(t->uri);
+		if (uri_len < sizeof(preview.uri))
+			memcpy(preview.uri, t->uri, uri_len + 1);
+		snprintf(preview.title, sizeof(preview.title), "%s", t->name);
+		snprintf(preview.subtitle, sizeof(preview.subtitle), "%s", t->artist);
+		snprintf(preview.art_small, sizeof(preview.art_small), "%s",
+		         t->art_small);
+		if (k == RESULT_TRACKS) {
+			/* The row itself, read where it is: nothing copied. */
+			preview.tracks = (sp_track *)t;
+			preview.count = preview.capacity = 1;
+			preview.single = true;
+		}
+		if (art_cache_has(t->art_large))
+			snprintf(preview.art, sizeof(preview.art), "%s", t->art_large);
+		return;
+	}
+	if (index >= 0 && ++preview_still == PREVIEW_DELAY)
+		snprintf(preview.art, sizeof(preview.art), "%s",
+		         content.items[k][index].art_large);
+}
+
+const detail_doc *view_results_preview(void)
+{
+	return mode == MODE_LIST && preview_index >= 0 ? &preview : NULL;
+}
+
+/* More than one kind to switch between: the D-pad has a use. */
+static bool kinds_switch(void)
+{
+	return mode == MODE_LIST && results_kinds_enabled(&kinds) > 1;
+}
+
+/* The tracks are what X opens a detail of. */
+static bool on_tracks(void)
+{
+	return mode == MODE_LIST && kinds.active == RESULT_TRACKS;
 }
 
 void view_results_error(str_id help)
 {
 	mode = MODE_ERROR;
-	tracks = NULL;
-	count = selected = first = scroll = 0;
+	track_list_set(&list, NULL, 0, 0);
 	advice = help;
-	thumbs_synced = false;
 	reset_interaction();
 }
 
 int view_results_selected(void)
 {
-	return selected;
-}
-
-static void focus_row(int index);
-
-void view_results_focus(int index)
-{
-	if (mode == MODE_LIST && index >= 0 && index < count)
-		focus_row(index);
+	return list.selected;
 }
 
 /* --- Text -------------------------------------------------------------- */
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 
@@ -250,23 +380,6 @@ static void parse_fitted(C2D_Text *text, C2D_TextBuf buf, const char *string,
                          float scale, int width)
 {
 	ui_parse_fitted(text, buf, scratch_buf, string, scale, width);
-}
-
-static const char *track_name(const sp_track *t)
-{
-	return t->name[0] ? t->name : tr(STR_UNTITLED);
-}
-
-static const char *track_artist(const sp_track *t)
-{
-	return t->artist[0] ? t->artist : tr(STR_UNKNOWN_ARTIST);
-}
-
-/* Width of a row's text column. */
-static int row_text_width(void)
-{
-	ui_rect row = list_row_rect(0);
-	return row.x + row.w - SP_2 - list_text_x(row);
 }
 
 static void parse_static(void)
@@ -285,42 +398,32 @@ static void parse_static(void)
 	             TXT_CABEZA, notice.w - 2 * SP_3 - ICON_S - SP_1);
 	parse(&notice_body_text, static_buf, tr(advice));
 	parse(&bubble_text, static_buf, tr(STR_LANG_NAME));
+	parse(&recent_label_text, static_buf, tr(STR_RESULTS_RECENT));
+	for (int i = 0; i < recent.count; i++) {
+		ui_rect row = list_recent_rect(i);
+		parse_fitted(&recent_text[i], static_buf, recent.items[i],
+		             TXT_CUERPO, row.w - 3 * SP_2 - ICON_S);
+	}
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		parse(&letter_text[i], static_buf, glyph_letters[i]);
 	parse(&hint_play, static_buf, tr(STR_HINT_PLAY));
+	parse(&hint_detail, static_buf, tr(STR_HINT_DETAIL));
 	parse(&hint_back, static_buf, tr(STR_HINT_BACK));
 	parse(&hint_search, static_buf, tr(STR_HINT_SEARCH));
 	parse(&hint_cancel, static_buf, tr(STR_HINT_CANCEL));
 	parse(&hint_retry, static_buf, tr(STR_HINT_RETRY));
-}
-
-static void parse_rows(void)
-{
-	C2D_TextBufClear(row_buf);
-	int width = row_text_width();
-	for (int i = 0; i < count; i++) {
-		char duration[16];
-		list_format_duration(tracks[i].duration_ms, duration,
-		                     sizeof(duration));
-		parse(&row_duration[i], row_buf, duration);
-		row_duration_width[i] = ui_text_width(&row_duration[i], TXT_META);
-		/* The duration is never cut (5.3): the title makes room. */
-		int title_width = width - ui_px_ceil(row_duration_width[i]) - SP_2;
-		parse_fitted(&row_title[i], row_buf, track_name(&tracks[i]),
-		             TXT_CABEZA, title_width);
-		parse_fitted(&row_artist[i], row_buf, track_artist(&tracks[i]),
-		             TXT_CUERPO, width);
-	}
+	parse(&hint_open, static_buf, tr(STR_HINT_OPEN));
+	parse(&hint_kind, static_buf, tr(STR_HINT_KIND));
 }
 
 static void ensure_parsed(void)
 {
 	if (stale || parsed_lang != lang_get()) {
 		parse_static();
-		parse_rows();
 		parsed_lang = lang_get();
 		stale = false;
 	}
+	track_list_ensure_parsed(&list);
 }
 
 /* --- State ------------------------------------------------------------- */
@@ -329,18 +432,17 @@ static results_look current_look(void)
 {
 	results_look look = {
 		.mode = mode,
-		.selected = selected,
-		.first = first,
-		.scroll = scroll,
-		.pressed_row = press_down(&press_row) ? press_row_index : -1,
+		.kind = kinds.active,
+		.list = track_list_get_look(&list),
 		.button = press_down(&press_button),
-		.edge = edge_frames > 0 ? edge_dir * EDGE_SHIFT : 0,
+		.idle_focus = idle_focus,
 		.bubble = bubble_frames >= 0,
 		.loader_step = mode == MODE_SEARCHING
 		               ? loader_frames / LOADER_STEP : 0,
 		.cancelling = cancelling,
-		.thumbs = thumbs_serial,
 	};
+	for (int i = 0; i < RECENT_MAX; i++)
+		look.recent[i] = press_down(&press_recent[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		look.glyph[i] = press_down(&press_glyph[i]);
 	return look;
@@ -348,13 +450,15 @@ static results_look current_look(void)
 
 static bool same_look(const results_look *a, const results_look *b)
 {
-	if (a->mode != b->mode || a->selected != b->selected ||
-	    a->first != b->first || a->scroll != b->scroll ||
-	    a->pressed_row != b->pressed_row ||
-	    a->button != b->button || a->edge != b->edge ||
+	if (a->mode != b->mode || a->kind != b->kind ||
+	    !track_list_same_look(&a->list, &b->list) ||
+	    a->button != b->button || a->idle_focus != b->idle_focus ||
 	    a->bubble != b->bubble || a->loader_step != b->loader_step ||
-	    a->cancelling != b->cancelling || a->thumbs != b->thumbs)
+	    a->cancelling != b->cancelling)
 		return false;
+	for (int i = 0; i < RECENT_MAX; i++)
+		if (a->recent[i] != b->recent[i])
+			return false;
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		if (a->glyph[i] != b->glyph[i])
 			return false;
@@ -363,18 +467,18 @@ static bool same_look(const results_look *a, const results_look *b)
 
 static void tick(void)
 {
-	press_tick(&press_row);
-	if (!press_down(&press_row))
-		press_row_index = -1;
+	track_list_tick(&list);
 	press_tick(&press_button);
+	for (int i = 0; i < RECENT_MAX; i++)
+		press_tick(&press_recent[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_tick(&press_glyph[i]);
-	if (edge_frames > 0)
-		edge_frames--;
 	if (bubble_frames >= 0 && ++bubble_frames >= BUBBLE_SHOW)
 		bubble_frames = -1;
 	if (mode == MODE_SEARCHING)
 		loader_frames++;
+	if (strip_edge_frames > 0)
+		strip_edge_frames--;
 }
 
 /* --- Input ------------------------------------------------------------- */
@@ -383,48 +487,6 @@ static void queue(results_action action, const press_state *press)
 {
 	pending = action;
 	pending_press = press;
-}
-
-/* The buttons: focus `index` and bring the list to whole rows with it in
- * view (6.6), even when a drag left it cut. */
-static void focus_row(int index)
-{
-	selected = list_clamp(index, count);
-	first = list_align(scroll, selected, count);
-	scroll = first * LIST_PITCH;
-	thumbs_set_window(first);
-}
-
-/* 6.9: the list follows the stylus pixel for pixel. */
-static void drag_to(int y)
-{
-	scroll = list_drag_scroll(&drag, y, count);
-	int now_first = scroll / LIST_PITCH;
-	if (now_first != first) {
-		first = now_first;
-		thumbs_set_window(first);
-	}
-}
-
-/* 6.9: on lifting the stylus the list stays where it is, rows cut or not,
- * and the focus stays on its row even if that is now out of view. */
-static void drag_end(void)
-{
-	drag.down = drag.dragging = false;
-}
-
-/* 6.6: the focus moves in the same frame; at an end, the focused row
- * nudges towards it instead. */
-static void move_focus(int delta)
-{
-	bool bumped;
-	int next = list_move(selected, delta, count, &bumped);
-	/* Whole rows again, bumped or not. */
-	focus_row(next);
-	if (bumped) {
-		edge_dir = delta < 0 ? -1 : 1;
-		edge_frames = ANIM_EDGE;
-	}
 }
 
 static bool has_button(void)
@@ -438,93 +500,94 @@ static results_action button_action(void)
 	                          : RESULTS_ACTION_NEW_SEARCH;
 }
 
+/* Nothing searched yet, with searches to suggest. */
+static bool has_recent(void)
+{
+	return mode == MODE_IDLE && recent.count > 0;
+}
+
 static ui_rect button_rect(void)
 {
-	return list_action_rect(ui_text_width(&button_text, TXT_CUERPO),
-	                        mode == MODE_EMPTY || mode == MODE_IDLE);
+	float width = ui_text_width(&button_text, TXT_CUERPO);
+	if (has_recent())
+		return list_idle_button_rect(width);
+	return list_action_rect(width, mode == MODE_EMPTY || mode == MODE_IDLE);
+}
+
+/* What B does: leave the results for the screen before them, or, from
+ * that screen, leave the tab. */
+static results_action back_action(void)
+{
+	return mode == MODE_IDLE ? RESULTS_ACTION_BACK : RESULTS_ACTION_CLOSE;
 }
 
 static void release_keys(u32 up)
 {
 	if (up & KEY_A) {
 		press_end(&press_glyph[GLYPH_A]);
+		track_list_release(&list);
 		if (touch.target < 0) {
-			press_end(&press_row);
 			press_end(&press_button);
+			for (int i = 0; i < RECENT_MAX; i++)
+				press_end(&press_recent[i]);
 		}
 	}
 	if (up & KEY_B)
 		press_end(&press_glyph[GLYPH_B]);
+	if (up & KEY_X)
+		press_end(&press_glyph[GLYPH_X]);
 	if (up & KEY_Y)
 		press_end(&press_glyph[GLYPH_Y]);
+	if (up & (KEY_LEFT | KEY_RIGHT))
+		press_end(&press_glyph[GLYPH_DPAD]);
 }
 
-/* Returns true while the stylus owns the input. */
+/* Returns true while the stylus owns the input: the list's rows, or the
+ * button of the other modes. */
 static bool handle_touch(u32 down, u32 held, u32 up)
 {
-	int hit = -1;
 	if (mode == MODE_LIST) {
-		if (up & KEY_TOUCH) {
-			bool was_drag = drag.dragging;
-			drag.down = false;
-			if (was_drag) {
-				drag_end();
-				return true;
-			}
-		} else if (held & KEY_TOUCH) {
-			touchPosition pos;
-			hidTouchRead(&pos);
-			if (down & KEY_TOUCH) {
-				/* Only from the list itself: the tab bar keeps its own
-				 * touches. */
-				if (list_area_contains(pos.px, pos.py) &&
-				    !tabbar_touching())
-					list_drag_begin(&drag, pos.py, scroll);
-			} else if (list_drag_update(&drag, pos.py)) {
-				/* A drag is not a tap: the row returns to rest without
-				 * acting (6.4, 6.9). */
-				if (touch.target >= 0) {
-					press_cancel(&press_row);
-					touch.target = -1;
-				}
-				drag_to(pos.py);
-				return true;
-			}
-		}
+		track_list_touch event = track_list_update_touch(&list, down, held,
+		                                                 up);
+		if (event == TRACK_LIST_ACTIVATE)
+			queue(RESULTS_ACTION_OPEN, &list.press);  /* the focused row */
+		return event != TRACK_LIST_IDLE;
 	}
+
+	int hit = -1;
 	if (held & KEY_TOUCH) {
 		touchPosition pos;
 		hidTouchRead(&pos);
-		if (mode == MODE_LIST)
-			hit = list_hit_row(pos.px, pos.py, scroll, count);
-		else if (has_button() &&
-		         ui_rect_contains(button_rect(), pos.px, pos.py))
+		if (has_button() && ui_rect_contains(button_rect(), pos.px, pos.py))
 			hit = CONTROL_BUTTON;
+		for (int i = 0; has_recent() && i < recent.count; i++)
+			if (ui_rect_contains(list_recent_rect(i), pos.px, pos.py))
+				hit = i;
 	}
 	int control;
 	touch_event event = touch_track_update(&touch, (down & KEY_TOUCH) != 0,
 	                                       (held & KEY_TOUCH) != 0,
 	                                       (up & KEY_TOUCH) != 0, hit,
 	                                       &control);
-	press_state *press = control == CONTROL_BUTTON ? &press_button
-	                                               : &press_row;
+	press_state *press = control >= 0 && control < RECENT_MAX
+	                     ? &press_recent[control] : &press_button;
 	switch (event) {
 	case TOUCH_PRESS:
 		press_begin(press);
-		if (control != CONTROL_BUTTON)
-			press_row_index = control;
 		break;
 	case TOUCH_CANCEL:
 		press_cancel(press);
 		break;
 	case TOUCH_ACTIVATE:
 		press_end(press);
-		if (control == CONTROL_BUTTON)
+		if (press == &press_button) {
+			idle_focus = 0;
 			queue(button_action(), press);
-		else if (control == selected)
-			queue(RESULTS_ACTION_OPEN, press);  /* tap the focused row */
-		else
-			selected = control;  /* tap another: focus, list stays put */
+		} else {
+			idle_focus = control + 1;
+			recent_choice = control;
+			queue(RESULTS_ACTION_RECENT, press);
+		}
 		break;
 	case TOUCH_NONE:
 		break;
@@ -532,7 +595,7 @@ static bool handle_touch(u32 down, u32 held, u32 up)
 	return touch.target >= 0;
 }
 
-/* The A, B and Y glyphs plus what each does in this mode. */
+/* The A, B, X and Y glyphs plus what each does in this mode. */
 static void press_key(int glyph, results_action action,
                       press_state *control)
 {
@@ -550,8 +613,8 @@ results_action view_results_update(u32 down)
 	tick();
 	release_keys(up);
 	/* Uploads happen here, on the main thread, never while drawing. */
-	if (thumbs_poll())
-		thumbs_serial++;
+	track_list_thumbs_frame(&list);
+	follow_preview();
 
 	if (pending != RESULTS_ACTION_NONE) {
 		if (!press_shown(pending_press))
@@ -572,39 +635,52 @@ results_action view_results_update(u32 down)
 	if (handle_touch(down, held, up) || pending != RESULTS_ACTION_NONE)
 		return RESULTS_ACTION_NONE;
 
-	if (mode == MODE_LIST &&
-	    (down & (KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_A)) &&
-	    !list_row_whole(selected, scroll, count)) {
+	u32 confirm = KEY_A | (on_tracks() ? KEY_X : 0);
+	if (mode == MODE_LIST && track_list_realign(&list, down, confirm)) {
 		/* 6.6: with the focus dragged out of view, the first button press
-		 * only brings the list back to it, on whole rows. A still shows
-		 * its glyph pressed, but plays nothing it cannot see. */
-		focus_row(selected);
+		 * only brings the list back to it, on whole rows -- left/right
+		 * too, before they switch the kind. A and X still show their
+		 * glyph pressed, but act on nothing they cannot see. */
 		if (down & KEY_A)
 			press_begin(&press_glyph[GLYPH_A]);
+		if (down & confirm & KEY_X)
+			press_begin(&press_glyph[GLYPH_X]);
+		if (down & (KEY_LEFT | KEY_RIGHT))
+			press_begin(&press_glyph[GLYPH_DPAD]);
 		return RESULTS_ACTION_NONE;
 	}
 
-	if (mode == MODE_LIST) {
-		if (down & KEY_UP)
-			move_focus(-1);
-		else if (down & KEY_DOWN)
-			move_focus(1);
-		/* Left/right page; L/R are the tab bar's. */
-		else if (down & KEY_LEFT)
-			move_focus(-RESULTS_PER_PAGE);
-		else if (down & KEY_RIGHT)
-			move_focus(RESULTS_PER_PAGE);
+	if (mode == MODE_LIST && (down & (KEY_LEFT | KEY_RIGHT))) {
+		/* The kind, without wrapping: at an end nothing moves and the
+		 * glyph held is all the answer (STYLES.md 6.6, 7.4). */
+		press_begin(&press_glyph[GLYPH_DPAD]);
+		step_kind((down & KEY_LEFT) ? -1 : 1);
+		return RESULTS_ACTION_NONE;
+	}
+	if (mode == MODE_LIST)
+		track_list_navigate(&list, down & (KEY_UP | KEY_DOWN));
+	if (has_recent()) {
+		if ((down & KEY_UP) && idle_focus > 0)
+			idle_focus--;
+		else if ((down & KEY_DOWN) && idle_focus < recent.count)
+			idle_focus++;
 	}
 
 	if (down & KEY_A) {
 		if (mode == MODE_LIST) {
-			press_row_index = selected;
-			press_key(GLYPH_A, RESULTS_ACTION_OPEN, &press_row);
+			press_key(GLYPH_A, RESULTS_ACTION_OPEN,
+			          track_list_focused_press(&list));
+		} else if (has_recent() && idle_focus > 0) {
+			recent_choice = idle_focus - 1;
+			press_key(GLYPH_A, RESULTS_ACTION_RECENT,
+			          &press_recent[recent_choice]);
 		} else {
 			press_key(GLYPH_A, button_action(), &press_button);
 		}
+	} else if ((down & KEY_X) && on_tracks()) {
+		press_key(GLYPH_X, RESULTS_ACTION_DETAIL, NULL);
 	} else if (down & KEY_B) {
-		press_key(GLYPH_B, RESULTS_ACTION_BACK, NULL);
+		press_key(GLYPH_B, back_action(), NULL);
 	} else if (down & KEY_Y) {
 		press_key(GLYPH_Y, RESULTS_ACTION_NEW_SEARCH, NULL);
 	} else if (down & KEY_SELECT) {
@@ -617,7 +693,8 @@ results_action view_results_update(u32 down)
 
 bool view_results_dirty(void)
 {
-	if (stale || parsed_lang != lang_get() || !drawn_valid)
+	if (stale || parsed_lang != lang_get() || !drawn_valid ||
+	    track_list_text_stale(&list))
 		return true;
 	results_look look = current_look();
 	return !same_look(&look, &drawn);
@@ -625,62 +702,19 @@ bool view_results_dirty(void)
 
 /* --- Drawing ----------------------------------------------------------- */
 
-/* 5.3: the cover inside a 1 px `tinta` outline, or, while it loads or when
- * there is none, `capa_alta` with the note icon. Same size either way, so
- * nothing moves when the image arrives. `index` < 0: a skeleton row. */
-static void draw_thumb(ui_rect row, int index)
-{
-	C2D_Image image;
-	bool shown = index >= 0 && thumbs_synced && thumbs_image(index, &image);
-	ui_art(list_thumb_rect(row), shown ? &image : NULL);
-}
-
-/* 5.3. `index` < 0 draws an empty skeleton row (searching). */
-static void draw_row(ui_rect row, int index, const results_look *look)
-{
-	bool focused = index >= 0 && index == look->selected;
-	bool pressed = index >= 0 && index == look->pressed_row;
-	if (focused)
-		row = ui_rect_offset(row, 0, look->edge);
-	if (pressed)
-		row = ui_rect_offset(row, PRESS_SHIFT, PRESS_SHIFT);
-
-	u32 title_ink = COL_TEXTO;
-	u32 meta_ink = COL_TEXTO_2;
-	if (pressed || focused) {
-		/* Focused: `clorofila` with a `musgo` bottom band; pressed: the
-		 * dark fill (6.3). Text in `tinta` either way. */
-		ui_fill(row, COL_TINTA);
-		ui_rect inside = ui_rect_inset(row, OUTLINE_W);
-		ui_fill(inside, pressed ? COL_MUSGO : COL_CLOROFILA);
-		if (!pressed) {
-			ui_rect band = { inside.x, inside.y + inside.h - BEVEL_W,
-			                 inside.w, BEVEL_W };
-			ui_fill(band, COL_MUSGO);
-		}
-		title_ink = meta_ink = COL_TINTA;
-	} else {
-		ui_panel(row);
-	}
-	draw_thumb(row, index);
-	if (index < 0)
-		return;
-
-	int x = list_text_x(row);
-	int title_cy = row.y + SP_1 + ui_line_height(TXT_CABEZA) / 2;
-	int artist_cy = row.y + row.h - SP_1 - ui_line_height(TXT_CUERPO) / 2;
-	ui_text(&row_title[index], x, title_cy, TXT_CABEZA, title_ink);
-	ui_text(&row_artist[index], x, artist_cy, TXT_CUERPO, meta_ink);
-	int duration_x = row.x + row.w - SP_2 -
-	                 ui_px_ceil(row_duration_width[index]);
-	ui_text(&row_duration[index], duration_x, title_cy, TXT_META, meta_ink);
-}
-
+/* At most four actions (5.6). On the tracks, with kinds to switch:
+ * Play, Detail, Search, then Type against the right margin -- B still
+ * goes back, as on the home grid, which does not list it either. On the
+ * other kinds: Open, Search, Back, Type. Type keeps its place whatever
+ * the kind. */
 static void draw_bar(const results_look *look)
 {
-	ui_hint hints[3];
+	ui_hint hints[4];
 	int n = 0;
 	const C2D_Text *a_label = NULL;
+	bool tracks = mode == MODE_LIST && look->kind == RESULT_TRACKS;
+	bool switches = kinds_switch();
+	C2D_Image dpad = icon_image(ICON_DPAD_LR);
 	switch (mode) {
 	case MODE_SEARCHING:
 		break;
@@ -688,7 +722,7 @@ static void draw_bar(const results_look *look)
 		a_label = &hint_search;
 		break;
 	case MODE_LIST:
-		a_label = &hint_play;
+		a_label = tracks ? &hint_play : &hint_open;
 		break;
 	case MODE_EMPTY:
 		a_label = &hint_search;
@@ -700,17 +734,46 @@ static void draw_bar(const results_look *look)
 	if (a_label)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
-		                        look->glyph[GLYPH_A] };
+		                        look->glyph[GLYPH_A], NULL };
+	if (tracks)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_detail,
+		                        glyph_colors[GLYPH_X],
+		                        look->glyph[GLYPH_X], NULL };
 	if (mode == MODE_LIST || mode == MODE_ERROR)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_Y], &hint_search,
 		                        glyph_colors[GLYPH_Y],
-		                        look->glyph[GLYPH_Y] };
-	hints[n++] = (ui_hint){ &letter_text[GLYPH_B],
-	                        mode == MODE_SEARCHING ? &hint_cancel
-	                                               : &hint_back,
-	                        glyph_colors[GLYPH_B],
-	                        look->glyph[GLYPH_B] };
-	ui_button_bar(list_hints_rect(), hints, n);
+		                        look->glyph[GLYPH_Y], NULL };
+	if (n < (switches ? 3 : 4))
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_B],
+		                        mode == MODE_SEARCHING ? &hint_cancel
+		                                               : &hint_back,
+		                        glyph_colors[GLYPH_B],
+		                        look->glyph[GLYPH_B], NULL };
+	/* Last, against the right margin: the same place on every kind. */
+	if (switches)
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_DPAD], &hint_kind,
+		                        glyph_colors[GLYPH_DPAD],
+		                        look->glyph[GLYPH_DPAD], &dpad };
+	ui_button_bar_split(list_hints_rect(), hints, n, switches ? 1 : 0);
+}
+
+/* The recent searches under the button: a label, then one row each with
+ * the search icon, the focused one in the list's focused style. */
+static void draw_recent(const results_look *look)
+{
+	ui_text(&recent_label_text, SP_2 + SP_1, list_recent_label_cy(),
+	        TXT_META, COL_TEXTO_2);
+	C2D_Image icon = icon_image(ICON_SEARCH);
+	for (int i = 0; i < recent.count; i++) {
+		u32 ink, meta_ink;
+		ui_rect row = ui_item_frame(list_recent_rect(i),
+		                            look->idle_focus == i + 1,
+		                            look->recent[i], &ink, &meta_ink);
+		int cy = row.y + row.h / 2;
+		ui_icon(&icon, row.x + SP_2, cy - ICON_S / 2, meta_ink);
+		ui_text(&recent_text[i], row.x + 2 * SP_2 + ICON_S, cy, TXT_CUERPO,
+		        ink);
+	}
 }
 
 void view_results_draw_bottom(void)
@@ -721,28 +784,17 @@ void view_results_draw_bottom(void)
 	switch (mode) {
 	case MODE_SEARCHING:
 		/* Skeleton rows: the layout the results will fill. */
-		for (int slot = 0; slot < RESULTS_PER_PAGE; slot++)
-			draw_row(list_row_rect(slot), -1, &look);
+		track_list_draw_skeleton(list_frame_full());
 		break;
-	case MODE_LIST: {
-		/* Mid-drag one more row peeks in at the bottom. The focused row
-		 * goes last, so its nudge draws over its neighbours. */
-		int last = first + RESULTS_PER_PAGE;
-		if (last > count - 1)
-			last = count - 1;
-		for (int index = first; index <= last; index++)
-			if (index != selected)
-				draw_row(list_row_at(index, scroll), index, &look);
-		if (selected >= first && selected <= last)
-			draw_row(list_row_at(selected, scroll), selected, &look);
-		/* 5.11: only when the list does not fit. */
-		if (count > RESULTS_PER_PAGE) {
-			ui_fill(list_scroll_track(), COL_CAPA);
-			ui_fill(list_scroll_thumb(scroll, count), COL_CLOROFILA);
-		}
+	case MODE_LIST:
+		track_list_draw(&list, &look.list);
 		break;
-	}
 	case MODE_IDLE:
+		if (has_recent()) {
+			draw_recent(&look);
+			break;
+		}
+		/* fall through */
 	case MODE_EMPTY: {
 		/* A single message: centred (3.3). */
 		ui_rect notice = list_notice_rect();
@@ -759,7 +811,10 @@ void view_results_draw_bottom(void)
 	}
 
 	if (has_button()) {
-		ui_control_look button = { .pressed = look.button, .focused = true };
+		ui_control_look button = {
+			.pressed = look.button,
+			.focused = !has_recent() || look.idle_focus == 0
+		};
 		ui_button(button_rect(), UI_BUTTON_PRIMARY, button, &button_text,
 		          NULL);
 	}

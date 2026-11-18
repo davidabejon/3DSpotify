@@ -3,6 +3,7 @@
 #include "json3ds.h"
 #include "search_path.h"
 #include "proto3ds.h"
+#include "meta_parse.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,76 +14,9 @@
 /* extended_metadata.proto: BatchedEntityRequest { header 1, entity_request 2 },
  * EntityRequest { entity_uri 1, query 2 }, ExtensionQuery { extension_kind 1 }.
  * Putting the entity request in field 1 yields HTTP 200 and an empty body,
- * which is a confusing way to be told the shape is wrong. */
-#define EXT_KIND_TRACK_V4 10
+ * which is a confusing way to be told the shape is wrong. The kinds and the
+ * message parsers live in meta_parse.c. */
 
-/* Defined with the playlist code below; the rootlist is the same shape and
- * shares it. */
-static int read_list_items(const pbv *content, char uris[][64], int max);
-
-static void copy_str(char *dst, size_t cap, const pbv *v)
-{
-	size_t n = v->len < cap - 1 ? v->len : cap - 1;
-	memcpy(dst, v->p, n);
-	dst[n] = '\0';
-}
-
-/* Collects the image ids of a container holding repeated Image entries under
- * `field`, indexed by the Image.size enum: 0=DEFAULT (300px), 1=SMALL (64px),
- * 2=LARGE (640px). Image is { file_id 1, size 2 }; the id becomes the URL in
- * lowercase hex. The repeated entries are walked by hand for the same reason
- * the audio files are. */
-static void read_image_ids(const pbv *container, uint32_t field, char ids[3][41])
-{
-	size_t at = 0;
-	while (at < container->len) {
-		pbv rest = { container->p + at, container->len - at };
-		pbv img, fid;
-		uint64_t size = 0;
-		if (!pb_get_bytes(rest.p, rest.len, field, &img))
-			break;
-		pb_get_varint(img.p, img.len, 2, &size);
-		if (pb_get_bytes(img.p, img.len, 1, &fid) && fid.len == 20 &&
-		    size <= 2 && !ids[size][0]) {
-			static const char HEX[] = "0123456789abcdef";
-			for (int i = 0; i < 20; i++) {
-				ids[size][i * 2] = HEX[fid.p[i] >> 4];
-				ids[size][i * 2 + 1] = HEX[fid.p[i] & 15];
-			}
-		}
-		at = (size_t)(img.p + img.len - container->p);
-	}
-}
-
-/* The album's cover images as i.scdn.co URLs.
- *
- * Track.album (3) -> Album.cover_group (17) -> ImageGroup.image (1, repeated)
- * -> Image. Older metadata used Album.cover (9), a repeated Image directly on
- * the album, so that is the fallback when no ImageGroup is present. Reading
- * the wrong field number here fails silently: the protobuf scan just finds
- * nothing and every cover URL stays empty. Falls back across sizes, so a
- * missing SMALL does not cost the list its thumbnails. */
-static void read_cover_urls(const pbv *track, sp_track *out)
-{
-	pbv album, group;
-	if (!pb_get_bytes(track->p, track->len, 3, &album))
-		return;
-
-	char ids[3][41] = {{0}};
-	if (pb_get_bytes(album.p, album.len, 17, &group))
-		read_image_ids(&group, 1, ids);
-	if (!ids[0][0] && !ids[1][0] && !ids[2][0])
-		read_image_ids(&album, 9, ids);
-
-	const char *small = ids[1][0] ? ids[1] : ids[2][0] ? ids[2] : ids[0];
-	const char *large = ids[2][0] ? ids[2] : ids[0][0] ? ids[0] : ids[1];
-	if (small[0])
-		snprintf(out->art_small, sizeof(out->art_small),
-		         "https://i.scdn.co/image/%s", small);
-	if (large[0])
-		snprintf(out->art_large, sizeof(out->art_large),
-		         "https://i.scdn.co/image/%s", large);
-}
 
 const char *sp_format_name(int format)
 {
@@ -141,259 +75,226 @@ int sp_resolve(char *host, size_t hostlen, char *err, size_t errlen)
 	return 0;
 }
 
-int sp_track_metadata(const char *host, const char *token, const char *track_uri,
-                      sp_track *out, char *err, size_t errlen)
+/* One entity of one kind through extended-metadata, over `sess` when given
+ * and a fresh connection to `host` otherwise. On 0, `r` holds the body that
+ * `entity` points into and the caller frees it. `what` names the request in
+ * errors ("metadata", "album", "artist") and `noun` the missing entity. */
+static int entity_request(const char *host, http_session *sess,
+                          const char *token, const char *uri, int kind,
+                          const char *what, const char *noun,
+                          http_reply *r, pbv *entity, char *err, size_t errlen)
 {
-	memset(out, 0, sizeof(*out));
-
 	uint8_t q_store[16], er_store[256], req_store[320];
 	pb q, er, req;
 	pb_init(&q, q_store, sizeof(q_store));
-	pb_varint(&q, 1, EXT_KIND_TRACK_V4);
+	pb_varint(&q, 1, (uint64_t)kind);
 	pb_init(&er, er_store, sizeof(er_store));
-	pb_str(&er, 1, track_uri);
+	pb_str(&er, 1, uri);
 	pb_sub(&er, 2, &q);
 	pb_init(&req, req_store, sizeof(req_store));
 	pb_sub(&req, 2, &er);
 	if (!pb_ok(&req)) {
-		snprintf(err, errlen, "metadata request did not fit");
+		snprintf(err, errlen, "%s request did not fit", what);
 		return -1;
 	}
 
-	http_reply r;
 	/* The Bearer matters here as much as on the GETs: without it the service
 	 * answers 200 with an empty body rather than 401, which reads like a
 	 * malformed request. */
-	if (http_request(host, "/extended-metadata/v0/extended-metadata", "POST",
-	                 token, "application/x-protobuf", "application/x-protobuf",
-	                 req.p, req.len, 0, &r) != 0) {
-		snprintf(err, errlen, "metadata: %s", r.err);
+	int rc = sess
+	    ? http_session_request(sess, "/extended-metadata/v0/extended-metadata",
+	                           "POST", token, "application/x-protobuf",
+	                           "application/x-protobuf", req.p, req.len, 0, r)
+	    : http_request(host, "/extended-metadata/v0/extended-metadata", "POST",
+	                   token, "application/x-protobuf", "application/x-protobuf",
+	                   req.p, req.len, 0, r);
+	if (rc != 0) {
+		snprintf(err, errlen, "%s: %s", what, r->err);
 		return -1;
 	}
-	if (r.status != 200) {
-		snprintf(err, errlen, "metadata returned HTTP %d", r.status);
-		http_reply_free(&r);
+	if (r->status != 200) {
+		snprintf(err, errlen, "%s returned HTTP %d", what, r->status);
+		http_reply_free(r);
 		return -1;
 	}
-
-	const uint8_t *body = (const uint8_t *)r.body;
-	pbv arr, ed, any, track;
-	/* BatchedExtensionResponse.extended_metadata -> EntityExtensionDataArray
-	 * .extension_data -> EntityExtensionData.extension_data (an Any) -> value */
-	bool found = pb_get_bytes(body, r.len, 2, &arr) &&
-	             pb_get_bytes(arr.p, arr.len, 3, &ed) &&
-	             pb_get_bytes(ed.p, ed.len, 3, &any) &&
-	             pb_get_bytes(any.p, any.len, 2, &track);
-	if (!found) {
-		snprintf(err, errlen, "no track in the metadata response (%u bytes)",
-		         (unsigned)r.len);
-		http_reply_free(&r);
+	if (!sp_parse_entity((const uint8_t *)r->body, r->len, entity)) {
+		snprintf(err, errlen, "no %s in the metadata response (%u bytes)",
+		         noun, (unsigned)r->len);
+		http_reply_free(r);
 		return -1;
 	}
+	return 0;
+}
 
-	pbv v;
-	if (pb_get_bytes(track.p, track.len, 1, &v) && v.len == 16) {
-		memcpy(out->gid, v.p, 16);
-		out->has_gid = true;
-	}
-	if (pb_get_bytes(track.p, track.len, 2, &v))      /* Track.name */
-		copy_str(out->name, sizeof(out->name), &v);
-	int64_t dur = 0;
-	/* Track.duration is a sint32: zigzag, not a plain varint. Read the wrong
-	 * way it comes back doubled, which reads as a long-but-believable track
-	 * rather than as an error. */
-	if (pb_get_sint(track.p, track.len, 7, &dur))
-		out->duration_ms = (int)dur;
-	if (pb_get_bytes(track.p, track.len, 3, &v)) {    /* Track.album */
-		pbv an;
-		if (pb_get_bytes(v.p, v.len, 2, &an))         /* Album.name */
-			copy_str(out->album, sizeof(out->album), &an);
-	}
-	read_cover_urls(&track, out);
-	if (pb_get_bytes(track.p, track.len, 4, &v)) {    /* first Artist */
-		pbv an;
-		/* Artist.gid is field 1 and Artist.name is field 2; reading the first
-		 * field here would hand back raw bytes that are not text. */
-		if (pb_get_bytes(v.p, v.len, 2, &an))
-			copy_str(out->artist, sizeof(out->artist), &an);
-	}
-
-	/* Track.file is repeated, and pb_get_bytes only yields the first, so the
-	 * files are walked by hand. */
-	size_t at = 0;
-	while (at < track.len && out->file_count < SP_MAX_FILES) {
-		pbv rest = { track.p + at, track.len - at };
-		pbv file;
-		if (!pb_get_bytes(rest.p, rest.len, 12, &file))
-			break;
-		pbv fid;
-		uint64_t fmt = 0;
-		if (pb_get_bytes(file.p, file.len, 1, &fid) && fid.len == 20) {
-			memcpy(out->files[out->file_count].id, fid.p, 20);
-			pb_get_varint(file.p, file.len, 2, &fmt);
-			out->files[out->file_count].format = (int)fmt;
-			out->file_count++;
-		}
-		at = (size_t)(file.p + file.len - track.p);
-	}
-
+int sp_track_metadata(const char *host, const char *token, const char *track_uri,
+                      sp_track *out, char *err, size_t errlen)
+{
+	memset(out, 0, sizeof(*out));
+	http_reply r;
+	pbv track;
+	if (entity_request(host, NULL, token, track_uri, EXT_KIND_TRACK_V4,
+	                   "metadata", "track", &r, &track, err, errlen) != 0)
+		return -1;
+	sp_parse_track(&track, out);
 	http_reply_free(&r);
 	return 0;
 }
 
-int sp_rootlist(const char *host, const char *token, const char *username,
-                char uris[][64], char names[][64], char arts[][80], int max,
-                int *count, char *err, size_t errlen)
+int sp_album_metadata(http_session *sess, const char *token,
+                      const char *album_uri, sp_album *out,
+                      char *err, size_t errlen)
 {
-	char path[320];
-	snprintf(path, sizeof(path),
-	         "/playlist/v2/user/%s/rootlist?decorate=revision,attributes,length",
-	         username);
-
+	memset(out, 0, sizeof(*out));
 	http_reply r;
-	if (http_get_proto(host, path, token, &r) != 0) {
-		snprintf(err, errlen, "rootlist: %s", r.err);
+	pbv album;
+	if (entity_request(NULL, sess, token, album_uri, EXT_KIND_ALBUM_V4,
+	                   "album", "album", &r, &album, err, errlen) != 0)
 		return -1;
-	}
-	if (r.status != 200) {
-		snprintf(err, errlen, "rootlist returned HTTP %d", r.status);
-		http_reply_free(&r);
-		return -1;
-	}
-
-	const uint8_t *body = (const uint8_t *)r.body;
-	uint64_t length = 0;
-	pb_get_varint(body, r.len, 2, &length);   /* SelectedListContent.length */
-	*count = (int)length;
-
-	pbv whole = { body, r.len };
-	int n = read_list_items(&whole, uris, max);
-
-	/* meta_items runs parallel to items, one per entry, and carries the
-	 * ListAttributes the decoration asked for -- which is how the rows get
-	 * real names without one request each. The same attributes carry the
-	 * cover: `picture` (3) is the 20-byte image id for user-set covers,
-	 * while generated ones (mosaic/pickasso) arrive as a format attribute
-	 * with key "image_url". */
-	if (names) {
-		for (int i = 0; i < n; i++) {
-			names[i][0] = '\0';
-			if (arts)
-				arts[i][0] = '\0';
-		}
-		pbv contents;
-		if (pb_get_bytes(body, r.len, 5, &contents)) {
-			size_t at = 0;
-			int i = 0;
-			while (at < contents.len && i < n) {
-				pbv rest = { contents.p + at, contents.len - at };
-				pbv meta;
-				if (!pb_get_bytes(rest.p, rest.len, 4, &meta))
-					break;
-				pbv attrs, nm, pic;
-				if (pb_get_bytes(meta.p, meta.len, 2, &attrs)) {
-					if (pb_get_bytes(attrs.p, attrs.len, 1, &nm)) {
-						size_t len = nm.len < 63 ? nm.len : 63;
-						memcpy(names[i], nm.p, len);
-						names[i][len] = '\0';
-					}
-					if (arts &&
-					    pb_get_bytes(attrs.p, attrs.len, 3, &pic)) {
-						if (pic.len == 20) {
-							/* i.scdn.co/image/<hex id> is the CDN shape
-							 * every 64px thumb URL already uses. */
-							static const char hexd[] = "0123456789abcdef";
-							snprintf(arts[i], 80,
-							         "https://i.scdn.co/image/");
-							char *o = arts[i] + strlen(arts[i]);
-							for (int k = 0; k < 20; k++) {
-								*o++ = hexd[pic.p[k] >> 4];
-								*o++ = hexd[pic.p[k] & 15];
-							}
-							*o = '\0';
-						} else if (pic.len > 8 && pic.len < 79 &&
-						           memcmp(pic.p, "https://", 8) == 0) {
-							memcpy(arts[i], pic.p, pic.len);
-							arts[i][pic.len] = '\0';
-						}
-					}
-				}
-				i++;
-				at = (size_t)(meta.p + meta.len - contents.p);
-			}
-		}
-	}
-
+	bool ok = sp_parse_album(&album, out);
 	http_reply_free(&r);
-	return n;
+	if (!ok) {
+		snprintf(err, errlen, "album metadata carried no id");
+		return -1;
+	}
+	return 0;
+}
+
+int sp_artist_metadata(http_session *sess, const char *token,
+                       const char *artist_uri, const char *country,
+                       sp_artist *out, char *err, size_t errlen)
+{
+	memset(out, 0, sizeof(*out));
+	http_reply r;
+	pbv artist;
+	if (entity_request(NULL, sess, token, artist_uri, EXT_KIND_ARTIST_V4,
+	                   "artist", "artist", &r, &artist, err, errlen) != 0)
+		return -1;
+	bool ok = sp_parse_artist(&artist, country, out);
+	http_reply_free(&r);
+	if (!ok) {
+		snprintf(err, errlen, "artist metadata carried no id");
+		return -1;
+	}
+	return 0;
 }
 
 /* ------------------------------------------------------------- playlists */
 
-/* SelectedListContent.contents (5) -> ListItems.items (3) -> Item.uri (1).
- * `items` is repeated, and pb_get_bytes only yields the first, so the list is
- * walked by hand. */
-static int read_list_items(const pbv *content, char uris[][64], int max)
+/* One protobuf GET over the session, checked for a 200. */
+static int session_get_proto(http_session *sess, const char *token,
+                             const char *path, const char *what,
+                             http_reply *r, char *err, size_t errlen)
 {
-	pbv contents;
-	if (!pb_get_bytes(content->p, content->len, 5, &contents))
-		return 0;
-
-	int n = 0;
-	size_t at = 0;
-	while (at < contents.len && n < max) {
-		pbv rest = { contents.p + at, contents.len - at };
-		pbv item;
-		if (!pb_get_bytes(rest.p, rest.len, 3, &item))
-			break;
-		pbv uri;
-		if (pb_get_bytes(item.p, item.len, 1, &uri)) {
-			size_t len = uri.len < 63 ? uri.len : 63;
-			memcpy(uris[n], uri.p, len);
-			uris[n][len] = '\0';
-			n++;
-		}
-		at = (size_t)(item.p + item.len - contents.p);
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/x-protobuf", NULL, 0, 0, r) != 0) {
+		snprintf(err, errlen, "%s: %s", what, r->err);
+		return -1;
 	}
+	if (r->status != 200) {
+		snprintf(err, errlen, "%s returned HTTP %d", what, r->status);
+		http_reply_free(r);
+		return -1;
+	}
+	return 0;
+}
+
+int sp_rootlist_s(http_session *sess, const char *token, const char *username,
+                  sp_playlist_ref *out, int max, int *total,
+                  char *err, size_t errlen)
+{
+	char user[192], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/playlist/v2/user/%s/rootlist?decorate=revision,attributes,length",
+	         user);
+	http_reply r;
+	if (session_get_proto(sess, token, path, "rootlist", &r, err, errlen) != 0)
+		return -1;
+	int n = sp_parse_rootlist((const uint8_t *)r.body, r.len, out, max, total);
+	http_reply_free(&r);
 	return n;
 }
 
-int sp_playlist(const char *host, const char *token, const char *playlist_id,
-                char *name, size_t namelen, char uris[][64], int max,
-                int *count, char *err, size_t errlen)
+int sp_recent_playlists_s(http_session *sess, const char *token,
+                          const char *username, char uris[][SP_URI_MAX],
+                          char (*last)[SP_URI_MAX], int max,
+                          char *err, size_t errlen)
 {
-	if (name && namelen)
-		name[0] = '\0';
-
-	char path[160];
-	snprintf(path, sizeof(path), "/playlist/v2/playlist/%s", playlist_id);
-
+	/* The desktop client's own request. limit=50 counts every kind of
+	 * context, so the playlists among them are fewer. */
+	char user[192], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/recently-played/v3/user/%s/recently-played"
+	         "?format=json&offset=0&limit=50&filter=default", user);
 	http_reply r;
-	if (http_get_proto(host, path, token, &r) != 0) {
-		snprintf(err, errlen, "playlist: %s", r.err);
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "history: %s", r.err);
 		return -1;
 	}
 	if (r.status != 200) {
-		snprintf(err, errlen, "playlist returned HTTP %d", r.status);
+		snprintf(err, errlen, "history returned HTTP %d", r.status);
 		http_reply_free(&r);
 		return -1;
 	}
-
-	const uint8_t *body = (const uint8_t *)r.body;
-	uint64_t length = 0;
-	pb_get_varint(body, r.len, 2, &length);
-	if (count)
-		*count = (int)length;
-
-	pbv attrs, nm;
-	if (name && namelen && pb_get_bytes(body, r.len, 3, &attrs) &&
-	    pb_get_bytes(attrs.p, attrs.len, 1, &nm))      /* ListAttributes.name */
-		copy_str(name, namelen, &nm);
-
-	pbv whole = { body, r.len };
-	int n = read_list_items(&whole, uris, max);
+	int n = sp_parse_recent_playlists(r.body, r.len, uris, last, max);
 	http_reply_free(&r);
 	return n;
+}
+
+int sp_liked_s(http_session *sess, const char *token, const char *username,
+               char (*uris)[SP_URI_MAX], int max, int *total,
+               char *err, size_t errlen)
+{
+	char user[192], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/context-resolve/v1/spotify:user:%s:collection", user);
+	http_reply r;
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "liked: %s", r.err);
+		return -1;
+	}
+	if (r.status != 200) {
+		snprintf(err, errlen, "liked returned HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	int n = sp_parse_liked(r.body, r.len, uris, max, total);
+	http_reply_free(&r);
+	return n;
+}
+
+int sp_playlist_s(http_session *sess, const char *token, const char *uri,
+                  int from, int max_tracks, sp_playlist_info *out,
+                  char *err, size_t errlen)
+{
+	memset(out, 0, sizeof(*out));
+	if (strncmp(uri, "spotify:playlist:", 17) != 0 || !uri[17]) {
+		snprintf(err, errlen, "not a playlist: %s", uri);
+		return -1;
+	}
+	if (max_tracks > SP_PLAYLIST_PAGE)
+		max_tracks = SP_PLAYLIST_PAGE;
+	if (max_tracks < 0)
+		max_tracks = 0;
+	if (from < 0)
+		from = 0;
+
+	/* from/length is honoured (a 1275-track list: 110 KB whole, 2.3 KB for
+	 * 24); without the decoration the header came back with no length. */
+	char path[192];
+	snprintf(path, sizeof(path),
+	         "/playlist/v2/playlist/%s?decorate=attributes,length"
+	         "&from=%d&length=%d", uri + 17, from, max_tracks);
+	http_reply r;
+	if (session_get_proto(sess, token, path, "playlist", &r, err, errlen) != 0)
+		return -1;
+	sp_parse_playlist((const uint8_t *)r.body, r.len, uri, max_tracks, out);
+	http_reply_free(&r);
+	return 0;
 }
 
 int sp_liked(const char *host, const char *token, const char *username,
@@ -449,18 +350,17 @@ static bool slice_to_buf(const char *p, size_t len, char *buf, size_t cap)
 	return true;
 }
 
-static int metadata_batch_request(const char *host, http_session *sess,
-                                  const char *token,
-                                  const char *const *uris, int n,
-                                  sp_track *out, char *err, size_t errlen)
+/* `n` entities of one kind in one extended-metadata request. On 0, `r`
+ * holds a 200 answer and the caller frees it. */
+static int batch_post(const char *host, http_session *sess,
+                      const char *token, int kind,
+                      const char *const *uris, int n, http_reply *out,
+                      char *err, size_t errlen)
 {
-	if (n <= 0)
-		return 0;
-
 	uint8_t q_store[16];
 	pb q;
 	pb_init(&q, q_store, sizeof(q_store));
-	pb_varint(&q, 1, EXT_KIND_TRACK_V4);
+	pb_varint(&q, 1, (uint64_t)kind);
 
 	size_t cap = (size_t)n * 128 + 64;
 	uint8_t *req_store = malloc(cap);
@@ -484,90 +384,101 @@ static int metadata_batch_request(const char *host, http_session *sess,
 		return -1;
 	}
 
-	http_reply r;
 	int rc = sess
 	    ? http_session_request(sess, "/extended-metadata/v0/extended-metadata",
 	                           "POST", token, "application/x-protobuf",
-	                           "application/x-protobuf", req.p, req.len, 0, &r)
+	                           "application/x-protobuf", req.p, req.len, 0, out)
 	    : http_request(host, "/extended-metadata/v0/extended-metadata", "POST",
 	                   token, "application/x-protobuf", "application/x-protobuf",
-	                   req.p, req.len, 0, &r);
+	                   req.p, req.len, 0, out);
 	free(req_store);
 	if (rc != 0) {
-		snprintf(err, errlen, "metadata batch: %s", r.err);
+		snprintf(err, errlen, "metadata batch: %s", out->err);
 		return -1;
 	}
-	if (r.status != 200) {
-		snprintf(err, errlen, "metadata batch returned HTTP %d", r.status);
-		http_reply_free(&r);
+	if (out->status != 200) {
+		snprintf(err, errlen, "metadata batch returned HTTP %d", out->status);
+		http_reply_free(out);
 		return -1;
 	}
+	return 0;
+}
 
-	/* One EntityExtensionDataArray comes back per extension kind, holding one
-	 * EntityExtensionData per track, in the order asked. */
-	const uint8_t *body = (const uint8_t *)r.body;
-	int filled = 0;
-	pbv arr;
-	if (pb_get_bytes(body, r.len, 2, &arr)) {
-		size_t at = 0;
-		while (at < arr.len && filled < n) {
-			pbv rest = { arr.p + at, arr.len - at };
-			pbv ed;
-			if (!pb_get_bytes(rest.p, rest.len, 3, &ed))
-				break;
-			pbv uri, any, track;
-			memset(&out[filled], 0, sizeof(out[filled]));
-			if (pb_get_bytes(ed.p, ed.len, 2, &uri))
-				copy_str(out[filled].uri, sizeof(out[filled].uri), &uri);
-			if (pb_get_bytes(ed.p, ed.len, 3, &any) &&
-			    pb_get_bytes(any.p, any.len, 2, &track)) {
-				pbv v;
-				if (pb_get_bytes(track.p, track.len, 1, &v) && v.len == 16) {
-					memcpy(out[filled].gid, v.p, 16);
-					out[filled].has_gid = true;
-				}
-				if (pb_get_bytes(track.p, track.len, 2, &v))
-					copy_str(out[filled].name, sizeof(out[filled].name), &v);
-				int64_t dur = 0;
-				if (pb_get_sint(track.p, track.len, 7, &dur))
-					out[filled].duration_ms = (int)dur;
-				if (pb_get_bytes(track.p, track.len, 3, &v)) {
-					pbv an;
-					if (pb_get_bytes(v.p, v.len, 2, &an))
-						copy_str(out[filled].album, sizeof(out[filled].album), &an);
-				}
-				read_cover_urls(&track, &out[filled]);
-				if (pb_get_bytes(track.p, track.len, 4, &v)) {
-					pbv an;
-					if (pb_get_bytes(v.p, v.len, 2, &an))
-						copy_str(out[filled].artist, sizeof(out[filled].artist), &an);
-				}
-				size_t fat = 0;
-				while (fat < track.len && out[filled].file_count < SP_MAX_FILES) {
-					pbv frest = { track.p + fat, track.len - fat };
-					pbv file;
-					if (!pb_get_bytes(frest.p, frest.len, 12, &file))
-						break;
-					pbv fid;
-					uint64_t fmt = 0;
-					if (pb_get_bytes(file.p, file.len, 1, &fid) && fid.len == 20) {
-						memcpy(out[filled].files[out[filled].file_count].id, fid.p, 20);
-						pb_get_varint(file.p, file.len, 2, &fmt);
-						out[filled].files[out[filled].file_count].format = (int)fmt;
-						out[filled].file_count++;
-					}
-					fat = (size_t)(file.p + file.len - track.p);
-				}
-			}
-			filled++;
-			at = (size_t)(ed.p + ed.len - arr.p);
-		}
-	}
+static int metadata_batch_request(const char *host, http_session *sess,
+                                  const char *token,
+                                  const char *const *uris, int n,
+                                  sp_track *out, char *err, size_t errlen)
+{
+	if (n <= 0)
+		return 0;
+	http_reply r;
+	if (batch_post(host, sess, token, EXT_KIND_TRACK_V4, uris, n, &r, err,
+	               errlen) != 0)
+		return -1;
 
+	/* Placed by URI, not by position: the answer comes back shuffled. */
+	int filled = sp_parse_track_batch((const uint8_t *)r.body, r.len, uris, n,
+	                                  out);
 	http_reply_free(&r);
 	if (filled == 0)
 		snprintf(err, errlen, "no tracks in a %u byte response", (unsigned)r.len);
 	return filled;
+}
+
+int sp_artist_insights_s(http_session *sess, const char *token,
+                         const char *artist_uri, long *listeners,
+                         char *err, size_t errlen)
+{
+	*listeners = -1;
+	static const char PREFIX[] = "spotify:artist:";
+	if (strncmp(artist_uri, PREFIX, sizeof(PREFIX) - 1) != 0) {
+		snprintf(err, errlen, "not an artist: %s", artist_uri);
+		return -1;
+	}
+	char path[128];
+	snprintf(path, sizeof(path),
+	         "/creatorabout/v0/artist-insights/%.22s?format=json",
+	         artist_uri + sizeof(PREFIX) - 1);
+	http_reply r;
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "insights: %s", r.err);
+		return -1;
+	}
+	if (r.status != 200) {
+		snprintf(err, errlen, "insights returned HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	bool ok = sp_parse_artist_insights(r.body, r.len, listeners);
+	http_reply_free(&r);
+	if (!ok)
+		snprintf(err, errlen, "insights carried no listeners");
+	return ok ? 0 : -1;
+}
+
+int sp_album_metadata_batch_s(http_session *sess, const char *token,
+                              const char *const *uris, int n,
+                              sp_release *out, char *err, size_t errlen)
+{
+	if (n <= 0)
+		return 0;
+	if (n > SP_ALBUM_BATCH) {
+		snprintf(err, errlen, "album batch of %d is over %d", n,
+		         SP_ALBUM_BATCH);
+		return -1;
+	}
+	http_reply r;
+	if (batch_post(NULL, sess, token, EXT_KIND_ALBUM_V4, uris, n, &r, err,
+	               errlen) != 0)
+		return -1;
+	int named = sp_parse_album_batch((const uint8_t *)r.body, r.len, uris, n,
+	                                 out);
+	http_reply_free(&r);
+	if (named == 0)
+		snprintf(err, errlen, "no albums in a %u byte response",
+		         (unsigned)r.len);
+	return named;
 }
 
 int sp_track_metadata_batch(const char *host, const char *token,
@@ -731,32 +642,67 @@ int sp_storage_resolve(const char *host, const char *token,
 	return out->count;
 }
 
-int sp_user_image(const char *token, char *url, size_t urllen,
-                  char *err, size_t errlen, int *retry_after)
+int sp_user_profile_view(const char *host, const char *token,
+                         const char *username, sp_profile *out, char *err,
+                         size_t errlen)
 {
+	char user[160], path[320];
+	url_encode(username, user, sizeof(user));
+	snprintf(path, sizeof(path),
+	         "/user-profile-view/v3/profile/%s"
+	         "?playlist_limit=0&artist_limit=0&episode_limit=0", user);
+
 	http_reply r;
 	memset(&r, 0, sizeof(r));
-	if (retry_after)
-		*retry_after = 0;
-	if (http_get("api.spotify.com", "/v1/me", token, &r) != 0) {
-		snprintf(err, errlen, "perfil: %s", r.err);
+	memset(out, 0, sizeof(*out));
+	if (http_get(host, path, token, &r) != 0) {
+		snprintf(err, errlen, "profile view: %s", r.err);
 		http_reply_free(&r);
 		return -1;
 	}
-	if (r.status != 200) {
-		snprintf(err, errlen, "perfil: HTTP %d", r.status);
+	if (r.status != 200 || !r.body) {
+		snprintf(err, errlen, "profile view: HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	/* With every list limited to 0 nothing nests a "name" of its own. */
+	json_str(r.body, "name", out->display_name, sizeof(out->display_name));
+	char art[96];
+	if (json_str(r.body, "image_url", art, sizeof(art)) &&
+	    strncmp(art, "https://i.scdn.co/image/", 24) == 0 &&
+	    strlen(art) < sizeof(out->art))
+		snprintf(out->art, sizeof(out->art), "%s", art);
+	http_reply_free(&r);
+	return 0;
+}
+
+int sp_user_profile(const char *token, sp_profile *out, char *err,
+                    size_t errlen, int *retry_after)
+{
+	http_reply r;
+	memset(&r, 0, sizeof(r));
+	memset(out, 0, sizeof(*out));
+	if (retry_after)
+		*retry_after = 0;
+	if (http_get("api.spotify.com", "/v1/me", token, &r) != 0) {
+		snprintf(err, errlen, "profile: %s", r.err);
+		http_reply_free(&r);
+		return -1;
+	}
+	if (r.status != 200 || !r.body) {
+		snprintf(err, errlen, "profile: HTTP %d", r.status);
 		if (r.status == 429 && retry_after)
 			*retry_after = r.retry_after;
 		http_reply_free(&r);
 		return -1;
 	}
 
-	/* images is an array of {height, width, url}, largest first; the hero
-	 * art is 128px, so any of them downscales fine. */
+	/* The first picture on Spotify's CDN. json_str searches at any depth,
+	 * which is safe for the keys below: the picture objects only carry
+	 * url, width and height. */
 	size_t cursor = 0;
 	const char *obj;
 	size_t objlen;
-	url[0] = '\0';
 	while (json_array_next(r.body, "images", &cursor, &obj, &objlen)) {
 		char buf[512], cand[96];
 		if (objlen >= sizeof(buf))
@@ -766,16 +712,16 @@ int sp_user_image(const char *token, char *url, size_t urllen,
 		if (!json_str(buf, "url", cand, sizeof(cand)))
 			continue;
 		if (strncmp(cand, "https://i.scdn.co/image/", 24) != 0 ||
-		    strlen(cand) >= urllen)
+		    strlen(cand) >= sizeof(out->art))
 			continue;   /* see the header: only the Spotify CDN is in scope */
-		snprintf(url, urllen, "%s", cand);
+		snprintf(out->art, sizeof(out->art), "%s", cand);
 		break;
 	}
+	json_str(r.body, "display_name", out->display_name,
+	         sizeof(out->display_name));
+	json_str(r.body, "product", out->product, sizeof(out->product));
+	json_str(r.body, "country", out->country, sizeof(out->country));
 	http_reply_free(&r);
-	if (!url[0]) {
-		snprintf(err, errlen, "la cuenta no tiene foto usable");
-		return -1;
-	}
 	return 0;
 }
 

@@ -1,9 +1,11 @@
 #include "draw.h"
 
 #include "icons.h"
+#include "marquee_logic.h"
 #include "player_logic.h"
 #include "spinner_logic.h"
 #include "text_fit.h"
+#include "ui_font.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -42,6 +44,27 @@ ui_rect ui_bevel_rect(ui_rect r, u32 fill, u32 light, u32 dark,
 void ui_panel(ui_rect r)
 {
 	outlined(r, COL_CAPA);
+}
+
+ui_rect ui_item_frame(ui_rect r, bool focused, bool pressed, u32 *ink,
+                      u32 *meta_ink)
+{
+	if (pressed)
+		r = ui_rect_offset(r, PRESS_SHIFT, PRESS_SHIFT);
+	if (!pressed && !focused) {
+		ui_panel(r);
+		*ink = COL_TEXTO;
+		*meta_ink = COL_TEXTO_2;
+		return r;
+	}
+	ui_rect inside = outlined(r, pressed ? COL_MUSGO : COL_CLOROFILA);
+	if (!pressed) {
+		ui_rect band = { inside.x, inside.y + inside.h - BEVEL_W, inside.w,
+		                 BEVEL_W };
+		ui_fill(band, COL_MUSGO);
+	}
+	*ink = *meta_ink = COL_TINTA;
+	return r;
 }
 
 void ui_focus_ring(ui_rect r)
@@ -90,6 +113,23 @@ void ui_text(const C2D_Text *text, int x, int cy, float scale, u32 color)
 {
 	int y = cy - ui_line_height(scale) / 2;
 	C2D_DrawText(text, C2D_WithColor, x, y, 0.0f, scale, scale, color);
+}
+
+void ui_text_marquee(const C2D_Text *text, int x, int cy, float scale,
+                     u32 color, int width, int offset, int screen_w)
+{
+	int text_w = ui_px_ceil(ui_text_width(text, scale));
+	/* The scissor works on the framebuffer, which is the screen turned
+	 * 90 degrees: its x runs down the screen's height, from the bottom,
+	 * and its y along the width, from the right. Whatever is batched so
+	 * far goes out first, unclipped. */
+	C2D_Flush();
+	C3D_SetScissor(GPU_SCISSOR_NORMAL, 0, screen_w - (x + width), SCREEN_H,
+	               screen_w - x);
+	ui_text(text, x - offset, cy, scale, color);
+	ui_text(text, x - offset + marquee_span(text_w), cy, scale, color);
+	C2D_Flush();
+	C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 0, 0);
 }
 
 void ui_text_centered(const C2D_Text *text, int cx, int cy, float scale,
@@ -196,25 +236,73 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color, bool inverted)
 	return w;
 }
 
+int ui_glyph_icon_width(void)
+{
+	return ICON_S;
+}
+
+int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted)
+{
+	int w = ui_glyph_icon_width();
+	ui_rect r = { x, cy - GLYPH_H / 2, w, GLYPH_H };
+	if (inverted)
+		r = ui_rect_offset(r, 0, GLYPH_SHIFT);
+	/* A button with no colour of its own, like START and SELECT (5.6):
+	 * `texto_2`, the icon in `tinta`; inverted the other way round (6.5).
+	 * The icon's triangles keep to its middle rows, inside the outline. */
+	outlined(r, inverted ? COL_TINTA : COL_TEXTO_2);
+	ui_icon(icon, r.x + (w - ICON_S) / 2, r.y + r.h / 2 - ICON_S / 2,
+	        inverted ? COL_TEXTO_2 : COL_TINTA);
+	return w;
+}
+
+static int hint_glyph_width(const ui_hint *h)
+{
+	return h->icon ? ui_glyph_icon_width() : ui_glyph_width(h->letter);
+}
+
+/* One action at `x`; returns where the next one starts. */
+static int draw_hint(const ui_hint *h, int x, int cy)
+{
+	x += h->icon ? ui_glyph_icon(x, cy, h->icon, h->inverted)
+	             : ui_glyph(x, cy, h->letter, h->color, h->inverted);
+	if (!h->label)
+		return x + SP_3;
+	x += SP_1;
+	ui_text(h->label, x, cy, TXT_META, COL_TEXTO_2);
+	return x + ui_px_ceil(ui_text_width(h->label, TXT_META)) + SP_3;
+}
+
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count)
+{
+	ui_button_bar_split(bar, hints, count, 0);
+}
+
+void ui_button_bar_split(ui_rect bar, const ui_hint *hints, int count,
+                         int trailing)
 {
 	ui_panel(bar);
 	int cy = bar.y + bar.h / 2;
 	int x = bar.x + SP_2;
-	for (int i = 0; i < count; i++) {
-		x += ui_glyph(x, cy, hints[i].letter, hints[i].color,
-		              hints[i].inverted);
-		if (!hints[i].label) {
-			x += SP_3;
-			continue;
-		}
-		x += SP_1;
-		ui_text(hints[i].label, x, cy, TXT_META, COL_TEXTO_2);
-		x += ui_px_ceil(ui_text_width(hints[i].label, TXT_META)) + SP_3;
+	int lead = count - trailing;
+	for (int i = 0; i < lead; i++)
+		x = draw_hint(&hints[i], x, cy);
+	/* The trailing ones against the right margin, in the same spacing. */
+	int width = 0;
+	for (int i = lead; i < count; i++) {
+		width += hint_glyph_width(&hints[i]);
+		if (hints[i].label)
+			width += SP_1 + ui_px_ceil(ui_text_width(hints[i].label,
+			                                         TXT_META));
+		if (i < count - 1)
+			width += SP_3;
 	}
+	x = bar.x + bar.w - SP_2 - width;
+	for (int i = lead; i < count; i++)
+		x = draw_hint(&hints[i], x, cy);
 }
 
-void ui_progress(ui_rect r, int download, int progress, bool handle)
+void ui_progress(ui_rect r, int download, int progress, ui_handle handle)
 {
 	ui_rect inside = outlined(r, COL_CAPA_ALTA);
 	if (download >= 0) {
@@ -225,10 +313,10 @@ void ui_progress(ui_rect r, int download, int progress, bool handle)
 	ui_rect played = inside;
 	played.w = player_fill_px(inside.w, progress);
 	ui_fill(played, COL_CLOROFILA);
-	if (handle) {
+	if (handle != UI_HANDLE_NONE) {
 		ui_rect knob = { played.x + played.w - HANDLE_W / 2,
 		                 r.y + r.h / 2 - HANDLE_H / 2, HANDLE_W, HANDLE_H };
-		outlined(knob, COL_TEXTO);
+		outlined(knob, handle == UI_HANDLE_PRESSED ? COL_LIMA : COL_TEXTO);
 	}
 }
 
@@ -281,6 +369,11 @@ void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
 
 void ui_art(ui_rect box, const C2D_Image *image)
 {
+	ui_art_or(box, image, ICON_NOTE);
+}
+
+void ui_art_or(ui_rect box, const C2D_Image *image, int icon)
+{
 	ui_rect inside = outlined(box, COL_CAPA_ALTA);
 	if (image && image->tex && image->subtex->width &&
 	    image->subtex->height) {
@@ -296,7 +389,7 @@ void ui_art(ui_rect box, const C2D_Image *image)
 		                scale, scale);
 		return;
 	}
-	C2D_Image note = icon_image(ICON_NOTE);
+	C2D_Image note = icon_image((icon_id)icon);
 	ui_icon(&note, box.x + (box.w - ICON_S) / 2,
 	        box.y + (box.h - ICON_S) / 2, COL_TEXTO_2);
 }
@@ -353,7 +446,7 @@ float ui_measure(C2D_TextBuf scratch, const char *string, float scale)
 {
 	C2D_Text text;
 	C2D_TextBufClear(scratch);
-	C2D_TextParse(&text, scratch, string);
+	ui_parse(&text, scratch, string);
 	return ui_text_width(&text, scale);
 }
 
@@ -364,6 +457,6 @@ void ui_parse_fitted(C2D_Text *text, C2D_TextBuf buf, C2D_TextBuf scratch,
 	fit_ctx fit = { scratch, scale };
 	text_fit(string, (float)width, measure_fit, &fit, fitted,
 	         sizeof(fitted));
-	C2D_TextParse(text, buf, fitted);
+	ui_parse(text, buf, fitted);
 	C2D_TextOptimize(text);
 }

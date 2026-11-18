@@ -6,13 +6,23 @@
  * view only shows a snapshot of it (player_info) and turns input into
  * actions. Input follows STYLES.md 6: A presses the play button, left and
  * right the skip buttons, touch acts on lifting the stylus, and up/down
- * change the volume bar in the same frame (6.7). Per 9, a GPU frame is
+ * change the volume bar in the same frame (6.7). The stylus drags the
+ * bars: the volume follows it at once; the progress bar's handle and the
+ * time follow it, and the track moves there when it lifts; before the
+ * whole track has downloaded the progress bar does not move and a bubble
+ * (5.9) says to wait for 100%. The title, the artist and
+ * the album are links, touch only, to their details
+ * (5.14). Per 9, a GPU frame is
  * only needed when the clock's second, the volume, the pause, a press or
- * the phase changes; the download share is sampled with the clock. Main
- * thread only. */
+ * the phase changes; the download share is sampled with the clock. Right
+ * of the artist and the album, an icon says where the track is in the
+ * downloads -- an arrow, a clock, its share, a check -- and, as X, keeps it
+ * on the SD card; the bar then shows "[X] Download". Nothing in it moves
+ * by itself (9). Main thread only. */
 #ifndef VIEW_PLAYER_H
 #define VIEW_PLAYER_H
 
+#include "downloads_logic.h"
 #include "lang.h"
 #include "player_logic.h"
 #include "spclient.h"
@@ -32,7 +42,17 @@ typedef struct {
 	unsigned duration_s;
 	unsigned download_pct;
 	unsigned volume_pct;
+	/* The track can move to another point: playing, with its length
+	 * known and its whole file downloaded. */
+	bool seekable;
 	const char *error;      /* when failed */
+	/* Where the track is in the downloads, and its share while it
+	 * downloads (sampled with the clock, as download_pct). */
+	dl_button saved;
+	int saved_pct;
+	/* No connection: the artist's and the album's links, and downloading,
+	 * need one. */
+	bool offline;
 } player_info;
 
 typedef enum {
@@ -47,7 +67,21 @@ typedef enum {
 	/* B: back to the Search tab, the audio keeps playing. */
 	PLAYER_ACTION_BACK,
 	/* SELECT: switch the language. */
-	PLAYER_ACTION_LANGUAGE
+	PLAYER_ACTION_LANGUAGE,
+	/* The links: the detail of the track playing, of its artist or of its
+	 * album, on this tab. */
+	PLAYER_ACTION_OPEN_TRACK,
+	PLAYER_ACTION_OPEN_ARTIST,
+	PLAYER_ACTION_OPEN_ALBUM,
+	/* The stylus lifted from the progress bar: move the track to
+	 * view_player_value() thousandths of its length. */
+	PLAYER_ACTION_SEEK,
+	/* The stylus on the volume bar: set it to view_player_value()
+	 * thousandths. */
+	PLAYER_ACTION_VOLUME_SET,
+	/* X, or the download icon by the links: keep the track that plays on
+	 * the SD card. */
+	PLAYER_ACTION_DOWNLOAD
 } player_action;
 
 bool view_player_init(void);
@@ -65,7 +99,14 @@ void view_player_set(const player_info *info);
  * caller. */
 player_action view_player_update(u32 down);
 
+/* The value of the PLAYER_ACTION_SEEK or PLAYER_ACTION_VOLUME_SET just
+ * returned, in thousandths. */
+int view_player_value(void);
+
 bool view_player_dirty(void);
+/* A bubble over the player for a moment, as after touching the progress
+ * bar too soon: `ok` for good news (a note), else a refusal. */
+void view_player_notice(str_id text, bool ok);
 void view_player_draw_bottom(void);
 
 #endif

@@ -150,7 +150,7 @@ int token_refresh(const char *refresh_token, spotify_tokens *out,
 	http_reply r;
 	if (http_post_form(ACCOUNTS_HOST, TOKEN_PATH, body, &r) != 0) {
 		snprintf(err, errlen, "%s", r.err);
-		return -1;
+		return TOKEN_ERR_TRANSPORT;
 	}
 	if (r.status != 200) {
 		/* invalid_grant here means the stored token is dead and the user has

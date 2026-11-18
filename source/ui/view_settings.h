@@ -1,7 +1,7 @@
-/* The Settings tab: the language, reconnecting and pairing another
- * account, which used to be SELECT, X and Y on the home view.
+/* The Settings tab: the language, the downloads manager (view_downloads.h),
+ * reconnecting and pairing another account.
  *
- * Three secondary buttons, focusable with the D-pad and touchable. Input
+ * Four secondary buttons, focusable with the D-pad and touchable. Input
  * follows STYLES.md 6 like the other views: pressed states for at least
  * ANIM_PRESS_MIN frames, touch acts on lifting the stylus, A inverts its
  * glyph, and the actions that take the screens over (reconnecting,
@@ -20,6 +20,8 @@ typedef enum {
 	/* The language button or SELECT: switch the language. The button
 	 * shows the new one by itself. */
 	SETTINGS_ACTION_LANGUAGE,
+	/* Open the downloads manager. */
+	SETTINGS_ACTION_DOWNLOADS,
 	/* Reconnect the session with the saved credential. */
 	SETTINGS_ACTION_RECONNECT,
 	/* Pair another account. */
@@ -34,6 +36,10 @@ void view_settings_exit(void);
 
 /* Switching to the tab: resets the animations and forces a repaint. */
 void view_settings_enter(void);
+/* Puts the focus on `item` (a settings_item): back from the manager. */
+void view_settings_focus(int item);
+/* How many downloads wait, for the Downloads button: once per frame. */
+void view_settings_set_waiting(int waiting);
 
 /* Once per frame, after hidScanInput. START and the tabs stay with the
  * caller. */

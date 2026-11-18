@@ -67,6 +67,13 @@ int  tls_write(tls_conn *c, const void *buf, size_t len);   /* writes all of it 
 int  tls_read(tls_conn *c, void *buf, size_t len);          /* 0 = closed */
 void tls_close(tls_conn *c);
 
+/* SOC's real hangup bit. libctru's <poll.h> defines POLLHUP as 0x04 and marks
+ * it "unknown ???"; SOC (and Azahar, which mirrors it) reports a peer's close
+ * as bit 6. Azahar on a Windows host delivers it alone, without POLLIN, so a
+ * reader that waits for POLLIN|POLLHUP never sees the close and fails instead
+ * of letting recv() return 0. */
+#define SOC_POLLHUP 0x40
+
 /* Cuts every network wait short while `on` (TLS here, and the access
  * point's in ap3ds.c): polls run in slices of TLS_ABORT_SLICE_MS and fail
  * once it is set, so a worker in the middle of a request returns within a

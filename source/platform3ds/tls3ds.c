@@ -282,7 +282,8 @@ static int wait_io(tls_conn *c, short events)
 		return MBEDTLS_ERR_NET_RECV_FAILED;
 	if (p.revents & (POLLERR | POLLNVAL))
 		return MBEDTLS_ERR_NET_RECV_FAILED;
-	if (!(p.revents & (events | POLLHUP)))
+	/* A hangup is readable: recv() then returns 0 and mbedTLS sees EOF. */
+	if (!(p.revents & (events | POLLHUP | SOC_POLLHUP)))
 		return MBEDTLS_ERR_NET_RECV_FAILED;
 	return 0;
 }
@@ -310,7 +311,7 @@ static int bio_send(void *ctx, const unsigned char *buf, size_t len)
 		int rc = poll_abortable(c->host, "tls-send", &p, left);
 		if (rc == 0 || remaining_ms(&deadline, c->timeout_ms) == 0)
 			return MBEDTLS_ERR_SSL_TIMEOUT;
-		if (rc < 0 || (p.revents & (POLLERR | POLLHUP | POLLNVAL)))
+		if (rc < 0 || (p.revents & (POLLERR | POLLHUP | SOC_POLLHUP | POLLNVAL)))
 			return MBEDTLS_ERR_NET_SEND_FAILED;
 	}
 }

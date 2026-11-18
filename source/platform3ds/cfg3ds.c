@@ -11,7 +11,10 @@
 /* The app uses one data directory regardless of how it was launched. */
 #define APP_DATA_DIR "sdmc:/3ds/3DSpotify/"
 #define APP_CONFIG_PATH APP_DATA_DIR CFG_NAME
-#define CFG_MAX_KEYS 8
+/* The refresh token and its scope, the language, the shuffle, the volume,
+ * the recent searches, the profile and its picture, the search hash
+ * (pf_hash.h), with room to grow. */
+#define CFG_MAX_KEYS 16
 #define CFG_VAL_MAX 512
 
 static char path[320];
@@ -102,8 +105,10 @@ static bool set_unlocked(const char *key, const char *value)
 	if (!key || !value || !value[0])
 		return false;
 
-	/* Collect the existing pairs, replacing the one being set. */
-	char keys[CFG_MAX_KEYS][32], vals[CFG_MAX_KEYS][CFG_VAL_MAX];
+	/* Collect the existing pairs, replacing the one being set. Static,
+	 * under file_lock: 8 KB is too much for the stack of every thread
+	 * that may write. */
+	static char keys[CFG_MAX_KEYS][32], vals[CFG_MAX_KEYS][CFG_VAL_MAX];
 	int n = 0;
 	FILE *f = fopen(cfg_path(), "r");
 	if (f) {
@@ -160,8 +165,13 @@ static bool set_unlocked(const char *key, const char *value)
 	return true;
 }
 
+static bool pending_get(const char *key, char *out, size_t outlen);
+
 bool cfg_get(const char *key, char *out, size_t outlen)
 {
+	/* A value still waiting for the writer is the current one. */
+	if (pending_get(key, out, outlen))
+		return true;
 	LightLock_Lock(&file_lock);
 	bool found = get_unlocked(key, out, outlen);
 	LightLock_Unlock(&file_lock);
@@ -174,6 +184,148 @@ bool cfg_set(const char *key, const char *value)
 	bool ok = set_unlocked(key, value);
 	LightLock_Unlock(&file_lock);
 	return ok;
+}
+
+/* --- Writes in the background ---------------------------------------- */
+
+#define PENDING_MAX CFG_MAX_KEYS
+
+typedef struct {
+	char key[32];
+	char value[CFG_VAL_MAX];
+	bool used;
+} pending_entry;
+
+/* Under pending_lock. 1 is LightLock_Init's unlocked value. */
+static LightLock pending_lock = 1;
+static pending_entry pending[PENDING_MAX];
+static LightEvent writer_wake;
+static Thread writer;
+static volatile bool writer_stop;
+
+static bool pending_get(const char *key, char *out, size_t outlen)
+{
+	bool found = false;
+	LightLock_Lock(&pending_lock);
+	for (int i = 0; i < PENDING_MAX; i++) {
+		if (pending[i].used && strcmp(pending[i].key, key) == 0) {
+			if (strlen(pending[i].value) < outlen) {
+				snprintf(out, outlen, "%s", pending[i].value);
+				found = true;
+			}
+			break;
+		}
+	}
+	LightLock_Unlock(&pending_lock);
+	return found;
+}
+
+/* Writes one queued value; false with none left. The entry stays queued
+ * while it is written, so cfg_get never falls back to the old value in
+ * between, and goes only if no newer value replaced it meanwhile. */
+static bool write_one(void)
+{
+	static pending_entry entry;   /* only the writer uses it */
+	int slot = -1;
+	LightLock_Lock(&pending_lock);
+	for (int i = 0; i < PENDING_MAX && slot < 0; i++)
+		if (pending[i].used)
+			slot = i;
+	if (slot >= 0)
+		entry = pending[slot];
+	LightLock_Unlock(&pending_lock);
+	if (slot < 0)
+		return false;
+
+	cfg_set(entry.key, entry.value);
+
+	LightLock_Lock(&pending_lock);
+	if (pending[slot].used && strcmp(pending[slot].key, entry.key) == 0 &&
+	    strcmp(pending[slot].value, entry.value) == 0)
+		pending[slot].used = false;
+	LightLock_Unlock(&pending_lock);
+	return true;
+}
+
+static void writer_main(void *arg)
+{
+	(void)arg;
+	for (;;) {
+		while (write_one())
+			;
+		if (writer_stop)
+			break;
+		LightEvent_Wait(&writer_wake);
+	}
+}
+
+/* Just below the caller, like every worker that may run beside the
+ * audio (worker_priority.h). */
+static s32 writer_priority(void)
+{
+	s32 priority = 0x30;
+	if (R_FAILED(svcGetThreadPriority(&priority, CUR_THREAD_HANDLE)))
+		priority = 0x30;
+	return priority < 0x3F ? priority + 1 : 0x3F;
+}
+
+void cfg_set_async(const char *key, const char *value)
+{
+	if (!key || !value || !value[0] || strlen(key) >= sizeof(pending[0].key) ||
+	    strlen(value) >= sizeof(pending[0].value))
+		return;
+	bool queued = false;
+	LightLock_Lock(&pending_lock);
+	int slot = -1;
+	for (int i = 0; i < PENDING_MAX; i++) {
+		if (pending[i].used && strcmp(pending[i].key, key) == 0) {
+			slot = i;
+			break;
+		}
+		if (!pending[i].used && slot < 0)
+			slot = i;
+	}
+	if (slot >= 0) {
+		snprintf(pending[slot].key, sizeof(pending[slot].key), "%s", key);
+		snprintf(pending[slot].value, sizeof(pending[slot].value), "%s",
+		         value);
+		pending[slot].used = true;
+		queued = true;
+	}
+	LightLock_Unlock(&pending_lock);
+
+	if (queued && !writer) {
+		/* Callers are the main thread: no race to start it. */
+		LightEvent_Init(&writer_wake, RESET_ONESHOT);
+		writer_stop = false;
+		/* Room for set_unlocked's line buffer and stdio. */
+		writer = threadCreate(writer_main, NULL, 16 * 1024,
+		                      writer_priority(), -2, false);
+	}
+	if (queued && writer) {
+		LightEvent_Signal(&writer_wake);
+		return;
+	}
+	/* No room or no thread: as before, at once. */
+	if (writer == NULL)
+		while (write_one())
+			;
+	if (!queued)
+		cfg_set(key, value);
+}
+
+void cfg_flush(void)
+{
+	if (writer) {
+		writer_stop = true;
+		LightEvent_Signal(&writer_wake);
+		threadJoin(writer, U64_MAX);
+		threadFree(writer);
+		writer = NULL;
+	}
+	/* Anything queued after the writer left. */
+	while (write_one())
+		;
 }
 
 bool cfg_load_refresh_token(char *out, size_t outlen)

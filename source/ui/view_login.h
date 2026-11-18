@@ -1,5 +1,4 @@
-/* The screens before the session is up (feature_plan.md, phase 4; STYLES.md
- * 7.2 and 7.3): connecting, pairing with a QR code, and the start-up error.
+/* The screens before the session is up (STYLES.md 7.2 and 7.3): connecting, pairing with a QR code, and the start-up error.
  * Both screens are this view's while it is active.
  *
  * The caller says which screen to show and with what; the view draws it and

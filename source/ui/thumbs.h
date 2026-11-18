@@ -32,10 +32,12 @@ bool thumbs_init(void);
 /* Stops the worker and frees the pool. Before ui_exit. */
 void thumbs_exit(void);
 
-/* A new (or the same) list of results. Covers already fetched for the same
- * position and URL are kept, so coming back from the player costs nothing.
- * Starts the worker when there is something to fetch. */
-void thumbs_set_tracks(const sp_track *tracks, int count);
+/* A new (or the same) list of cover URLs (art_small for tracks, the cover
+ * of a playlist). Covers already fetched for the same position and URL are
+ * kept, so coming back from the player costs nothing. URLs off i.scdn.co,
+ * or empty, show the placeholder. Starts the worker when there is
+ * something to fetch. */
+void thumbs_set_urls(const char *const *urls, int count);
 /* The first visible row: the fetch priority follows the scroll. */
 void thumbs_set_window(int first);
 
@@ -45,6 +47,53 @@ bool thumbs_poll(void);
 
 /* The thumbnail of track `index`, when it is ready. */
 bool thumbs_image(int index, C2D_Image *out);
+/* A ready thumbnail of `url`, whichever client the pool holds it for: the
+ * top screen shows it, scaled up, while the full cover loads. Valid for
+ * the frame; main thread only. */
+bool thumbs_find(const char *url, C2D_Image *out);
+
+/* --- Clients ------------------------------------------------------------
+ *
+ * The pool serves one client at a time: a track list or a tile grid, the
+ * one on screen, which claims it from its view's update (thumbs_client_
+ * frame), so a widget shown under another never takes the covers from it.
+ * Each widget embeds a client; the URLs point into the widget's own data,
+ * which must stay valid while it is shown. Main thread only. */
+typedef struct {
+	const char *urls[THUMBS_MAX];
+	int  count;
+	int  first;            /* the first visible item, for the priority */
+	/* The pool holds this client's covers, so its images are this
+	 * client's. Until then the placeholder shows. */
+	bool synced;
+	int  serial;           /* bumped when one of its covers arrives */
+} thumbs_client;
+
+/* New content (count 0 empties it): handed to the pool by the next claim. */
+void thumbs_client_set(thumbs_client *c, const char *const *urls, int count);
+/* Other URLs for the same widget (a long list's window moved, or a page
+ * was appended): the client keeps the pool if it had it, and covers that
+ * only changed position keep their texture. */
+void thumbs_client_replace(thumbs_client *c, const char *const *urls,
+                           int count);
+/* The first visible item moved: the fetch priority follows it. */
+void thumbs_client_window(thumbs_client *c, int first);
+/* Once per frame from the update of the view showing the widget: claims
+ * the pool if another client had it, and uploads the covers that arrived
+ * (on the main thread, never while drawing). */
+void thumbs_client_frame(thumbs_client *c);
+/* Gives the pool to `c` only if no client holds it: a widget that is ready
+ * before it is on screen starts its covers early, without taking them from
+ * one on screen. */
+void thumbs_client_offer(thumbs_client *c);
+/* The widget goes away. */
+void thumbs_client_release(thumbs_client *c);
+/* Item `index`'s cover, when the pool is this client's and it is ready. */
+bool thumbs_client_image(const thumbs_client *c, int index, C2D_Image *out);
+/* Whether covers may download (STYLES.md 9: not while a track prepares).
+ * Disallowing asks the worker to stop without waiting for it
+ * (thumbs_stop); what it fetched stays on screen. */
+void thumbs_allow(bool allow);
 
 /* Cancels pending fetches and asks the worker to stop, without waiting. */
 void thumbs_stop(void);

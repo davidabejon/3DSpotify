@@ -45,12 +45,18 @@
 #define COL_BTN_X      THEME_RGB(0x3F, 0xA2, 0xFF)
 #define COL_BTN_Y      THEME_RGB(0x39, 0xD9, 0x7A)
 
-/* La única transparencia (excepción de §2.7): el velo gris tras el spinner
+/* La primera transparencia (excepción de §2.7): el velo gris tras el spinner
  * de descarga, que deja ver ligeramente lo de detrás. No es un COL_: los
  * colores del tema siguen siendo opacos. */
 #define SCRIM_RGB   THEME_RGB(0x40, 0x40, 0x40)
 #define SCRIM_ALPHA 0xB0u
 #define SCRIM_COLOR (((uint32_t)SCRIM_RGB & 0x00FFFFFFu) | (SCRIM_ALPHA << 24))
+
+/* La segunda: el velo `sombra` al 80 % sobre el fondo y el logo de la
+ * pantalla superior de Ajustes (§7.8). Deja el fondo más oscuro que `capa`,
+ * así que encima valen las combinaciones de texto de `capa` (§2.6). */
+#define ABOUT_VEIL_ALPHA 0xCCu
+#define ABOUT_VEIL_COLOR (((uint32_t)COL_SOMBRA & 0x00FFFFFFu) | (ABOUT_VEIL_ALPHA << 24))
 
 /* Espaciado y forma (px) */
 enum {
@@ -70,6 +76,10 @@ enum {
 	BTN_PLAY = 48, BTN_SKIP = 40,
 	GLYPH_H = 14,
 	PROGRESS_H = 8, VOLUME_H = 6,
+	/* §5.16 tesela: la fila de resultados en compacto, de una línea. */
+	TILE_H = TOUCH_MIN,
+	TILE_COVER = TILE_H - 2 * SP_1,
+	GRID_GAP = SP_1,
 };
 
 /* Movimiento (frames a 60 Hz) */
@@ -111,6 +121,17 @@ enum {
 	SPINNER_PAD = 8,      /* spinner: velo e2 alrededor; 44 + 2·8 = 60 px */
 	TAB_LIFT_ACTIVE = 2,  /* §5.12 pestaña activa: el borde inferior sube 2 px */
 	TAB_LIFT_PRESSED = 4, /* §5.12 pestaña pulsada: sube 4 px */
+	/* §5.17 franja de tipos: con la portada de la ficha debajo, a e2,
+	 * el bloque (24 + 8 + 160 = 192 px) va centrado en la altura:
+	 * franja en y 24..48, portada en y 56..216. */
+	RESULTS_STRIP_H = SP_6,
+	RESULTS_STRIP_Y = (SCREEN_H - (RESULTS_STRIP_H + SP_2 + ART_SIZE)) / 2,
+	RESULTS_CARD_Y = RESULTS_STRIP_Y + RESULTS_STRIP_H + SP_2,
+	RESULTS_BAND_H = 2,   /* §5.17 banda inferior del segmento activo */
 };
+
+/* Frames que el foco debe quedarse quieto antes de pedir la imagen grande
+ * de una vista previa (§7.4, §7.7): recorrer la lista no descarga nada. */
+enum { PREVIEW_DELAY = 18 };
 
 #endif

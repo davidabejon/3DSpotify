@@ -11,6 +11,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "spotify_id.h"
+
 typedef struct http_session http_session;
 
 #define SP_MAX_FILES 8
@@ -34,6 +36,11 @@ typedef struct {
 	 * URI -- it is the same value the base62 in the URI decodes to. */
 	uint8_t gid[16];
 	bool    has_gid;
+	/* The track `files` belong to, which the audio key must name: `gid`
+	 * itself, or, when the Track lists no files of its own, the
+	 * Track.alternative they were taken from. Some tracks carry their
+	 * files only there (4UfBg1NzbhayZmry10RA0j, probe_play step 4). */
+	uint8_t audio_gid[16];
 	char    name[128];
 	char    artist[128];
 	char    album[128];
@@ -45,7 +52,135 @@ typedef struct {
 	int     duration_ms;
 	sp_file files[SP_MAX_FILES];
 	int     file_count;
+	/* What the detail views need to follow a track to its album and its
+	 * first artist: the metadata names them only by gid, so these are built
+	 * from it. Empty when the track does not carry them. The rest comes from
+	 * the same Track (and the Album embedded in it), so no request is added.
+	 * Track.explicit is absent from the wire when false; year is 0 when
+	 * unknown. */
+	char    album_uri[SP_URI_MAX];
+	char    artist_uri[SP_URI_MAX];
+	int     track_number;
+	int     disc_number;
+	bool    is_explicit;
+	int     year;
 } sp_track;
+
+/* Album types, from metadata.proto's Album.Type. 0 when the album does not
+ * say. */
+#define SP_ALBUM_ALBUM       1
+#define SP_ALBUM_SINGLE      2
+#define SP_ALBUM_COMPILATION 3
+#define SP_ALBUM_EP          4
+
+/* As many as a list shows (SEARCH_LIMIT in main.c); the rest are counted in
+ * total_tracks but not kept. */
+#define SP_ALBUM_MAX_TRACKS  24
+#define SP_ARTIST_MAX_TRACKS 24
+
+/* An album's header and its track URIs in disc order. The tracks come back
+ * as bare gids, so naming them is a second request, a metadata batch. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char artist[128];             /* the first of Album.artist */
+	char artist_uri[SP_URI_MAX];
+	char label[64];
+	int  year;                    /* 0 when unknown */
+	int  type;                    /* SP_ALBUM_*, 0 when unknown */
+	char art_small[80];
+	char art_large[80];
+	int  total_tracks;            /* across every disc, kept or not */
+	int  track_count;
+	char track_uris[SP_ALBUM_MAX_TRACKS][SP_URI_MAX];
+} sp_album;
+
+/* An artist's releases kept for its discography: SP_ARTIST_RELEASES_MAX at
+ * most, shared out among its albums, singles and compilations (see
+ * sp_parse_artist), then ordered by sp_sort_releases. */
+#define SP_ARTIST_RELEASES_MAX 200
+/* The biography as kept: cleaned (sp_bio_clean), cut on a character
+ * boundary. Room for the whole of it, which the top screen shows to read
+ * (the longest seen, The Killers', is 11.5 KB with its tags). */
+#define SP_ARTIST_BIO_MAX 16384
+/* Releases named per album metadata batch: 50 took 285 ms and 71 KB on
+ * the console (probe_artist step 4). */
+#define SP_ALBUM_BATCH 50
+
+/* Where a release comes from: Artist.album_group, single_group or
+ * compilation_group (appears_on_group is left out: not the artist's). */
+typedef enum { SP_GROUP_ALBUM, SP_GROUP_SINGLE, SP_GROUP_COMPILATION } sp_group;
+
+/* One release of an artist. The artist's metadata names it by gid alone
+ * (probe_artist step 3), so everything but `uri`, `group` and `order`
+ * stays empty until an album batch names it (sp_parse_album_batch). */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];               /* empty until named */
+	char art_small[80];
+	char art_large[80];
+	int  type;                    /* SP_ALBUM_*, 0 when unknown */
+	int  date;                    /* yyyymmdd (month, day 0 if unknown);
+	                               * 0 when unknown */
+	int  group;                   /* sp_group */
+	int  order;                   /* position as kept, for a stable sort */
+} sp_release;
+
+/* An artist's name, portrait, popular tracks, biography and releases. The
+ * service sends one TopTracks group already chosen for the account's
+ * country; when several come, the one matching `country` wins, else the
+ * first. ~70 KB: never on a thread's stack. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char art_small[80];
+	char art_large[80];
+	int  track_count;
+	char track_uris[SP_ARTIST_MAX_TRACKS][SP_URI_MAX];
+	char bio[SP_ARTIST_BIO_MAX];  /* "" when none */
+	int  release_count;
+	sp_release releases[SP_ARTIST_RELEASES_MAX];
+} sp_artist;
+
+/* One playlist as the home tab shows it. `art` is an i.scdn.co URL (the
+ * 300px cover) or empty: covers Spotify generates live on other hosts
+ * (blend-playlist-covers.spotifycdn.com, lexicon-assets...) that neither the
+ * CA bundle nor the thumbnail session reach, so they read as "no cover".
+ * `name` may be empty: some playlists carry none. `length` is the track
+ * count the rootlist reports, 0 when unknown. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char art[80];
+	int  length;
+} sp_playlist_ref;
+
+/* Items asked for per request: a page of a long playlist, named afterwards
+ * by one metadata batch (the batch takes this many at once). */
+#define SP_PLAYLIST_PAGE 50
+
+/* A playlist's header and the track URIs among one range of its items.
+ * Episodes and local files are left out of track_uris and counted in
+ * `skipped`; `items` is every item the range held, so the next page starts
+ * at from + items. total_tracks is what the service reports for the whole
+ * list, all kinds included. Probed (probe_meta step 15) on
+ * playlist4_external.proto: SelectedListContent { length 2, attributes 3,
+ * contents 5 }.
+ *
+ * `live`: not a list but a live session another service plays (the AI DJ),
+ * marked by `lexicon_*` format attributes. It holds no tracks and this
+ * client cannot play it, so it is never shown. */
+typedef struct {
+	char uri[SP_URI_MAX];
+	char name[128];
+	char art[80];
+	int  total_tracks;
+	int  items;
+	int  skipped;
+	bool live;
+	int  track_count;
+	char track_uris[SP_PLAYLIST_PAGE][SP_URI_MAX];
+} sp_playlist_info;
 
 /* Which spclient host to use. Falls back to the well-known name when apresolve
  * has nothing to say, which is what librespot does too. */
@@ -58,7 +193,9 @@ int  sp_track_metadata(const char *host, const char *token, const char *track_ur
 /* Several at once. The service takes a repeated entity_request, so a screenful
  * of tracks costs one round trip instead of one each -- which on this console
  * is the difference between a list that fills instantly and one that crawls.
- * Returns how many were filled in, or -1. */
+ * Returns how many were filled in, or -1. They come back in the order asked
+ * (minus any the service left out), although the service itself answers
+ * shuffled: see sp_parse_track_batch. */
 int  sp_track_metadata_batch(const char *host, const char *token,
                              const char *const *uris, int n,
                              sp_track *out, char *err, size_t errlen);
@@ -68,6 +205,34 @@ int  sp_track_metadata_batch(const char *host, const char *token,
 int  sp_track_metadata_batch_s(http_session *sess, const char *token,
                                const char *const *uris, int n,
                                sp_track *out, char *err, size_t errlen);
+
+/* An album or an artist through extended-metadata, over a keep-alive session
+ * because the caller names the tracks right after with
+ * sp_track_metadata_batch_s on the same link. `country` may be NULL or
+ * empty. Both return 0 or -1. An artist answer runs to tens of KB (the
+ * biography and every album it appears on come along), which the default
+ * reply limit covers. */
+int  sp_album_metadata(http_session *sess, const char *token,
+                       const char *album_uri, sp_album *out,
+                       char *err, size_t errlen);
+int  sp_artist_metadata(http_session *sess, const char *token,
+                        const char *artist_uri, const char *country,
+                        sp_artist *out, char *err, size_t errlen);
+
+/* An artist's monthly listeners from creatorabout's artist-insights, the
+ * JSON the desktop client's "About" reads (~150 ms on the open link,
+ * probe_artist step 5a). Not a stable service: a failure here only leaves
+ * the number out. Returns 0 with `*listeners` set, or -1 (-1 there). */
+int  sp_artist_insights_s(http_session *sess, const char *token,
+                          const char *artist_uri, long *listeners,
+                          char *err, size_t errlen);
+
+/* Names releases: `n` (at most SP_ALBUM_BATCH) album URIs in one batch,
+ * each answer into the out[] whose index matches its URI in `uris`
+ * (sp_parse_album_batch). Returns how many were named, or -1. */
+int  sp_album_metadata_batch_s(http_session *sess, const char *token,
+                               const char *const *uris, int n,
+                               sp_release *out, char *err, size_t errlen);
 
 /* Searching the catalogue. Needs no library, which is what makes a fresh
  * account usable: the answer is a list of track URIs, which
@@ -81,29 +246,46 @@ int  sp_search_tracks(const char *host, const char *token, const char *query,
 int  sp_radio(const char *host, const char *token, const char *seed_uri,
               int count, sp_track *out, int max, char *err, size_t errlen);
 
-/* The user's playlist folder. `count` is how many entries the rootlist holds;
- * up to `max` of their URIs are copied into `uris`. An empty rootlist is a
- * valid answer, not an error. */
-/* The playlist folder, with each list's name.
- *
- * Asking for the decorated rootlist costs the same one request and brings the
- * names along in meta_items; without it the rows have nothing to show but an
- * index, and resolving each playlist for its title would be one request per
- * row. `names` may be NULL. `arts`, when given, gets each row's cover URL
- * (64px-thumb shape) or an empty string; pass NULL to skip. */
-int  sp_rootlist(const char *host, const char *token, const char *username,
-                 char uris[][64], char names[][64], char arts[][80], int max,
-                 int *count, char *err, size_t errlen);
+/* The user's playlist folder, decorated: one request brings every entry's
+ * name, cover and length along in meta_items, where naming each playlist on
+ * its own would be one request per row. Only playlists are kept, folders
+ * flattened, live sessions (the AI DJ) left out. `total` (may be NULL) gets the entries the rootlist holds.
+ * Returns how many were kept (up to `max`), or -1. An empty rootlist is a
+ * valid answer, not an error. `username` is the canonical one from the
+ * access point; it is percent-encoded into the path here. */
+int  sp_rootlist_s(http_session *sess, const char *token, const char *username,
+                   sp_playlist_ref *out, int max, int *total,
+                   char *err, size_t errlen);
 
-/* The tracks in one playlist. `name` gets the playlist's title, `uris` up to
- * `max` track URIs, and `count` the length the server reports, which can
- * exceed what fits. Returns how many URIs were read, or -1.
- *
- * Same SelectedListContent as the rootlist: a rootlist holds playlist URIs and
- * a playlist holds track URIs, so one parser serves both. */
-int  sp_playlist(const char *host, const char *token, const char *playlist_id,
-                 char *name, size_t namelen, char uris[][64], int max,
-                 int *count, char *err, size_t errlen);
+/* The playlists the account played last, most recent first and without
+ * repeats, from the playback history the desktop client reads
+ * (/recently-played/v3, JSON). Other contexts (albums, artists, tracks) are
+ * left out. Returns how many URIs were kept, or -1. */
+int  sp_recent_playlists_s(http_session *sess, const char *token,
+                           const char *username, char uris[][SP_URI_MAX],
+                           char (*last)[SP_URI_MAX], int max,
+                           char *err, size_t errlen);
+
+/* Liked Songs as URIs, newest first, from context-resolve over a session:
+ * the whole collection in one JSON page (probe_meta step 16; the
+ * collection service pages, but mixes saved albums in and keeps no
+ * recency order). Up to `max` track URIs are kept; `total` (may be NULL)
+ * gets how many the answer held. Returns how many were kept, or -1. */
+int  sp_liked_s(http_session *sess, const char *token, const char *username,
+                char (*uris)[SP_URI_MAX], int max, int *total,
+                char *err, size_t errlen);
+
+/* The URI the home tab and the details use for Liked Songs. */
+#define SP_LIKED_URI "spotify:collection:tracks"
+
+/* One playlist's header and `max_tracks` items from item `from` (at most
+ * SP_PLAYLIST_PAGE; 0 asks for the header alone, a few hundred bytes). The
+ * range is asked of the service, so each page of a list of thousands costs
+ * what a short list does. `uri` is the full spotify:playlist: URI. Returns
+ * 0 or -1. */
+int  sp_playlist_s(http_session *sess, const char *token, const char *uri,
+                   int from, int max_tracks, sp_playlist_info *out,
+                   char *err, size_t errlen);
 
 /* Liked Songs. This one answers JSON, not protobuf, and carries the whole
  * first page inline. An empty page means an empty library, not a failure --
@@ -131,15 +313,31 @@ int  sp_storage_resolve(const char *host, const char *token,
 const sp_file *sp_pick_file(const sp_track *t);
 const char *sp_format_name(int format);
 
-/* The user's profile image URL, from the Web API's /v1/me (the one service
- * that lives on api.spotify.com rather than spclient). Only i.scdn.co URLs
- * are accepted: the hero art buffer is 80 chars and the CA bundle only
- * covers Spotify's own CDN, so a lookaside avatar is reported as "none"
- * rather than half-supported. Returns 0, or -1 when the account has no
- * usable image. On HTTP 429, `retry_after` (when given) receives the
- * server's Retry-After seconds so the caller waits on its clock. */
-int  sp_user_image(const char *token, char *url, size_t urllen,
-                   char *err, size_t errlen, int *retry_after);
+/* The signed-in account as the Web API's /v1/me describes it (the one
+ * service that lives on api.spotify.com rather than spclient). Any field
+ * may be empty. `art` is only ever an i.scdn.co URL: the CA bundle covers
+ * Spotify's own CDN alone, so another host counts as no picture. */
+typedef struct {
+	char display_name[128];
+	char product[16];     /* "premium", "free", "open"... */
+	char country[8];      /* ISO 3166-1 alpha-2 */
+	char art[80];
+} sp_profile;
+
+/* The account's public profile from spclient's user-profile-view, with
+ * the same token as the rest of spclient: the name and the picture, never
+ * the plan or the country. Far less rate-limited than /v1/me. Returns 0,
+ * or -1 with `err` set. */
+int  sp_user_profile_view(const char *host, const char *token,
+                          const char *username, sp_profile *out, char *err,
+                          size_t errlen);
+
+/* Fills `out` from /v1/me. Returns 0, or -1 with `err` set. On HTTP 429,
+ * `retry_after` (when given) receives the server's Retry-After seconds:
+ * the shared client id is rate-limited hard there, so callers keep the
+ * last answer rather than ask again soon. */
+int  sp_user_profile(const char *token, sp_profile *out, char *err,
+                     size_t errlen, int *retry_after);
 
 /* Adds or removes a track in the user's library ("Me gusta"): PUT/DELETE
  * /v1/me/tracks?ids=<id>. Needs the user-library-modify scope, which tokens

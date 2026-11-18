@@ -2,9 +2,11 @@
 
 #include "draw.h"
 #include "icons.h"
+#include "list_logic.h"
 #include "player_logic.h"
 #include "press_logic.h"
 #include "theme.h"
+#include "ui_font.h"
 
 #include <citro2d.h>
 
@@ -12,23 +14,29 @@
 #include <string.h>
 
 #define STATIC_GLYPHS 768
-#define TRACK_GLYPHS 320
-#define TIME_GLYPHS 24
+#define TRACK_GLYPHS 512
+#define TIME_GLYPHS 32
 #define SCRATCH_GLYPHS UI_FIELD_SIZE
 
+/* Touch control ids: the controls are their player_control, the links
+ * LINK_CONTROL + their player_link, the download icon SAVE_CONTROL. */
+#define LINK_CONTROL 10
+#define SAVE_CONTROL 20
+
 /* The button bar (STYLES.md 5.6). */
-enum { GLYPH_A, GLYPH_B, GLYPH_COUNT };
-static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B" };
-static const u32 glyph_colors[GLYPH_COUNT] = { COL_BTN_A, COL_BTN_B };
+enum { GLYPH_A, GLYPH_B, GLYPH_X, GLYPH_COUNT };
+static const char *const glyph_letters[GLYPH_COUNT] = { "A", "B", "X" };
+static const u32 glyph_colors[GLYPH_COUNT] = { COL_BTN_A, COL_BTN_B,
+                                               COL_BTN_X };
 
 static C2D_TextBuf static_buf, track_buf, time_buf, scratch_buf;
 
 static C2D_Text idle_text, stage_text, finished_text, volume_label;
-static C2D_Text failed_title, failed_body;
+static C2D_Text failed_title, failed_body, seek_wait_text;
 static C2D_Text letter_text[GLYPH_COUNT];
-static C2D_Text hint_pause, hint_play, hint_retry, hint_back;
-static C2D_Text title_text, artist_text, queue_text;
-static C2D_Text elapsed_text, duration_text;
+static C2D_Text hint_pause, hint_play, hint_retry, hint_back, hint_save;
+static C2D_Text title_text, artist_text, album_text, queue_text;
+static C2D_Text elapsed_text, duration_text, saved_text;
 static int volume_label_w;
 
 /* What was parsed, to parse again only on a change. */
@@ -38,19 +46,46 @@ static char parsed_error[256];
 static unsigned parsed_serial = ~0u;
 static int parsed_index = -1, parsed_count = -1;
 static unsigned parsed_elapsed = ~0u, parsed_duration = ~0u;
+static int parsed_saved = -1;
 
 static char info_error[256];
 static player_info info = { .stage = STR_PLAYER_ART_LOADING,
                             .error = info_error };
-/* 9: the download share follows the clock, not every frame. */
+/* 9: the download share follows the clock, not every frame; so does the
+ * share of the track's own download to the card. */
 static player_download_sample download;
+static int saved_shown;
 
 static press_state press_control[PLAYER_CONTROL_COUNT];
+static press_state press_link[PLAYER_LINK_COUNT];
+static press_state press_save;
 static press_state press_glyph[GLYPH_COUNT];
 static touch_track touch = { -1 };
 static player_action pending = PLAYER_ACTION_NONE;
 static const press_state *pending_press;
 static int loader_frames;
+/* The bubble (5.9) after touching the progress bar before the whole track
+ * has downloaded, or after X (view_player_notice): frames shown, or -1;
+ * what it says, and whether that is good news or a refusal. */
+static int bubble_frames = -1;
+static str_id bubble_id = STR_PLAYER_SEEK_WAIT;
+static bool bubble_ok;
+
+static void show_bubble(str_id text, bool ok)
+{
+	if (text != bubble_id)
+		parsed_stage = STR_COUNT;   /* parse_static parses it again */
+	bubble_id = text;
+	bubble_ok = ok;
+	bubble_frames = 0;
+}
+/* The stylus on a bar: dragging the progress bar's handle (the track moves
+ * when it lifts), or the volume (it follows at once); or still down on a
+ * bar that went away (a new track), spent until it lifts. */
+typedef enum { DRAG_NONE, DRAG_SEEK, DRAG_VOLUME, DRAG_SPENT } drag_kind;
+static drag_kind drag = DRAG_NONE;
+static int drag_value;     /* thousandths along the bar */
+static int action_value;   /* for view_player_value */
 
 typedef struct {
 	player_phase phase;
@@ -59,9 +94,16 @@ typedef struct {
 	str_id stage;
 	bool paused;
 	unsigned elapsed, duration, download, volume;
+	int seek;               /* the handle dragged, in thousandths, or -1 */
 	bool control[PLAYER_CONTROL_COUNT];
+	bool link[PLAYER_LINK_COUNT];
 	bool glyph[GLYPH_COUNT];
+	dl_button saved;
+	int saved_pct;
+	bool save_pressed;
+	bool offline;
 	int loader_step;
+	str_id bubble;          /* the bubble's text, STR_COUNT when none */
 } player_look;
 static player_look drawn;
 static bool drawn_valid;
@@ -96,11 +138,16 @@ void view_player_enter(void)
 {
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		press_reset(&press_control[i]);
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		press_reset(&press_link[i]);
+	press_reset(&press_save);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_reset(&press_glyph[i]);
 	touch.target = -1;
 	pending = PLAYER_ACTION_NONE;
 	pending_press = NULL;
+	drag = DRAG_NONE;
+	bubble_frames = -1;
 	drawn_valid = false;
 }
 
@@ -108,6 +155,17 @@ void view_player_set(const player_info *next)
 {
 	bool tick = next->elapsed_s != info.elapsed_s ||
 	            next->phase != info.phase || next->serial != info.serial;
+	/* The handle belonged to the track it was dragged on. */
+	if (drag == DRAG_SEEK &&
+	    (!next->seekable || next->serial != info.serial))
+		drag = DRAG_SPENT;
+	/* Once a second even while paused: the card's download goes on. */
+	static int saved_frames;
+	if (tick || next->saved != info.saved || ++saved_frames >= 60) {
+		saved_frames = 0;
+		saved_shown = next->saved == DL_BUTTON_PROGRESS ? next->saved_pct
+		                                                : 0;
+	}
 	info = *next;
 	snprintf(info_error, sizeof(info_error), "%s",
 	         next->error ? next->error : "");
@@ -119,7 +177,7 @@ void view_player_set(const player_info *next)
 
 static void parse(C2D_Text *text, C2D_TextBuf buf, const char *string)
 {
-	C2D_TextParse(text, buf, string);
+	ui_parse(text, buf, string);
 	C2D_TextOptimize(text);
 }
 
@@ -129,9 +187,16 @@ static void parse_fitted(C2D_Text *text, C2D_TextBuf buf, const char *string,
 	ui_parse_fitted(text, buf, scratch_buf, string, scale, width);
 }
 
-static int content_width(void)
+/* A link's text starts at its zone's left edge, where the track's text
+ * always was: the zone only makes the touch target TOUCH_MIN high. */
+static int link_text_x(int link)
 {
-	return SCREEN_BOTTOM_W - 2 * SP_2;
+	return player_link_rect(link).x;
+}
+
+static int link_text_width(int link)
+{
+	return player_link_rect(link).w;
 }
 
 static void parse_static(void)
@@ -145,6 +210,9 @@ static void parse_static(void)
 	ui_rect notice = player_notice_rect();
 	parse_fitted(&failed_title, static_buf, tr(STR_PLAYER_FAILED_TITLE),
 	             TXT_CABEZA, notice.w - 2 * SP_3 - ICON_S - SP_1);
+	parse_fitted(&seek_wait_text, static_buf, tr(bubble_id),
+	             TXT_CUERPO,
+	             SCREEN_BOTTOM_W - 2 * SP_2 - 2 * SP_3 - ICON_S - SP_1);
 	parse(&failed_body, static_buf,
 	      info.error[0] ? info.error : tr(STR_PLAYER_INTERRUPTED));
 	for (int i = 0; i < GLYPH_COUNT; i++)
@@ -153,6 +221,7 @@ static void parse_static(void)
 	parse(&hint_play, static_buf, tr(STR_HINT_PLAY));
 	parse(&hint_retry, static_buf, tr(STR_HINT_RETRY));
 	parse(&hint_back, static_buf, tr(STR_HINT_BACK));
+	parse(&hint_save, static_buf, tr(STR_HINT_DOWNLOAD));
 }
 
 static void parse_track(void)
@@ -169,20 +238,37 @@ static void parse_track(void)
 	                                       : tr(STR_UNTITLED);
 	const char *artist = info.track->artist[0] ? info.track->artist
 	                                           : tr(STR_UNKNOWN_ARTIST);
+	const char *album = info.track->album[0] ? info.track->album
+	                                         : tr(STR_UNKNOWN_ALBUM);
 	parse_fitted(&title_text, track_buf, name, TXT_CABEZA,
-	             content_width() - queue_w - SP_2);
+	             link_text_width(PLAYER_LINK_TRACK) - queue_w - SP_2);
+	/* Cut at half the width; the whole names are on the top screen. */
 	parse_fitted(&artist_text, track_buf, artist, TXT_CUERPO,
-	             content_width());
+	             link_text_width(PLAYER_LINK_ARTIST));
+	parse_fitted(&album_text, track_buf, album, TXT_CUERPO,
+	             link_text_width(PLAYER_LINK_ALBUM));
+}
+
+/* The time by the progress bar: where the dragged handle would take the
+ * track, else where it is. */
+static unsigned shown_elapsed(void)
+{
+	if (drag == DRAG_SEEK)
+		return (unsigned)((unsigned long long)info.duration_s *
+		                  (unsigned)drag_value / 1000u);
+	return info.elapsed_s;
 }
 
 static void parse_times(void)
 {
 	C2D_TextBufClear(time_buf);
 	char text[16];
-	player_format_time(info.elapsed_s, text, sizeof(text));
+	player_format_time(shown_elapsed(), text, sizeof(text));
 	parse(&elapsed_text, time_buf, text);
 	player_format_time(info.duration_s, text, sizeof(text));
 	parse(&duration_text, time_buf, text);
+	snprintf(text, sizeof(text), "%d%%", saved_shown);
+	parse(&saved_text, time_buf, text);
 }
 
 static void ensure_parsed(void)
@@ -201,17 +287,19 @@ static void ensure_parsed(void)
 		parsed_index = info.index;
 		parsed_count = info.count;
 	}
-	if (parsed_elapsed != info.elapsed_s ||
-	    parsed_duration != info.duration_s) {
+	if (parsed_elapsed != shown_elapsed() ||
+	    parsed_duration != info.duration_s || parsed_saved != saved_shown) {
 		parse_times();
-		parsed_elapsed = info.elapsed_s;
+		parsed_elapsed = shown_elapsed();
 		parsed_duration = info.duration_s;
+		parsed_saved = saved_shown;
 	}
 	parsed_lang = lang_get();
 }
 
 /* --- State ------------------------------------------------------------ */
 
+/* The controls, and with them the bars, are on screen. */
 static bool has_controls(void)
 {
 	return info.phase == PLAYER_PHASE_PLAYING ||
@@ -230,6 +318,36 @@ static bool control_enabled(int control)
 	}
 }
 
+/* A link answers while the track's text shows, the artist and the album
+ * only when the track names them. */
+static bool link_enabled(int link)
+{
+	if (!player_links_enabled(info.phase) || !info.track)
+		return false;
+	switch (link) {
+	case PLAYER_LINK_ARTIST:
+		return info.track->artist_uri[0] != '\0' && !info.offline;
+	case PLAYER_LINK_ALBUM:
+		return info.track->album_uri[0] != '\0' && !info.offline;
+	default:
+		return true;
+	}
+}
+
+/* The download icon shows with the track's text; it acts, like X, while
+ * the track is not on the card nor on its way there. */
+static bool save_shown(void)
+{
+	return player_links_enabled(info.phase) && info.track;
+}
+
+static bool save_enabled(void)
+{
+	return save_shown() && !info.offline &&
+	       (info.saved == DL_BUTTON_DOWNLOAD ||
+	                        info.saved == DL_BUTTON_RETRY);
+}
+
 static player_look current_look(void)
 {
 	player_look look = {
@@ -239,15 +357,23 @@ static player_look current_look(void)
 		.count = info.count,
 		.stage = info.stage,
 		.paused = info.paused,
-		.elapsed = info.elapsed_s,
+		.elapsed = shown_elapsed(),
 		.duration = info.duration_s,
+		.seek = drag == DRAG_SEEK ? drag_value : -1,
 		.download = download.shown,
 		.volume = info.volume_pct,
 		.loader_step = info.phase == PLAYER_PHASE_LOADING
 		               ? loader_frames / LOADER_STEP : 0,
+		.bubble = bubble_frames >= 0 ? bubble_id : STR_COUNT,
+		.saved = save_shown() ? info.saved : (dl_button)-1,
+		.offline = info.offline,
+		.saved_pct = saved_shown,
+		.save_pressed = press_down(&press_save),
 	};
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		look.control[i] = press_down(&press_control[i]);
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		look.link[i] = press_down(&press_link[i]);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		look.glyph[i] = press_down(&press_glyph[i]);
 	return look;
@@ -260,10 +386,17 @@ static bool same_look(const player_look *a, const player_look *b)
 	    a->stage != b->stage || a->paused != b->paused ||
 	    a->elapsed != b->elapsed || a->duration != b->duration ||
 	    a->download != b->download || a->volume != b->volume ||
-	    a->loader_step != b->loader_step)
+	    a->seek != b->seek || a->loader_step != b->loader_step ||
+	    a->bubble != b->bubble || a->saved != b->saved ||
+	    a->saved_pct != b->saved_pct || a->save_pressed != b->save_pressed ||
+	    a->offline != b->offline)
 		return false;
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		if (a->control[i] != b->control[i])
+			return false;
+	/* 9: the links only repaint on being pressed and released. */
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		if (a->link[i] != b->link[i])
 			return false;
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		if (a->glyph[i] != b->glyph[i])
@@ -275,13 +408,31 @@ static void tick(void)
 {
 	for (int i = 0; i < PLAYER_CONTROL_COUNT; i++)
 		press_tick(&press_control[i]);
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		press_tick(&press_link[i]);
+	press_tick(&press_save);
 	for (int i = 0; i < GLYPH_COUNT; i++)
 		press_tick(&press_glyph[i]);
 	if (info.phase == PLAYER_PHASE_LOADING)
 		loader_frames++;
+	/* 5.9: shown BUBBLE_SHOW frames, gone without a transition. */
+	if (bubble_frames >= 0 && ++bubble_frames >= BUBBLE_SHOW)
+		bubble_frames = -1;
 }
 
 /* --- Input ------------------------------------------------------------ */
+
+static player_action link_action(int link)
+{
+	switch (link) {
+	case PLAYER_LINK_ARTIST:
+		return PLAYER_ACTION_OPEN_ARTIST;
+	case PLAYER_LINK_ALBUM:
+		return PLAYER_ACTION_OPEN_ALBUM;
+	default:
+		return PLAYER_ACTION_OPEN_TRACK;
+	}
+}
 
 static player_action control_action(int control)
 {
@@ -323,6 +474,8 @@ static void release_keys(u32 up)
 		press_end(&press_glyph[GLYPH_A]);
 	if (up & KEY_B)
 		press_end(&press_glyph[GLYPH_B]);
+	if (up & KEY_X)
+		press_end(&press_glyph[GLYPH_X]);
 }
 
 /* Returns the action to run now, if any; sets `*owned` while the stylus
@@ -336,22 +489,52 @@ static player_action handle_touch(u32 down, u32 held, u32 up, bool *owned)
 		hit = player_hit_test(pos.px, pos.py);
 		if (hit >= 0 && !control_enabled(hit))
 			hit = -1;
+		if (hit < 0) {
+			bool enabled[PLAYER_LINK_COUNT];
+			for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+				enabled[i] = link_enabled(i);
+			int link = player_link_hit(pos.px, pos.py, enabled);
+			if (link >= 0)
+				hit = LINK_CONTROL + link;
+			else if (save_enabled() &&
+			         ui_rect_contains(player_download_rect(), pos.px,
+			                          pos.py))
+				hit = SAVE_CONTROL;
+		}
 	}
-	int control;
+	int control = -1;
 	touch_event event = touch_track_update(&touch, (down & KEY_TOUCH) != 0,
 	                                       (held & KEY_TOUCH) != 0,
 	                                       (up & KEY_TOUCH) != 0, hit,
 	                                       &control);
 	player_action now = PLAYER_ACTION_NONE;
+	if (event == TOUCH_NONE || control < 0) {
+		*owned = touch.target >= 0;
+		return now;
+	}
+	bool save = control == SAVE_CONTROL;
+	bool link = !save && control >= LINK_CONTROL;
+	press_state *press = save ? &press_save
+	                     : link ? &press_link[control - LINK_CONTROL]
+	                            : &press_control[control];
 	switch (event) {
 	case TOUCH_PRESS:
-		press_begin(&press_control[control]);
+		press_begin(press);
 		break;
 	case TOUCH_CANCEL:
-		press_cancel(&press_control[control]);
+		press_cancel(press);
 		break;
 	case TOUCH_ACTIVATE: {
-		press_end(&press_control[control]);
+		press_end(press);
+		if (save) {
+			queue(PLAYER_ACTION_DOWNLOAD, press);
+			break;
+		}
+		if (link) {
+			/* A detail takes the screen over: once the press is seen. */
+			queue(link_action(control - LINK_CONTROL), press);
+			break;
+		}
 		player_action action = control_action(control);
 		if (loads_track(action))
 			queue(action, &press_control[control]);
@@ -364,6 +547,63 @@ static player_action handle_touch(u32 down, u32 held, u32 up, bool *owned)
 	}
 	*owned = touch.target >= 0;
 	return now;
+}
+
+/* The stylus on the bars, before the buttons and links: a press in a bar's
+ * zone (player_logic.h) drags it until the stylus lifts, wherever it goes
+ * meanwhile. Returns the action to run now; sets `*owned` while a drag
+ * has the input. */
+static player_action handle_bars(u32 down, u32 held, bool *owned)
+{
+	*owned = false;
+	if (drag == DRAG_NONE) {
+		if (!(down & KEY_TOUCH) || touch.target >= 0)
+			return PLAYER_ACTION_NONE;
+		touchPosition pos;
+		hidTouchRead(&pos);
+		bool on_seek = ui_rect_contains(player_seek_zone(volume_label_w),
+		                                pos.px, pos.py);
+		if (on_seek && info.seekable) {
+			drag = DRAG_SEEK;
+		} else if (on_seek && info.phase == PLAYER_PHASE_PLAYING) {
+			/* Still downloading: the track cannot move yet. The press
+			 * is spent and a bubble says to wait for 100%. */
+			drag = DRAG_SPENT;
+			show_bubble(STR_PLAYER_SEEK_WAIT, false);
+		} else if (has_controls() &&
+		         ui_rect_contains(player_volume_zone(volume_label_w),
+		                          pos.px, pos.py)) {
+			drag = DRAG_VOLUME;
+		} else {
+			return PLAYER_ACTION_NONE;
+		}
+		drag_value = -1;
+	}
+	*owned = true;
+	if (!(held & KEY_TOUCH)) {
+		/* Lifted: there is no position this frame, the last one counts. */
+		drag_kind was = drag;
+		drag = DRAG_NONE;
+		if (was == DRAG_SEEK && drag_value >= 0) {
+			action_value = drag_value;
+			return PLAYER_ACTION_SEEK;
+		}
+		return PLAYER_ACTION_NONE;
+	}
+	if (drag == DRAG_SPENT)
+		return PLAYER_ACTION_NONE;
+	touchPosition pos;
+	hidTouchRead(&pos);
+	if (drag == DRAG_SEEK) {
+		drag_value = player_bar_permille(player_progress_rect(), pos.px);
+		return PLAYER_ACTION_NONE;
+	}
+	int value = player_bar_permille(player_volume_rect(volume_label_w),
+	                                pos.px);
+	if (value == drag_value)
+		return PLAYER_ACTION_NONE;
+	drag_value = action_value = value;
+	return PLAYER_ACTION_VOLUME_SET;
 }
 
 /* A physical button on a control (6.5): the control shows the press. */
@@ -397,6 +637,9 @@ player_action view_player_update(u32 down)
 	}
 
 	bool owned;
+	player_action bar = handle_bars(down, held, &owned);
+	if (owned)
+		return bar;
 	player_action now = handle_touch(down, held, up, &owned);
 	if (now != PLAYER_ACTION_NONE || owned || pending != PLAYER_ACTION_NONE)
 		return now;
@@ -427,7 +670,22 @@ player_action view_player_update(u32 down)
 	}
 	if (down & KEY_SELECT)
 		return PLAYER_ACTION_LANGUAGE;
+	if ((down & KEY_X) && save_shown() && !info.offline) {
+		/* Its bubble says what came of it, whatever the state. */
+		press_begin(&press_glyph[GLYPH_X]);
+		queue(PLAYER_ACTION_DOWNLOAD, &press_glyph[GLYPH_X]);
+	}
 	return PLAYER_ACTION_NONE;
+}
+
+void view_player_notice(str_id text, bool ok)
+{
+	show_bubble(text, ok);
+}
+
+int view_player_value(void)
+{
+	return action_value;
 }
 
 bool view_player_dirty(void)
@@ -440,16 +698,68 @@ bool view_player_dirty(void)
 
 /* --- Drawing ---------------------------------------------------------- */
 
-static void draw_track(void)
+/* A link (STYLES.md 5.14): text, not a button. At rest it is
+ * plain text in `rest`; pressed (6.3) the text turns `lima` and gets a
+ * BEVEL_W underline in the same colour, with no panel and no shift, so it
+ * still reads as the text it was. `lima` is the accent that keeps 4.5:1
+ * on both background tones (2.6). */
+static void draw_link(int link, const C2D_Text *text, float scale,
+                      bool pressed, u32 rest)
 {
-	int title_cy = PLAYER_TEXT_TOP + ui_line_height(TXT_CABEZA) / 2;
-	int artist_cy = PLAYER_TEXT_TOP + ui_line_height(TXT_CABEZA) + SP_1 +
-	                ui_line_height(TXT_CUERPO) / 2;
-	ui_text(&title_text, SP_2, title_cy, TXT_CABEZA, COL_TEXTO);
+	ui_rect zone = player_link_rect(link);
+	int x = link_text_x(link);
+	int cy = zone.y + zone.h / 2;
+	ui_text(text, x, cy, scale, pressed ? COL_LIMA : rest);
+	if (pressed) {
+		ui_rect line = { x, cy + ui_line_height(scale) / 2,
+		                 ui_px_ceil(ui_text_width(text, scale)), BEVEL_W };
+		ui_fill(line, COL_LIMA);
+	}
+}
+
+/* Where the track is in the downloads, still (9): an arrow to download
+ * it (or try again), a clock while queued, the share while downloading,
+ * a check once on the card. Pressed like a link: `lima`. */
+static void draw_saved(const player_look *look)
+{
+	ui_rect zone = player_download_rect();
+	int cx = zone.x + zone.w / 2, cy = zone.y + zone.h / 2;
+	u32 ink = look->save_pressed ? COL_LIMA : COL_TEXTO_2;
+	icon_id id;
+	switch (look->saved) {
+	case DL_BUTTON_PROGRESS:
+		ui_text_centered(&saved_text, cx, cy, TXT_META, ink);
+		return;
+	case DL_BUTTON_QUEUED:
+		id = ICON_QUEUED;
+		break;
+	case DL_BUTTON_REMOVE:
+	case DL_BUTTON_HELD:
+		id = ICON_DOWNLOADED;
+		ink = COL_LIMA;
+		break;
+	default:
+		id = ICON_DOWNLOAD;
+		break;
+	}
+	C2D_Image icon = icon_image(id);
+	ui_icon(&icon, cx - ICON_S / 2, cy - ICON_S / 2, ink);
+}
+
+static void draw_track(const player_look *look)
+{
+	draw_link(PLAYER_LINK_TRACK, &title_text, TXT_CABEZA,
+	          look->link[PLAYER_LINK_TRACK], COL_TEXTO);
+	/* The position is not part of the link: it stays as it is. */
+	ui_rect zone = player_link_rect(PLAYER_LINK_TRACK);
 	int queue_w = ui_px_ceil(ui_text_width(&queue_text, TXT_META));
-	ui_text(&queue_text, SCREEN_BOTTOM_W - SP_2 - queue_w, title_cy,
+	ui_text(&queue_text, zone.x + zone.w - queue_w, zone.y + zone.h / 2,
 	        TXT_META, COL_TEXTO_2);
-	ui_text(&artist_text, SP_2, artist_cy, TXT_CUERPO, COL_TEXTO_2);
+	draw_link(PLAYER_LINK_ARTIST, &artist_text, TXT_CUERPO,
+	          look->link[PLAYER_LINK_ARTIST], COL_TEXTO_2);
+	draw_link(PLAYER_LINK_ALBUM, &album_text, TXT_CUERPO,
+	          look->link[PLAYER_LINK_ALBUM], COL_TEXTO_2);
+	draw_saved(look);
 }
 
 static void draw_controls(const player_look *look)
@@ -485,15 +795,20 @@ static void draw_bars(const player_look *look)
 		ui_text(&duration_text, SCREEN_BOTTOM_W - SP_2 - w, cy, TXT_META,
 		        COL_TEXTO_2);
 	}
-	int progress = player_progress_permille(
-		look->phase == PLAYER_PHASE_FINISHED, look->elapsed, look->duration);
+	int progress = look->seek >= 0
+	               ? look->seek
+	               : player_progress_permille(
+	                     look->phase == PLAYER_PHASE_FINISHED, look->elapsed,
+	                     look->duration);
 	ui_progress(player_progress_rect(),
-	            player_permille(look->download, 100), progress, true);
+	            player_permille(look->download, 100), progress,
+	            look->seek >= 0 ? UI_HANDLE_PRESSED : UI_HANDLE_REST);
 
 	ui_rect volume = player_volume_rect(volume_label_w);
 	ui_text(&volume_label, SP_2, volume.y + volume.h / 2, TXT_META,
 	        COL_TEXTO_2);
-	ui_progress(volume, -1, player_permille(look->volume, 100), false);
+	ui_progress(volume, -1, player_permille(look->volume, 100),
+	            UI_HANDLE_NONE);
 }
 
 static void draw_hints(const player_look *look)
@@ -517,9 +832,14 @@ static void draw_hints(const player_look *look)
 	if (a_label)
 		hints[n++] = (ui_hint){ &letter_text[GLYPH_A], a_label,
 		                        glyph_colors[GLYPH_A],
-		                        look->glyph[GLYPH_A] };
+		                        look->glyph[GLYPH_A], NULL };
+	if (!look->offline &&
+	    (look->saved == DL_BUTTON_DOWNLOAD || look->saved == DL_BUTTON_RETRY))
+		hints[n++] = (ui_hint){ &letter_text[GLYPH_X], &hint_save,
+		                        glyph_colors[GLYPH_X],
+		                        look->glyph[GLYPH_X], NULL };
 	hints[n++] = (ui_hint){ &letter_text[GLYPH_B], &hint_back,
-	                        glyph_colors[GLYPH_B], look->glyph[GLYPH_B] };
+	                        glyph_colors[GLYPH_B], look->glyph[GLYPH_B], NULL };
 	ui_button_bar(player_hints_rect(), hints, n);
 }
 
@@ -543,7 +863,7 @@ void view_player_draw_bottom(void)
 	}
 	case PLAYER_PHASE_LOADING: {
 		/* Waiting, with no audio yet: the indicator is allowed (5.7). */
-		draw_track();
+		draw_track(&look);
 		int cy = PLAYER_CONTROLS_TOP + BTN_PLAY / 2;
 		ui_loader(SCREEN_BOTTOM_W / 2, cy, look.loader_step);
 		ui_text_centered(&stage_text, SCREEN_BOTTOM_W / 2,
@@ -551,12 +871,17 @@ void view_player_draw_bottom(void)
 		break;
 	}
 	default:
-		draw_track();
+		draw_track(&look);
 		draw_controls(&look);
 		draw_bars(&look);
 		break;
 	}
 	draw_hints(&look);
+	if (look.bubble != STR_COUNT) {
+		C2D_Image icon = icon_image(bubble_ok ? ICON_NOTE : ICON_ERROR);
+		ui_bubble(list_bubble_rect(ui_bubble_content_width(&seek_wait_text)),
+		          &icon, &seek_wait_text);
+	}
 
 	drawn = look;
 	drawn_valid = true;

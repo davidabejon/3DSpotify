@@ -80,11 +80,11 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 
 	/* The key must be asked for before the bytes are worth fetching: without
 	 * it the download is just noise. */
-	if (progress) progress("clave de audio");
+	if (progress) progress("audio key");
 	osTickCounterStart(&t);
 	uint8_t key[16];
 	int refused = 0;
-	int rc = ap_audio_key(ap, file->id, out->meta.gid, key, &refused,
+	int rc = ap_audio_key(ap, file->id, out->meta.audio_gid, key, &refused,
 	                      err, errlen);
 	osTickCounterUpdate(&t);
 	out->key_ms = osTickCounterRead(&t);
@@ -92,7 +92,7 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 	if (rc != 0)
 		return rc;
 
-	if (progress) progress("descarga del CDN");
+	if (progress) progress("CDN download");
 	osTickCounterStart(&t);
 	http_reply r;
 	int got = -1;
@@ -119,7 +119,7 @@ int track_fetch(const char *sp_host, const char *token, ap_session *ap,
 		return -1;
 	}
 
-	if (progress) progress("descifrado");
+	if (progress) progress("decryption");
 	osTickCounterStart(&t);
 	if (!decrypt((uint8_t *)r.body, r.len, key)) {
 		snprintf(err, errlen, "AES-CTR failed");
@@ -185,10 +185,10 @@ static int track_stream_begin_internal(const char *sp_host, const char *token,
 	                       err, errlen) < 0)
 		return -1;
 
-	if (progress) progress("clave de audio");
+	if (progress) progress("audio key");
 	int refused = 0;
-	int rc = ap_audio_key(ap, file->id, out->meta.gid, out->key, &refused,
-	                      err, errlen);
+	int rc = ap_audio_key(ap, file->id, out->meta.audio_gid, out->key,
+	                      &refused, err, errlen);
 	out->key_refused_code = refused;
 	return rc;
 }
@@ -212,6 +212,16 @@ int track_stream_begin_cached(const char *sp_host, const char *token,
 	}
 	return track_stream_begin_internal(sp_host, token, ap, metadata->uri,
 	                                   metadata, progress, out, err, errlen);
+}
+
+/* Whether the live span, at write_pos, must stop: it is at the end, or at
+ * the start of a chunk that is already whole. */
+static bool span_blocked(const track_stream *ts)
+{
+	if (ts->write_pos >= ts->len)
+		return true;
+	return ts->write_pos % STREAM_CHUNK == 0 &&
+	       ts->chunk_done[ts->write_pos / STREAM_CHUNK];
 }
 
 static bool stream_cb(void *ctx, const char *data, size_t n)
@@ -240,22 +250,40 @@ static bool stream_cb(void *ctx, const char *data, size_t n)
 		memset(ts->data, 0, ts->total);
 		ts->len = ts->total;
 	}
-	if (ts->write_pos + n > ts->len) {
-		if (ts->write_pos >= ts->len)
-			return true;   /* padding past the end: tolerate */
-		n = ts->len - ts->write_pos;
+	/* A chunk at a time: the span stops before one that is already whole,
+	 * which may be on its way to the decoder (the bytes land encrypted and
+	 * are decrypted in place), and at the end of the file. The download
+	 * loop then sends it to the next missing chunk. */
+	while (n > 0) {
+		if (span_blocked(ts)) {
+			ts->relocate = true;
+			return false;
+		}
+		size_t piece = STREAM_CHUNK - ts->write_pos % STREAM_CHUNK;
+		if (piece > ts->len - ts->write_pos)
+			piece = ts->len - ts->write_pos;
+		if (piece > n)
+			piece = n;
+		uint8_t *at = ts->data + ts->write_pos;
+		memcpy(at, data, piece);
+		if (mbedtls_aes_crypt_ctr(ts->aes, piece, &ts->nc_off, ts->nonce,
+		                          ts->stream_block, at, at) != 0) {
+			snprintf(ts->dl_err, sizeof(ts->dl_err), "AES-CTR failed");
+			ts->cb_fatal = true;
+			return false;
+		}
+		ts->write_pos += piece;
+		data += piece;
+		n -= piece;
+		/* The bytes before the marks that publish them. */
+		__sync_synchronize();
+		stream_mark(ts->chunk_done, ts->len, ts->write_pos, &ts->mark_next);
+		ts->downloaded = ts->write_pos;
 	}
-	memcpy(ts->data + ts->write_pos, data, n);
-	if (mbedtls_aes_crypt_ctr(ts->aes, n, &ts->nc_off, ts->nonce,
-	                          ts->stream_block, ts->data + ts->write_pos,
-	                          ts->data + ts->write_pos) != 0) {
-		snprintf(ts->dl_err, sizeof(ts->dl_err), "AES-CTR failed");
-		ts->cb_fatal = true;
+	if (span_blocked(ts)) {
+		ts->relocate = true;
 		return false;
 	}
-	ts->write_pos += n;
-	__sync_synchronize();
-	ts->downloaded = ts->write_pos;
 	return true;
 }
 
@@ -277,6 +305,7 @@ static void stream_rewind(track_stream *ts, size_t at)
 	}
 	ts->nc_off = 0;
 	ts->write_pos = at;
+	ts->mark_next = at / STREAM_CHUNK;
 	__sync_synchronize();
 	ts->downloaded = at;
 }
@@ -378,17 +407,34 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 	int refreshes = 0;
 	while (!ts->dl_done && !ts->cb_fatal && !(stop && *stop)) {
 		if (ts->dl_restart_at >= 0) {
-			size_t at = (size_t)ts->dl_restart_at;
+			size_t at = stream_chunk_floor((size_t)ts->dl_restart_at);
 			ts->dl_restart_at = -1;
+			ts->relocate = false;
 			stream_rewind(ts, at);
 			dl_log(log, "seek to %u", (unsigned)at);
 			failures = 0;
 			continue;
 		}
+		/* The span ran into chunks it already has, or the end: on with the
+		 * first missing one after where the decoder reads. */
+		if (ts->relocate || (ts->len && span_blocked(ts))) {
+			ts->relocate = false;
+			size_t next = stream_next_missing(ts->chunk_done, ts->len,
+			                                  ts->read_hint);
+			if (next >= ts->len) {
+				ts->dl_done = true;
+				continue;
+			}
+			if (next != ts->write_pos) {
+				stream_rewind(ts, next);
+				dl_log(log, "fill from %u", (unsigned)next);
+			}
+		}
 		size_t before = ts->write_pos;
 		bool refused = false;   /* an edge answered, but not with bytes */
 		for (int i = 0; i < ts->storage.count; i++) {
-			if ((stop && *stop) || ts->cb_fatal || ts->dl_restart_at >= 0)
+			if ((stop && *stop) || ts->cb_fatal || ts->dl_restart_at >= 0 ||
+			    ts->relocate)
 				break;
 			int status = 0;
 			size_t from = ts->write_pos;
@@ -406,13 +452,13 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 			if (rc != 0 && status != 0 && status != 206 &&
 			    ts->write_pos == from)
 				refused = true;
-			if (ts->len && ts->write_pos >= ts->len)
-				ts->dl_done = true;
-			if (ts->dl_done || (stop && *stop))
+			if (ts->relocate || (stop && *stop))
 				break;
 		}
-		if (ts->dl_done || ts->cb_fatal || (stop && *stop) ||
-		    ts->dl_restart_at >= 0)
+		/* Moved on by a seek, or by reaching what is there: progress, not
+		 * a failure. */
+		if (ts->cb_fatal || (stop && *stop) || ts->dl_restart_at >= 0 ||
+		    ts->relocate)
 			continue;
 		if (ts->write_pos != before) {
 			failures = 0;
@@ -453,6 +499,315 @@ int track_stream_download(track_stream *ts, volatile bool *stop)
 	return 0;
 }
 
+/* --- Playing a track from the card --------------------------------------- */
+
+/* Read in blocks the card serves at its speed (probe_offline 0.6: reading
+ * dominated decrypting, and 64 KB beat 16 KB). */
+#define LOCAL_READ (64 * 1024)
+
+int track_stream_open_local(const char *path, const uint8_t key[16],
+                            const sp_track *metadata, int format,
+                            track_stream *out, char *err, size_t errlen)
+{
+	memset(out, 0, sizeof(*out));
+	out->dl_restart_at = -1;
+	if (metadata)
+		out->meta = *metadata;
+	out->format = format;
+	FILE *f = fopen(path, "rb");
+	long size = -1;
+	if (f) {
+		if (fseek(f, 0, SEEK_END) == 0)
+			size = ftell(f);
+		fclose(f);
+	}
+	if (size <= SPOTIFY_OGG_HEADER || size > TRACK_STREAM_MAX) {
+		snprintf(err, errlen, size < 0 ? "the downloaded file is missing"
+		                               : "the downloaded file is %ld bytes",
+		         size);
+		return -1;
+	}
+	out->total = (size_t)size;
+	memcpy(out->key, key, sizeof(out->key));
+	out->local = true;
+	snprintf(out->local_path, sizeof(out->local_path), "%s", path);
+	return 0;
+}
+
+int track_stream_load_local(track_stream *ts, volatile bool *stop)
+{
+	ts->stop = stop;
+	mbedtls_aes_context aes;
+	mbedtls_aes_init(&aes);
+	uint8_t *buf = malloc(LOCAL_READ);
+	FILE *f = fopen(ts->local_path, "rb");
+	if (!buf || !f || mbedtls_aes_setkey_enc(&aes, ts->key, 128) != 0) {
+		snprintf(ts->dl_err, sizeof(ts->dl_err), "%s",
+		         !buf ? "out of memory" : !f ? "the downloaded file is missing"
+		                                     : "AES-CTR setup failed");
+		ts->dl_failed = true;
+		free(buf);
+		if (f)
+			fclose(f);
+		mbedtls_aes_free(&aes);
+		return -1;
+	}
+	memcpy(ts->nonce, AUDIO_AESIV, sizeof(ts->nonce));
+	ts->nc_off = 0;
+	ts->aes = &aes;
+
+	/* The download loop with the card for a network: stream_cb decrypts
+	 * and publishes, stops at a chunk already whole or at the end, and a
+	 * seek moves the cursor. Only a read that brings nothing is fatal. */
+	while (!ts->dl_done && !ts->cb_fatal && !(stop && *stop)) {
+		if (ts->dl_restart_at >= 0) {
+			size_t at = stream_chunk_floor((size_t)ts->dl_restart_at);
+			ts->dl_restart_at = -1;
+			ts->relocate = false;
+			stream_rewind(ts, at);
+			continue;
+		}
+		if (ts->relocate || (ts->len && span_blocked(ts))) {
+			ts->relocate = false;
+			size_t next = stream_next_missing(ts->chunk_done, ts->len,
+			                                  ts->read_hint);
+			if (next >= ts->len) {
+				ts->dl_done = true;
+				continue;
+			}
+			if (next != ts->write_pos)
+				stream_rewind(ts, next);
+		}
+		size_t want = ts->total - ts->write_pos;
+		if (want > LOCAL_READ)
+			want = LOCAL_READ;
+		size_t got = fseek(f, (long)ts->write_pos, SEEK_SET) == 0
+		             ? fread(buf, 1, want, f) : 0;
+		if (got == 0) {
+			snprintf(ts->dl_err, sizeof(ts->dl_err),
+			         "the downloaded file ends at %u",
+			         (unsigned)ts->write_pos);
+			break;
+		}
+		stream_cb(ts, (const char *)buf, got);
+	}
+	fclose(f);
+	memset(buf, 0, LOCAL_READ);
+	free(buf);
+	ts->aes = NULL;
+	mbedtls_aes_free(&aes);
+
+	if (stop && *stop)
+		return 0;
+	if (!ts->dl_done) {
+		ts->dl_failed = true;
+		return -1;
+	}
+	return 0;
+}
+
+/* --- Saving a track to the card ------------------------------------------ */
+
+/* The .part is written in blocks the card takes at its speed
+ * (probe_offline 0.3: 64 KB was the fastest). */
+#define SAVE_BUF (64 * 1024)
+/* Passes over the URLs that bring nothing before giving up; the engine
+ * then waits and tries again (downloads_logic.h, dl_net_retry_ms). */
+#define SAVE_MAX_FAILED_PASSES 3
+#define SAVE_MAX_REFRESHES 2
+
+typedef struct {
+	FILE *f;
+	volatile bool *stop;
+	volatile uint32_t *done;
+	volatile uint32_t *total_out;
+	size_t   total;            /* the reply headers', set before data */
+	uint32_t have;             /* bytes in the .part */
+	uint64_t free_bytes;
+	bool     checked;          /* size and space looked at, this request */
+	bool     reset;            /* the .part is longer than the file */
+	int      fail;             /* TRACK_SAVE_NO_SPACE or TRACK_SAVE_WRITE */
+	char    *err;
+	size_t   errlen;
+} save_ctx;
+
+static bool save_cb(void *p, const char *data, size_t n)
+{
+	save_ctx *c = p;
+	if (c->stop && *c->stop)
+		return false;
+	if (!c->checked) {
+		c->checked = true;
+		if (!c->total || c->total > TRACK_STREAM_MAX) {
+			snprintf(c->err, c->errlen, "file size unknown or over the %u MB cap",
+			         TRACK_STREAM_MAX / (1024 * 1024));
+			c->fail = -1;
+			return false;
+		}
+		if (c->have > c->total) {
+			c->reset = true;
+			return false;
+		}
+		uint64_t need = (uint64_t)(c->total - c->have) + TRACK_SAVE_MARGIN;
+		if (c->free_bytes < need) {
+			snprintf(c->err, c->errlen, "not enough space on the SD card");
+			c->fail = TRACK_SAVE_NO_SPACE;
+			return false;
+		}
+		*c->total_out = (uint32_t)c->total;
+	}
+	if (c->have + n > c->total) {
+		c->reset = true;
+		return false;
+	}
+	if (fwrite(data, 1, n, c->f) != n) {
+		snprintf(c->err, c->errlen, "could not write to the SD card");
+		c->fail = TRACK_SAVE_WRITE;
+		return false;
+	}
+	c->have += (uint32_t)n;
+	*c->done = c->have;
+	return true;
+}
+
+static void save_wait(volatile bool *stop, unsigned ms)
+{
+	for (unsigned waited = 0; waited < ms; waited += 100) {
+		if (stop && *stop)
+			return;
+		svcSleepThread(100 * 1000000LL);
+	}
+}
+
+static FILE *save_open(const char *path, bool truncate, uint32_t *have)
+{
+	FILE *f = fopen(path, truncate ? "wb" : "ab");
+	if (!f)
+		return NULL;
+	setvbuf(f, NULL, _IOFBF, SAVE_BUF);
+	long at = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+	*have = at > 0 ? (uint32_t)at : 0;
+	return f;
+}
+
+int track_save_download(track_stream *ts, const char *part_path,
+                        volatile bool *stop, volatile uint32_t *done,
+                        volatile uint32_t *total, uint64_t free_bytes)
+{
+	save_ctx c;
+	memset(&c, 0, sizeof(c));
+	c.stop = stop;
+	c.done = done;
+	c.total_out = total;
+	c.free_bytes = free_bytes;
+	c.err = ts->dl_err;
+	c.errlen = sizeof(ts->dl_err);
+	ts->dl_err[0] = '\0';
+	c.f = save_open(part_path, false, &c.have);
+	if (!c.f) {
+		snprintf(ts->dl_err, sizeof(ts->dl_err),
+		         "could not write to the SD card");
+		return TRACK_SAVE_WRITE;
+	}
+	*done = c.have;
+	*total = 0;
+
+	int failures = 0, refreshes = 0, rc = -1;
+	bool whole = false;
+	while (!whole) {
+		if (stop && *stop) {
+			rc = TRACK_SAVE_STOPPED;
+			break;
+		}
+		uint32_t before = c.have;
+		bool refused = false;
+		for (int i = 0; i < ts->storage.count && !whole; i++) {
+			if (stop && *stop)
+				break;
+			int status = 0;
+			uint32_t from = c.have;
+			c.checked = false;
+			c.reset = false;
+			int got = http_get_url_stream(ts->storage.urls[i], from, save_cb,
+			                              &c, &c.total, &status, ts->dl_err,
+			                              sizeof(ts->dl_err));
+			if (c.fail)
+				break;
+			if (c.reset) {
+				/* Not this file's bytes: start it over. */
+				fclose(c.f);
+				c.f = save_open(part_path, true, &c.have);
+				if (!c.f) {
+					c.fail = TRACK_SAVE_WRITE;
+					break;
+				}
+				*done = 0;
+				continue;
+			}
+			if (got == 0 && c.total && c.have == c.total)
+				whole = true;
+			/* A whole .part from a run that stopped before renaming it:
+			 * nothing is left to ask for. The check after says if it is
+			 * right. */
+			else if (status == 416 && from > 0) {
+				c.total = from;
+				*total = from;
+				whole = true;
+			} else if (got != 0 && status != 0 && status != 200 &&
+			           status != 206 && c.have == from) {
+				refused = true;
+			}
+		}
+		if (c.fail) {
+			rc = c.fail;
+			/* Not a file this client keeps: retrying will not change it. */
+			ts->cb_fatal = c.fail == -1;
+			break;
+		}
+		if (whole || (stop && *stop))
+			continue;
+		if (c.have != before) {
+			failures = 0;
+			refreshes = 0;
+		} else if (++failures >= SAVE_MAX_FAILED_PASSES) {
+			if (!ts->dl_err[0])
+				snprintf(ts->dl_err, sizeof(ts->dl_err),
+				         "no CDN url served the file");
+			break;
+		}
+		if (refused && refreshes < SAVE_MAX_REFRESHES) {
+			refreshes++;
+			if (refresh_urls(ts, NULL))
+				continue;
+		}
+		save_wait(stop, 1000u << (failures < 3 ? failures : 3));
+	}
+	if (whole)
+		rc = 0;
+	if (c.f && fclose(c.f) != 0 && rc == 0) {
+		snprintf(ts->dl_err, sizeof(ts->dl_err),
+		         "could not write to the SD card");
+		rc = TRACK_SAVE_WRITE;
+	}
+	return rc;
+}
+
+bool track_verify_file(const char *path, uint32_t size, const uint8_t key[16])
+{
+	FILE *f = fopen(path, "rb");
+	if (!f)
+		return false;
+	uint8_t head[SPOTIFY_OGG_HEADER + 4];
+	bool ok = fseek(f, 0, SEEK_END) == 0 && ftell(f) == (long)size &&
+	          size > sizeof(head) && fseek(f, 0, SEEK_SET) == 0 &&
+	          fread(head, 1, sizeof(head), f) == sizeof(head);
+	fclose(f);
+	ok = ok && decrypt(head, sizeof(head), key) &&
+	     memcmp(head + SPOTIFY_OGG_HEADER, "OggS", 4) == 0;
+	memset(head, 0, sizeof(head));
+	return ok;
+}
+
 void track_stream_free(track_stream *ts)
 {
 	if (!ts)
@@ -465,4 +820,36 @@ void track_stream_free(track_stream *ts)
 	memset(ts->token, 0, sizeof(ts->token));
 	memset(ts->nonce, 0, sizeof(ts->nonce));
 	memset(ts->stream_block, 0, sizeof(ts->stream_block));
+}
+
+size_t track_stream_available(const track_stream *ts, size_t pos)
+{
+	if (!ts->data || !ts->len)
+		return pos;
+	size_t live = ts->downloaded;
+	size_t end = stream_available(ts->chunk_done, ts->len, live, pos);
+	/* The marks and the watermark before the bytes they publish. */
+	__sync_synchronize();
+	return end;
+}
+
+void track_stream_hint(track_stream *ts, size_t at)
+{
+	ts->read_hint = at;
+}
+
+void track_stream_seek(track_stream *ts, size_t at)
+{
+	ts->read_hint = at;
+	if (!ts->data || !ts->len || ts->dl_done)
+		return;
+	/* What the decoder needs first: the first missing chunk from `at`.
+	 * Left alone when the live span is about to write it. */
+	size_t need = stream_next_missing(ts->chunk_done, ts->len, at);
+	if (need >= ts->len)
+		return;
+	size_t live = ts->downloaded;
+	if (live >= need && live < need + STREAM_CHUNK)
+		return;
+	ts->dl_restart_at = (long)need;
 }

@@ -26,6 +26,14 @@ ui_rect ui_bevel_rect(ui_rect r, u32 fill, u32 light, u32 dark,
 /* A non-interactive panel (5.1): `capa` with a 1 px `tinta` outline. */
 void ui_panel(ui_rect r);
 
+/* A result row's or a tile's frame in its state (5.3, 5.16, 6.3): at rest
+ * a panel; focused, `clorofila` with a `musgo` bottom band; pressed, moved
+ * PRESS_SHIFT and filled `musgo`. Returns where its content goes and the
+ * inks for its main and secondary text (`tinta` on the accent). Any nudge
+ * is the caller's, applied to `r` first. */
+ui_rect ui_item_frame(ui_rect r, bool focused, bool pressed, u32 *ink,
+                      u32 *meta_ink);
+
 /* The focus border (6.2): 2 px of `lima`, 1 px outside the outline. */
 void ui_focus_ring(ui_rect r);
 
@@ -58,25 +66,44 @@ int ui_glyph(int x, int cy, const C2D_Text *letter, u32 color,
 /* The width ui_glyph() will take for `letter`. */
 int ui_glyph_width(const C2D_Text *letter);
 
+/* A D-pad glyph (5.6), the size of a letter's: no colour of its own, so
+ * `texto_2` like START and SELECT, the icon in `tinta`; inverted, `tinta`
+ * with the icon in `texto_2`. Returns its width. */
+int ui_glyph_icon(int x, int cy, const C2D_Image *icon, bool inverted);
+int ui_glyph_icon_width(void);
+
 /* One action of the button bar: the button's glyph and what it does. */
 typedef struct {
 	const C2D_Text *letter;
 	const C2D_Text *label;
 	u32 color;      /* the button's colour (2.5) */
 	bool inverted;  /* the button is held (6.5) */
+	/* Not NULL: a D-pad glyph with this icon instead of the letter. */
+	const C2D_Image *icon;
 } ui_hint;
 
 /* The button bar (5.6): a `capa` panel with up to four actions, left to
  * right from the margin. An action whose label is NULL shows its glyph
  * alone, for a bar that would not fit otherwise. */
 void ui_button_bar(ui_rect bar, const ui_hint *hints, int count);
+/* The same with the last `trailing` actions against the right margin:
+ * an action that comes and goes with what is on screen keeps its place. */
+void ui_button_bar_split(ui_rect bar, const ui_hint *hints, int count,
+                         int trailing);
+
+/* The progress bar's handle: none, at rest, or dragged by the stylus. */
+typedef enum {
+	UI_HANDLE_NONE,
+	UI_HANDLE_REST,
+	UI_HANDLE_PRESSED
+} ui_handle;
 
 /* A progress (5.4) or volume (5.5) bar in `r`: 1 px `tinta` outline,
  * `capa_alta` track, the download in `musgo` ahead of the progress in
- * `clorofila`, both in thousandths (download < 0: none). With `handle`, a
- * HANDLE_W x HANDLE_H `texto` handle outlined in `tinta`, centred on the
- * end of the progress. */
-void ui_progress(ui_rect r, int download, int progress, bool handle);
+ * `clorofila`, both in thousandths (download < 0: none). With a handle, a
+ * HANDLE_W x HANDLE_H one outlined in `tinta`, centred on the end of the
+ * progress: `texto` at rest, `lima` while dragged (6.3). */
+void ui_progress(ui_rect r, int download, int progress, ui_handle handle);
 
 /* The loading indicator (5.7), centred on (cx, cy): UI_LOADER_BARS bars,
  * UI_LOADER_W px wide in all. `step` advances every LOADER_STEP frames. */
@@ -89,7 +116,7 @@ void ui_loader(int cx, int cy, int step);
  * square; `step` advances every LOADER_STEP frames. */
 void ui_spinner(int cx, int cy, int step);
 /* The ring alone, for a flat background with nothing to veil: the login
- * screens (feature_plan.md, decision 1). */
+ * screens (STYLES.md 7.2). */
 void ui_spinner_ring(int cx, int cy, int step);
 
 /* A notice (5.8): raised `coral` (error) or `ambar` (warning) surface with
@@ -102,6 +129,9 @@ void ui_notice(ui_rect r, bool error, const C2D_Image *icon,
  * square with the note icon centred in `texto_2`, so the layout does not
  * move when the image arrives. */
 void ui_art(ui_rect box, const C2D_Image *image);
+/* The same with another icon (icons.h) where the cover goes: Liked Songs
+ * has a heart instead of a cover. */
+void ui_art_or(ui_rect box, const C2D_Image *image, int icon);
 
 /* A raised `capa_alta` bubble with an icon and a message (5.9). */
 void ui_bubble(ui_rect r, const C2D_Image *icon, const C2D_Text *text);
@@ -137,6 +167,13 @@ float ui_measure(C2D_TextBuf scratch, const char *string, float scale);
  * (3.3); `scratch` (UI_FIELD_SIZE glyphs) is used for measuring. */
 void ui_parse_fitted(C2D_Text *text, C2D_TextBuf buf, C2D_TextBuf scratch,
                      const char *string, float scale, int width);
+
+/* Text that rolls inside `width` px from `x` (marquee_logic.h): drawn
+ * `offset` px to the left, a second copy MARQUEE_GAP px behind it, and
+ * both clipped to the box. `screen_w` is the width of the screen being
+ * drawn, for the scissor. */
+void ui_text_marquee(const C2D_Text *text, int x, int cy, float scale,
+                     u32 color, int width, int offset, int screen_w);
 
 /* A mask icon in `color`, top-left at (x, y), at its own size. */
 void ui_icon(const C2D_Image *icon, int x, int y, u32 color);

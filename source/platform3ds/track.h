@@ -9,6 +9,7 @@
 
 #include "ap3ds.h"
 #include "spclient.h"
+#include "stream_chunks.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -54,10 +55,13 @@ void track_free(track_audio *t);
 /* A track being streamed rather than fetched whole.
  *
  * The file's full size is known from the first reply's headers, so the
- * buffer is reserved complete up front and a download thread fills it in
- * order while the decoder walks behind it. The two never race over content:
- * `downloaded` is the count of *decrypted* bytes, published only after each
- * piece lands, and the decoder must never read past it. */
+ * buffer is reserved complete up front and a download thread fills it
+ * while the decoder walks behind it. It fills it chunk by chunk
+ * (stream_chunks.h): in order from the start, or from wherever a seek sent
+ * it, and once it reaches the end, or chunks it already has, it goes back
+ * for the first missing one after where the decoder reads. The two never
+ * race over content: a chunk is published only once decrypted, and the
+ * decoder reads only what track_stream_available says is there. */
 #define TRACK_STREAM_MAX (12 * 1024 * 1024)
 
 typedef struct {
@@ -66,18 +70,25 @@ typedef struct {
 	size_t   len;               /* the file's full size */
 	size_t   total;             /* what the reply headers reported */
 	size_t   write_pos;         /* download cursor, download thread only */
-	volatile size_t downloaded; /* decrypted watermark, read by the decoder:
-	                             * bytes available up to this absolute offset
-	                             * in the current download span */
-	volatile bool dl_done;      /* write_pos reached len */
+	volatile size_t downloaded; /* decrypted watermark of the live span:
+	                             * write_pos, published */
+	volatile bool dl_done;      /* every chunk is whole */
 	volatile bool dl_failed;    /* gave up; dl_err says why */
 	bool     cb_fatal;          /* a real error, not worth retrying */
 	char     dl_err[160];
-	/* A seek past the watermark writes an absolute byte offset here; the
-	 * download thread aborts the current request and resumes from there,
-	 * leaving a zero hole behind that the decoder never walks back into
-	 * without another seek. -1 = no reposition pending. */
+	/* track_stream_seek writes an absolute byte offset here; the download
+	 * thread aborts the current request and goes on from that chunk.
+	 * -1 = no reposition pending. */
 	volatile long dl_restart_at;
+	/* Which chunks are whole. Written by the download thread only, each
+	 * once its bytes are decrypted. */
+	volatile uint8_t chunk_done[TRACK_STREAM_MAX / STREAM_CHUNK];
+	size_t   mark_next;         /* download thread: the next chunk to mark */
+	bool     relocate;          /* download thread: the span reached bytes
+	                             * already there, or the end: move on */
+	/* Main thread: where the decoder reads. Gaps after it are filled
+	 * first. */
+	volatile size_t read_hint;
 
 	sp_track   meta;
 	int        format;
@@ -99,6 +110,11 @@ typedef struct {
 	uint8_t  stream_block[16];
 	size_t   nc_off;
 	volatile bool *stop;
+
+	/* Played from a download on the SD card (track_stream_open_local):
+	 * track_stream_load_local fills the buffer from this file instead. */
+	bool     local;
+	char     local_path[300];
 } track_stream;
 
 /* Metadata, storage-resolve and the audio key: everything that must happen
@@ -120,6 +136,57 @@ int  track_stream_begin_cached(const char *sp_host, const char *token,
  * goes up -- that is the UI skipping, not a failure. */
 int  track_stream_download(track_stream *ts, volatile bool *stop);
 void track_stream_free(track_stream *ts);
+
+/* Main thread: where the bytes the decoder can read from `pos` on end
+ * (`pos` itself when none are there yet). */
+size_t track_stream_available(const track_stream *ts, size_t pos);
+/* Main thread: the decoder goes on reading from `at`. Unless the download
+ * is already writing what comes there, it is sent to the first missing
+ * chunk from `at` on. */
+void track_stream_seek(track_stream *ts, size_t at);
+/* Main thread: the decoder reads from `at` now, so the holes after it are
+ * filled first; no reposition. */
+void track_stream_hint(track_stream *ts, size_t at);
+
+/* A downloaded track, played from the card: the stream is set up as
+ * track_stream_begin would leave it (metadata, key, size), with no
+ * network at all. `key` is the unwrapped audio key; the caller wipes its
+ * copy. Returns 0, or -1 when the file is missing or not a size this
+ * client plays. */
+int  track_stream_open_local(const char *path, const uint8_t key[16],
+                             const sp_track *metadata, int format,
+                             track_stream *out, char *err, size_t errlen);
+/* track_stream_download's counterpart for a local stream: reads the file
+ * in blocks, decrypts them as they land and publishes them chunk by chunk
+ * exactly as a download does, seeks included. */
+int  track_stream_load_local(track_stream *ts, volatile bool *stop);
+
+/* A track kept for later, not played: the file as the CDN serves it,
+ * still encrypted, appended to `part_path` from what it already holds, so
+ * a download stopped anywhere resumes there. `ts` needs the storage URLs,
+ * the file id, the host and the token (track_stream_begin fills them); its
+ * buffer is not used. `done` and `total` follow the progress (total is 0
+ * until the first reply says). `free_bytes` is the card's free space when
+ * it started: a file that would leave less than TRACK_SAVE_MARGIN is not
+ * started.
+ *
+ * Returns 0 when the file is whole, TRACK_SAVE_STOPPED when `stop` went up
+ * (not a failure: the .part stays), TRACK_SAVE_NO_SPACE, TRACK_SAVE_WRITE
+ * when the card refused a write, or -1 when no URL served it; `ts->dl_err`
+ * says why. Never writes a decrypted byte. */
+#define TRACK_SAVE_STOPPED 1
+#define TRACK_SAVE_NO_SPACE (-4)
+#define TRACK_SAVE_WRITE (-5)
+#define TRACK_SAVE_MARGIN (32u * 1024 * 1024)
+int  track_save_download(track_stream *ts, const char *part_path,
+                         volatile bool *stop, volatile uint32_t *done,
+                         volatile uint32_t *total, uint64_t free_bytes);
+
+/* Whether the file at `path` is `size` bytes and `key` opens it: its
+ * first bytes, decrypted in memory, carry the Ogg page that follows the
+ * SPOTIFY_OGG_HEADER decoy. An integrity check of a download, nothing is
+ * skipped or searched for. */
+bool track_verify_file(const char *path, uint32_t size, const uint8_t key[16]);
 
 /* Where the Vorbis stream starts, and how long it is. */
 static inline const uint8_t *track_vorbis(const track_audio *t)

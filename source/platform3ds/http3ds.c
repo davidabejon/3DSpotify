@@ -210,20 +210,42 @@ static int finish(tls_conn *c, size_t limit, http_reply *out)
 /* Set for the next request only; the CDN is the only caller that needs it. */
 static size_t pending_range;
 
+/* Whether `lines` sets `name` itself, anchored to a line start. */
+static bool sets_header(const char *lines, const char *name)
+{
+	size_t n = strlen(name);
+	for (const char *p = lines; p && *p; p++)
+		if ((p == lines || p[-1] == '\n') && strncasecmp(p, name, n) == 0)
+			return true;
+	return false;
+}
+
 int http_request(const char *host, const char *path, const char *method,
                  const char *bearer, const char *ctype, const char *accept,
                  const void *body, size_t len, size_t limit, http_reply *out)
 {
+	return http_request_ex(host, path, method, bearer, ctype, accept, NULL,
+	                       body, len, limit, out);
+}
+
+int http_request_ex(const char *host, const char *path, const char *method,
+                    const char *bearer, const char *ctype, const char *accept,
+                    const char *extra, const void *body, size_t len,
+                    size_t limit, http_reply *out)
+{
 	memset(out, 0, sizeof(*out));
 	if (limit == 0)
 		limit = BODY_MAX;
+	if (!extra)
+		extra = "";
 	tls_conn *c = tls_connect(host, 443, 20000, NULL, out->err, sizeof(out->err));
 	if (!c)
 		return -1;
 
 	/* A bearer token is long -- login5's runs past 400 characters -- so the
 	 * header buffer is sized for it rather than for a typical request. */
-	size_t headcap = 1024 + (bearer ? strlen(bearer) : 0) + strlen(path);
+	size_t headcap = 1024 + (bearer ? strlen(bearer) : 0) + strlen(path) +
+	                 strlen(extra);
 	char *head = malloc(headcap);
 	if (!head) {
 		snprintf(out->err, sizeof(out->err), "out of memory");
@@ -243,20 +265,22 @@ int http_request(const char *host, const char *path, const char *method,
 
 	int n = snprintf(head, headcap,
 	                 "%s %s HTTP/1.1\r\nHost: %s\r\n"
-	                 "User-Agent: 3ds-spotify/0.1\r\n"
-	                 "%s%s%s"
-	                 "%s%s%s"
-	                 "%s%s%s"
 	                 "%s"
+	                 "%s%s%s"
+	                 "%s%s%s"
+	                 "%s%s%s"
+	                 "%s%s"
 	                 "Content-Length: %u\r\nConnection: close\r\n\r\n",
 	                 method, path, host,
+	                 sets_header(extra, "user-agent:") ? ""
+	                     : "User-Agent: 3ds-spotify/0.1\r\n",
 	                 bearer ? "Authorization: Bearer " : "", bearer ? bearer : "",
 	                 bearer ? "\r\n" : "",
 	                 ctype ? "Content-Type: " : "", ctype ? ctype : "",
 	                 ctype ? "\r\n" : "",
 	                 accept ? "Accept: " : "", accept ? accept : "",
 	                 accept ? "\r\n" : "",
-	                 range,
+	                 range, extra,
 	                 (unsigned)len);
 	if (n < 0 || (size_t)n >= headcap) {
 		snprintf(out->err, sizeof(out->err), "request headers too long");
@@ -655,7 +679,8 @@ static int sess_grow(char **buf, size_t *cap, size_t have, size_t extra,
  * stream's framing, so the connection is closed either way. */
 static int sess_attempt(http_session *s, const char *path, const char *method,
                         const char *bearer, const char *ctype,
-                        const char *accept, const void *body, size_t len,
+                        const char *accept, const char *extra,
+                        const void *body, size_t len,
                         size_t limit, http_reply *out, bool *stale)
 {
 	*stale = false;
@@ -668,7 +693,8 @@ static int sess_attempt(http_session *s, const char *path, const char *method,
 			return -1;
 	}
 
-	size_t headcap = 1024 + (bearer ? strlen(bearer) : 0) + strlen(path);
+	size_t headcap = 1024 + (bearer ? strlen(bearer) : 0) + strlen(path) +
+	                 strlen(extra);
 	char *head = malloc(headcap);
 	if (!head) {
 		snprintf(out->err, sizeof(out->err), "out of memory");
@@ -676,18 +702,22 @@ static int sess_attempt(http_session *s, const char *path, const char *method,
 	}
 	int n = snprintf(head, headcap,
 	                 "%s %s HTTP/1.1\r\nHost: %s\r\n"
-	                 "User-Agent: 3ds-spotify/0.1\r\n"
+	                 "%s"
 	                 "%s%s%s"
 	                 "%s%s%s"
 	                 "%s%s%s"
+	                 "%s"
 	                 "Content-Length: %u\r\n\r\n",
 	                 method, path, s->host,
+	                 sets_header(extra, "user-agent:") ? ""
+	                     : "User-Agent: 3ds-spotify/0.1\r\n",
 	                 bearer ? "Authorization: Bearer " : "", bearer ? bearer : "",
 	                 bearer ? "\r\n" : "",
 	                 ctype ? "Content-Type: " : "", ctype ? ctype : "",
 	                 ctype ? "\r\n" : "",
 	                 accept ? "Accept: " : "", accept ? accept : "",
 	                 accept ? "\r\n" : "",
+	                 extra,
 	                 (unsigned)len);
 	if (n < 0 || (size_t)n >= headcap) {
 		snprintf(out->err, sizeof(out->err), "request headers too long");
@@ -826,12 +856,24 @@ int http_session_request(http_session *s, const char *path, const char *method,
                          const char *accept, const void *body, size_t len,
                          size_t limit, http_reply *out)
 {
+	return http_session_request_ex(s, path, method, bearer, ctype, accept,
+	                               NULL, body, len, limit, out);
+}
+
+int http_session_request_ex(http_session *s, const char *path,
+                            const char *method, const char *bearer,
+                            const char *ctype, const char *accept,
+                            const char *extra, const void *body, size_t len,
+                            size_t limit, http_reply *out)
+{
 	memset(out, 0, sizeof(*out));
 	if (limit == 0)
 		limit = BODY_MAX;
+	if (!extra)
+		extra = "";
 	bool stale = false;
-	if (sess_attempt(s, path, method, bearer, ctype, accept, body, len,
-	                 limit, out, &stale) == 0)
+	if (sess_attempt(s, path, method, bearer, ctype, accept, extra, body,
+	                 len, limit, out, &stale) == 0)
 		return 0;
 	if (!stale)
 		return -1;
@@ -840,8 +882,8 @@ int http_session_request(http_session *s, const char *path, const char *method,
 	char first[160];
 	snprintf(first, sizeof(first), "%s", out->err);
 	memset(out, 0, sizeof(*out));
-	if (sess_attempt(s, path, method, bearer, ctype, accept, body, len,
-	                 limit, out, &stale) == 0)
+	if (sess_attempt(s, path, method, bearer, ctype, accept, extra, body,
+	                 len, limit, out, &stale) == 0)
 		return 0;
 	return -1;
 }

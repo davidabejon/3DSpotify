@@ -22,6 +22,15 @@ void cfg_dir(char *out, size_t outlen);
 bool cfg_get(const char *key, char *out, size_t outlen);
 bool cfg_set(const char *key, const char *value);
 
+/* cfg_set off the calling thread: rewriting the file on the SD card stalls
+ * for a moment, which the main loop shows as a frozen frame. The value is
+ * queued (a newer one for the same key replaces it) for a writer thread;
+ * cfg_get sees it at once. For preferences, whose write may fail
+ * unnoticed; the refresh token keeps cfg_save_refresh_token. */
+void cfg_set_async(const char *key, const char *value);
+/* Writes what is still queued and stops the writer. As the app closes. */
+void cfg_flush(void);
+
 bool cfg_load_refresh_token(char *out, size_t outlen);
 bool cfg_save_refresh_token(const char *token, const char *scope);
 /* The avatar URL is not a secret, but it rides in the same file: the Web API

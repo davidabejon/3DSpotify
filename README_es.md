@@ -27,7 +27,7 @@ directamente a Spotify por HTTPS.
 
 ## Resumen
 Este repositorio contiene:
-- El cliente nativo para 3DS, con el punto de entrada en `source/main.c` y los módulos de interfaz en [source/ui](source/ui), que empareja la cuenta desde la consola, busca canciones y reproduce audio local con carátula.
+- El cliente nativo para 3DS, con el punto de entrada en `source/main.c` y los módulos de interfaz en [source/ui](source/ui), que empareja la cuenta desde la consola, busca canciones, artistas, álbumes y playlists, y reproduce audio local con carátula.
 - Probes independientes de protocolo y herramientas de build/tests en `source` y `tests`.
 
 ## Requisitos
@@ -137,10 +137,10 @@ pestañas, cada una con su icono:
 
 | Icono | Pestaña | Qué contiene |
 |---|---|---|
-| Casa | **Inicio** | Buscar canciones y repetir la última búsqueda. |
+| Casa | **Inicio** | Tus playlists recientes, tus descargas y un atajo a la búsqueda. |
 | Lupa | **Búsqueda** | Los últimos resultados, la búsqueda en curso o su error. |
 | Ecualizador | **Reproducción** | La canción que suena, con sus controles. |
-| Engranaje | **Ajustes** | Idioma, volver a conectar y emparejar otra cuenta. |
+| Engranaje | **Ajustes** | Idioma, descargas, volver a conectar y emparejar otra cuenta. |
 
 - Toca una pestaña para abrirla (se activa al levantar el lápiz dentro de ella).
 - **L/R** pasan a la pestaña anterior o siguiente desde cualquier pantalla; **ZL/ZR** (solo
@@ -161,70 +161,212 @@ pestañas, cada una con su icono:
 - Mientras hay una búsqueda en curso, la pestaña **Búsqueda** añade encima
   del logo o de la ficha una burbuja flotante «Buscando…» con el indicador de
   carga.
+- Con un detalle abierto ([Detalles](#detalles)), la pantalla superior muestra su
+  ficha: la carátula o el retrato, el nombre y hasta cuatro líneas (artista, álbum,
+  duración y número de pista, año, sello…; los oyentes mensuales de un artista y el principio de su biografía). Una línea demasiado larga se desplaza de
+  lado para poder leerla entera.
+- Con resultados de búsqueda en pantalla, la pestaña **Búsqueda** muestra una franja
+  con los tipos de resultado y cuántos hay de cada uno, con el que está en pantalla
+  resaltado, y debajo la ficha del resultado resaltado (su portada o retrato llega
+  cuando te paras un momento en él).
 
 ### Inicio
 
-Toca **«Buscar canciones»** o pulsa **A** para abrir el teclado. Debajo aparece tu última búsqueda como un botón secundario; tócalo o llega a él con arriba/abajo y pulsa **A**. Al confirmar, la app pasa a la pestaña **Búsqueda**.
+La pestaña muestra tus seis playlists reproducidas más recientemente como teselas (portada y
+nombre, en dos columnas), que se cargan en segundo plano mientras se ven teselas de espera.
+Primero van las que escuchaste por última vez y después el resto de tu carpeta de playlists.
+Si la cuenta no tiene historial, la etiqueta dice **«Tus playlists»** y la carpeta conserva su
+propio orden. El DJ de Spotify no aparece: es una sesión en vivo de otro servicio, sin lista
+de canciones que este cliente pueda reproducir.
 
-**Controles táctiles:**
-- Toca un botón para resaltarlo; el botón muestra un estado pulsado cuando levantas el lápiz dentro de él.
-- Si deslizas el lápiz fuera del botón antes de levantarlo, se cancela el toque.
+- La primera tesela es siempre **Canciones que te gustan** (un corazón donde iría la
+  portada), de la más reciente a la más antigua, cargadas de 50 en 50 como una playlist.
+- La segunda tesela es siempre **Descargas** ([Descargas](#descargas)).
+- Con una tesela resaltada, la pantalla superior muestra una vista previa: portada,
+  nombre, número de canciones y lo último que sonó en ella. La portada se carga cuando el
+  resaltado se queda quieto un momento.
+- Las playlists se abren siempre por su primera canción; lo último que sonó solo se
+  muestra en la vista previa (a menudo ni siquiera está en la playlist: la reproducción
+  automática sigue después del final).
+- Muévete entre teselas con la cruceta; bajando desde la última fila llegas a **«Mostrar
+  más»**, que lista hasta 24 playlists en una rejilla con desplazamiento. **B** vuelve a las
+  seis.
+- Toca una tesela para resaltarla; tócala otra vez (o pulsa **A**) para abrir la playlist
+  ([Detalles](#detalles)).
+- Si la carga falla, pulsa **A** (o toca **«Reintentar»**). Una cuenta sin playlists ofrece
+  en su lugar el botón **«Buscar canciones»**.
 
-**Indicadores de acción:** Los glifos con fondos de color muestran las acciones disponibles:
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — abre el teclado de búsqueda
+**Indicadores de acción:**
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — abre la playlist resaltada
+- <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — abre el teclado de búsqueda; al confirmar, la app pasa a la pestaña **Búsqueda**
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — en «Mostrar más», vuelve a las seis
+
+Las portadas que genera Spotify (mixes, blends, el DJ) no están en el CDN al que llega este
+cliente, así que esas teselas se quedan con el marcador de la nota. En los nombres con emoji,
+los caracteres que la fuente de la consola no tiene se ven como recuadros.
 
 Mientras el teclado está abierto, la canción que suena se pausa y sigue al cerrarlo.
 
 ### Búsqueda
 
-Los resultados muestran cuatro canciones a la vez. La **pantalla inferior** muestra la lista con miniaturas bajo la barra de pestañas; la superior sigue lo descrito en [Pantalla superior](#pantalla-superior).
+Una búsqueda encuentra canciones, artistas, álbumes y playlists. Los resultados muestran un tipo cada vez, cuatro filas en pantalla, y empiezan por el tipo del mejor resultado de Spotify (un artista para «the killers», un álbum para «ok computer»). La **pantalla inferior** muestra la lista con miniaturas bajo la barra de pestañas; la superior sigue lo descrito en [Pantalla superior](#pantalla-superior).
 
 **Navegación:**
-- Arriba/abajo recorre la lista; la canción resaltada gana un fondo verde más brillante.
-- Izquierda/derecha salta de cuatro en cuatro.
-- Toca una canción para resaltarla; tócala otra vez (o pulsa **A**) para reproducirla: la app pasa a la pestaña **Reproducción**.
+- Arriba/abajo recorre la lista; la fila resaltada gana un fondo verde más brillante.
+- Izquierda/derecha cambia entre Canciones, Artistas, Álbumes y Playlists. Los tipos sin resultados se saltan, y cada tipo conserva por dónde ibas al volver a él.
+- Toca una fila para resaltarla; tócala otra vez (o pulsa **A**) para abrirla: una canción se reproduce (la app pasa a la pestaña **Reproducción**); un artista, un álbum o una playlist abre su detalle ([Detalles](#detalles)).
 - Arrastra la lista con el lápiz para desplazarla; la barra del borde derecho indica por dónde vas.
 
 **Indicadores de acción:**
-- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — reproduce la canción resaltada
-- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Inicio
+- <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — reproduce la canción resaltada, o abre el artista, el álbum o la playlist resaltada
+- <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pantalla de antes de buscar (y desde ella, a la pestaña Inicio)
+- <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> — abre el detalle de la canción resaltada ([Detalles](#detalles)); solo en canciones
 - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span> — inicia una nueva búsqueda
-- Izquierda/derecha — salta de cuatro en cuatro
+- Izquierda/derecha — cambia el tipo de resultados
+
+La búsqueda por tipos usa el servicio con el que busca el web player de Spotify. Si deja de responder, la app busca como siempre: canciones, más los artistas y álbumes de esas canciones, y sin playlists.
 
 **Gestos táctiles:**
 - **Tocar una fila:** selecciona la canción; la fila se resalta.
-- **Tocar nuevamente:** reproduce la canción al momento con el resto de resultados como cola.
+- **Tocar nuevamente:** reproduce la canción al momento, seguida de una radio de canciones parecidas.
 - **Arrastrar verticalmente:** desplaza la lista; las filas pueden quedar cortadas por la barra de pestañas y la barra de botones.
 - **Arrastrar más de 8 píxeles desde donde tocaste:** el arrastre se confirma; el toque de la fila se cancela.
 
 **Estado de la búsqueda:**
-- Antes de la primera búsqueda, la pestaña ofrece el botón **«Buscar canciones»**.
+- Antes de la primera búsqueda, la pestaña ofrece el botón **«Buscar canciones»** y, debajo, tus tres últimas búsquedas para repetirlas.
 - Si la búsqueda falla, pulsa **A** (o toca el botón de la pantalla) para reintentar.
 - Pulsa **B** para cancelar una búsqueda pendiente cuando termine la petición de red activa.
-- Mientras suena la cola de estos resultados, la fila resaltada sigue a la canción que suena.
 
 ### Reproducción
 
-La canción elegida se reproduce localmente con el resto de resultados como cola, y sigue sonando aunque cambies de pestaña.
+La canción elegida se reproduce localmente y sigue sonando aunque cambies de pestaña. Al terminar, empieza sola la siguiente de la cola.
 - La **pantalla superior** muestra la carátula en grande (con el marcador de la nota hasta que llega).
-- La **pantalla inferior** muestra el título, el artista y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
+- La **pantalla inferior** muestra el título, el artista, el álbum y la posición en la cola («3 de 24»), los botones anterior, reproducir/pausa y siguiente, el tiempo, la barra de progreso (con lo descargado por delante) y la de volumen.
+- Toca el **título**, el **artista** o el **álbum** para abrir su detalle ([Detalles](#detalles)). Funcionan mientras la pista carga, suena o ha terminado; al pulsarlos, el texto pasa a color lima y se subraya.
+- El icono a la derecha del artista y el álbum dice si la canción está en la SD: una flecha
+  (sin descargar), un reloj (en cola), su porcentaje (descargándose) o un check
+  (descargada). Toca la flecha, o pulsa
+  <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>,
+  para descargarla.
 
 **Controles de reproducción:**
 - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span> — pausa/reanuda; con la pista terminada, la vuelve a empezar; con un error, reintenta
 - Izquierda/derecha, o los botones de la pantalla — cambia de pista
 - Arriba/abajo — ajusta el volumen local
+- **Tocar la barra de volumen** — fija el volumen; arrastra para ajustarlo
+- **Arrastrar la barra de progreso** — el tirador y el tiempo siguen al dedo; la pista salta
+  ahí al levantar el lápiz. Solo con la canción entera descargada (la capa de descarga de la
+  barra llena).
 - <span style="background-color: #FFD23F; color: black; padding: 2px 4px; border-radius: 2px;">B</span> — vuelve a la pestaña Búsqueda sin cortar la música
 - **START** — detiene y sale
 
-La cola sigue el orden de los resultados y no envuelve en sus extremos: en ellos, el botón anterior o siguiente aparece deshabilitado. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
+**La cola** depende de dónde eliges la canción:
+- **Una canción suelta** (un resultado de búsqueda, o su detalle): la canción y 25
+  recomendaciones de canciones parecidas, que llegan en segundo plano cuando ya suena.
+  Cuando quedan 2, llegan 25 más, sin repetir, así que la radio no se acaba.
+- **Un álbum, artista o playlist:** la lista desde la canción elegida, en orden o en
+  aleatorio (<span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+  en la lista, ver [Detalles](#detalles)). Una playlist sigue cargando las páginas que su
+  detalle aún no había cargado, hasta 500 canciones. Al acabar la lista, se para.
+
+La cola no envuelve en sus extremos: en ellos, el botón anterior o siguiente aparece deshabilitado. La reproducción completa, carátulas y controles aún deben validarse en una 3DS real. Los probes siguen disponibles como targets independientes.
+
+### Detalles
+
+Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su álbum:
+
+- **Canción:** botones **Reproducir**, **Descargar**, **Artista: …** y **Album: …**
+  (arriba/abajo y **A**, o tocando). Reproducir empieza la canción con la lista de la que
+  salió como cola; si es una canción de los resultados de búsqueda, o de la radio que
+  suena, una radio a partir de ella. El botón de descarga dice dónde está la canción:
+  **Descargar**, **En cola**, **Descargando 42%**, **Reintentar descarga**, **Borrar
+  descarga** (pulsa **A** dos veces) o **Descargado** si llegó con un álbum o una playlist
+  (se borra con ellos).
+- **Álbum y playlist:** encima de la lista, el botón **Descargar álbum** / **Descargar
+  playlist** los descarga enteros; se llega subiendo desde la primera canción. Después
+  muestra el progreso («Descargando 8 de 12») y **Descargado**, que abre la copia
+  descargada.
+- **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares y, debajo, su
+  discografía (álbumes, sencillos y EP, recopilatorios); A sobre un lanzamiento abre el
+  álbum. El botón de la cabecera «Canciones populares» muestra la biografía entera en la
+  pantalla superior, para desplazarla con la cruceta. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
+  siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
+  «Cargando…»), hasta 500. Los episodios y archivos locales se omiten; la pantalla
+  superior indica cuántas de cuántas hay cargadas.
+  **A** (o tocar la fila resaltada) reproduce desde esa canción con la
+  lista como cola; <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> abre el detalle de la canción;
+  <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+  activa o desactiva el aleatorio. Es un solo ajuste para todas las listas y se recuerda
+  entre sesiones; la barra de botones lo muestra («Aleatorio» o «En orden»). En aleatorio,
+  la canción elegida suena primero y el resto le sigue en orden aleatorio. Cambiarlo
+  mientras suena una lista reordena la cola al momento, sin cortar la canción.
+- **B** vuelve un nivel atrás; sin detalles abiertos, hace lo de siempre en esa
+  pestaña. **L/R** cambian de pestaña y conservan los detalles de cada una donde los
+  dejaste.
+- Los detalles de álbum, artista y playlist se cargan en segundo plano: **B** cancela
+  y, si la carga falla, **A** reintenta.
+
+Los detalles se abren desde **Inicio** (una tesela de playlist), desde **Búsqueda**
+(<span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span> sobre un resultado) y desde **Reproducción** (tocando el título, el artista o el
+álbum). Una búsqueda nueva cierra los detalles abiertos en **Búsqueda**.
+
+### Descargas
+
+Las canciones, álbumes y playlists (también Canciones que te gustan) se pueden guardar en
+la SD y escuchar sin conexión.
+
+- **Descargar:** el botón **Descargar** en el detalle de una canción, un álbum o una
+  playlist, o
+  <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>
+  en la pestaña **Reproducción**. Las descargas van en segundo plano, una canción cada vez,
+  mientras sigues escuchando; esperan mientras el reproductor carga una pista.
+- **Ritmo:** Spotify limita cuántas claves de audio puede pedir una cuenta: unas 15
+  seguidas y luego una cada 30 segundos. Por eso una playlist grande tarda un rato; la cola
+  espera y sigue sola, y siempre deja claves para la música que pones.
+- **Reproducir:** una canción descargada suena desde la SD la elijas donde la elijas, sin
+  usar la red para su audio.
+- **Inicio → Descargas:** tus álbumes y playlists descargados y después las canciones
+  sueltas, lo más reciente primero. Abre un álbum o una playlist para reproducirlo; las
+  canciones que aún no están descargadas salen atenuadas y se saltan. Su botón **Borrar
+  descarga** (pulsa **A** dos veces) lo borra.
+- **Ajustes → Descargas** (el gestor): todas las descargas por estado (en curso, en cola,
+  con error, descargadas), con el espacio ocupado y el libre en la SD.
+  - <span style="background-color: #FF4F45; color: white; padding: 2px 4px; border-radius: 2px;">A</span>
+    cancela una descarga en cola o en curso, reintenta una con error o abre una descargada.
+  - <span style="background-color: #3FA2FF; color: black; padding: 2px 4px; border-radius: 2px;">X</span>
+    borra la fila resaltada.
+  - Cancelar y borrar piden una segunda pulsación del mismo botón.
+  - <span style="background-color: #39D97A; color: black; padding: 2px 4px; border-radius: 2px;">Y</span>
+    pausa o reanuda toda la cola.
+- **Dónde están:** en `SD:/3ds/3DSpotify/downloads/`. El audio sigue cifrado tal como lo
+  envía Spotify, y sus claves se guardan cifradas con una clave ligada a esta consola: los
+  archivos no se pueden reproducir en otra consola ni con otro programa, y copiarlos a otro
+  sitio no sirve de nada. Son de la cuenta que los descargó; tras emparejar otra cuenta no
+  se muestran.
+
+**Sin conexión:** con una credencial guardada, la app arranca sin conexión: al momento si
+el Wi-Fi está apagado, o cuando no llega a Spotify. También pasa sola a sin conexión si el
+Wi-Fi se va mientras la usas, sin cortar lo que suena desde la SD.
+
+- Junto al icono de la pestaña **Búsqueda** aparece un icono de Wi-Fi tachado.
+- **Inicio** muestra solo la tesela **Descargas**, y **Búsqueda** avisa de que hace falta
+  conexión.
+- Solo suena lo descargado: al pasar a una canción que no está en la SD, salta a la
+  siguiente descargada. Los enlaces de artista y álbum y las descargas nuevas no están
+  disponibles; las descargas en cola esperan a la conexión.
+- **Reintentar conexión** (Inicio), **Reintentar** (Búsqueda) o **Volver a conectar**
+  (Ajustes) conectan sin salir de la app, y la música sigue sonando. Si Spotify rechaza la
+  cuenta, el inicio de sesión empieza de nuevo como al abrir la app.
 
 ### Ajustes
 
 - **Idioma** — muestra el idioma actual y lo cambia (también con **SELECT** desde cualquier pestaña).
+- **Descargas** — abre el gestor de descargas ([Descargas](#descargas)); dice cuántas
+  esperan.
 - **Volver a conectar** — vuelve a abrir la sesión con la credencial guardada.
 - **Emparejar otra cuenta** — empieza el emparejamiento con un código nuevo.
 
-Elige con arriba/abajo y **A**, o tocando el botón. Volver a conectar y emparejar detienen la reproducción. **B** vuelve a la pestaña Inicio.
+Elige con arriba/abajo y **A**, o tocando el botón. Volver a conectar con conexión y emparejar detienen la reproducción. **B** vuelve a la pestaña Inicio.
 
 ## Probes
 
@@ -243,6 +385,8 @@ anteriores (por ejemplo, los últimos probes usan el token que guarda
 | `probe_meta` | La cadena completa de inicio de sesión y la lectura de la biblioteca y los metadatos de una canción. |
 | `probe_audio` | La decodificación de Ogg Vorbis y su reproducción por NDSP (lee `test.ogg`; sin red). |
 | `probe_play` | Una canción de principio a fin: clave de audio, descarga, descifrado y reproducción. |
+| `probe_search` | La búsqueda por tipos mediante el servicio del web player de Spotify: cómo encontrar el hash de sus consultas en open.spotify.com, las cabeceras que acepta, la forma y los tiempos de cada tipo de resultado, un hash caducado, y la búsqueda de siempre para comparar. Escribe `probe_search.log` y las respuestas (`probe_search_*.json`, con el nombre de usuario tapado) junto al `.3dsx`. |
+| `probe_artist` | Lo que traen los metadatos de un artista para su detalle: tamaño y campos de la respuesta, la biografía, los álbumes, sencillos y recopilatorios con sus nombres, fechas y orden, y dos posibles fuentes de oyentes mensuales con sus tiempos. Lee hasta tres artistas más de `probe_artist.txt` (un id, URI o enlace por línea). Escribe `probe_artist.log` y las respuestas (`probe_artist_*.json`, `probe_artist_1_metadata.bin`, con el nombre de usuario tapado) junto al `.3dsx`. |
 
 Compila uno con `--app`, por ejemplo:
 

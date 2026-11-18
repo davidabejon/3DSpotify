@@ -213,9 +213,11 @@ int ap_resolve_list(ap_candidate *out, int max, char *err, size_t errlen)
 			memcpy(entry, q1 + 1, len);
 			entry[len] = '\0';
 			char *colon = strrchr(entry, ':');
-			if (colon) {
-				*colon = '\0';
-				snprintf(out[n].host, sizeof(out[n].host), "%s", entry);
+			size_t host_len = colon ? (size_t)(colon - entry) : 0;
+			/* A host cut short would be another host: skip it. */
+			if (colon && host_len < sizeof(out[n].host)) {
+				memcpy(out[n].host, entry, host_len);
+				out[n].host[host_len] = '\0';
 				out[n].port = (uint16_t)atoi(colon + 1);
 				n++;
 			}
@@ -599,6 +601,9 @@ int ap_wait(ap_session *s, int timeout_ms)
 	 * hangup rather than data; reporting that as "ready" would turn into a
 	 * confusing read failure one call later. */
 	if (p.revents & (POLLERR | POLLHUP | POLLNVAL))
+		return -1;
+	/* Data that arrived with the hangup is still worth reading. */
+	if ((p.revents & SOC_POLLHUP) && !(p.revents & POLLIN))
 		return -1;
 	return 1;
 }

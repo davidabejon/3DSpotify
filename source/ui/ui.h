@@ -12,6 +12,7 @@
 #include <stdbool.h>
 
 /* Colours, sizes and timings: theme.h (docs/STYLES.md). */
+#include "layout.h"
 #include "theme.h"
 
 /* After gfxInitDefault. Returns false when there is not enough linear
@@ -27,6 +28,10 @@ void ui_exit(void);
 void ui_begin(void);
 void ui_scene(gfxScreen_t screen);
 void ui_end(void);
+
+/* The screen's own background over `r`, as ui_scene paints it: hides
+ * what slid under a control, such as rows dragged under a button. */
+void ui_background(ui_rect r);
 
 /* True once after the app regains the screens (HOME menu, lid, applets) and
  * on the first call: everything has to be redrawn then. */

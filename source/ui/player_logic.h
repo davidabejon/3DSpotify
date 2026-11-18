@@ -1,17 +1,25 @@
-/* The player's queue steps and the layout of the Playing tab
+/* The player's phases and the layout of the Playing tab
  * (docs/STYLES.md 5.4, 5.5 and 7.5). Pure C with no 3DS headers, tested
  * in tests/native_logic_test.c. Whole pixels throughout.
  *
  * Bottom screen, 320 x 240:
  *   tabs       0..32   the tab bar (tabs_logic.h)
- *   title     44..62   the track, "3/24" on the right
- *   artist    66..81
- *   controls 100..148  previous 40x40, play/pause 48x48, next 40x40,
+ *   track     36..68   link zone: the title, "3/24" on the right
+ *   artist    72..104  link zone, x 8..140  } 132 px each,
+ *   album     72..104  link zone, x 144..276} SP_1 apart
+ *   download  72..104  x 280..312: where the track is in the downloads,
+ *                      a TOUCH_MIN square, SP_1 right of the album
+ *   controls 108..156  previous 40x40, play/pause 48x48, next 40x40,
  *                      centred, SP_4 apart
- *   times    155..169  elapsed on the left, duration on the right
- *   progress 172..180  progress bar, its handle 169..183
- *   volume   193..199  "Vol." and the volume bar
- *   hints    216..240  button bar */
+ *   times    163..177  elapsed on the left, duration on the right
+ *   progress 180..188  progress bar, its handle 177..191
+ *   volume   201..207  "Vol." and the volume bar
+ *   hints    216..240  button bar
+ *
+ * The links (STYLES.md 5.14) are touch only, TOUCH_MIN
+ * high (STYLES.md 4.4): they open the track's, the artist's or the album's
+ * detail. At rest only their text shows; there is no focus state, since the
+ * D-pad already skips tracks and sets the volume. */
 #ifndef PLAYER_LOGIC_H
 #define PLAYER_LOGIC_H
 
@@ -30,18 +38,6 @@ typedef enum {
 	PLAYER_PHASE_FAILED
 } player_phase;
 
-/* The track `direction` (-1 or +1) steps from `index` in a queue of
- * `count`, or -1: the queue does not wrap. */
-static inline int playback_queue_step(int index, int count, int direction)
-{
-	if (count <= 0 || index < 0 || index >= count ||
-	    (direction != -1 && direction != 1))
-		return -1;
-
-	int next = index + direction;
-	return next >= 0 && next < count ? next : -1;
-}
-
 /* --- Layout of the Playing tab --------------------------------------- */
 
 typedef enum {
@@ -52,9 +48,59 @@ typedef enum {
 	PLAYER_CONTROL_COUNT
 } player_control;
 
-/* Where the track's text starts and the top of the controls. */
-#define PLAYER_TEXT_TOP (TAB_H + SP_3)
-#define PLAYER_CONTROLS_TOP 100
+/* The top of the controls, under the links. */
+#define PLAYER_CONTROLS_TOP 108
+
+typedef enum {
+	PLAYER_LINK_NONE = -1,
+	PLAYER_LINK_TRACK,
+	PLAYER_LINK_ARTIST,
+	PLAYER_LINK_ALBUM,
+	PLAYER_LINK_COUNT
+} player_link;
+
+/* The links show a track: while it loads, plays and once finished, the
+ * phases that draw its text. Idle and failed have none. */
+static inline bool player_links_enabled(player_phase phase)
+{
+	return phase == PLAYER_PHASE_LOADING || phase == PLAYER_PHASE_PLAYING ||
+	       phase == PLAYER_PHASE_FINISHED;
+}
+
+static inline ui_rect player_link_rect(int link)
+{
+	int top = TAB_H + SP_1;
+	int width = SCREEN_BOTTOM_W - 2 * SP_2;
+	/* The second row leaves the download square at its right end. */
+	int half = (width - TOUCH_MIN - SP_1 - SP_1) / 2;
+	int second = top + TOUCH_MIN + SP_1;
+	switch (link) {
+	case PLAYER_LINK_ARTIST:
+		return (ui_rect){ SP_2, second, half, TOUCH_MIN };
+	case PLAYER_LINK_ALBUM:
+		return (ui_rect){ SP_2 + half + SP_1, second, half, TOUCH_MIN };
+	default:
+		return (ui_rect){ SP_2, top, width, TOUCH_MIN };
+	}
+}
+
+/* The track's download: an icon of where it is, touched like X. */
+static inline ui_rect player_download_rect(void)
+{
+	ui_rect r = { SCREEN_BOTTOM_W - SP_2 - TOUCH_MIN,
+	              TAB_H + SP_1 + TOUCH_MIN + SP_1, TOUCH_MIN, TOUCH_MIN };
+	return r;
+}
+
+/* The link under (x, y) among the `enabled` ones, or PLAYER_LINK_NONE. */
+static inline player_link player_link_hit(int x, int y,
+                                          const bool enabled[PLAYER_LINK_COUNT])
+{
+	for (int i = 0; i < PLAYER_LINK_COUNT; i++)
+		if (enabled[i] && ui_rect_contains(player_link_rect(i), x, y))
+			return (player_link)i;
+	return PLAYER_LINK_NONE;
+}
 
 static inline ui_rect player_control_rect(int control)
 {
@@ -107,6 +153,45 @@ static inline ui_rect player_volume_rect(int label_w)
 	ui_rect r = { x, progress.y + progress.h + SP_3 + 1,
 	              SCREEN_BOTTOM_W - SP_2 - x, VOLUME_H };
 	return r;
+}
+
+/* Where the stylus takes the bars: wider and taller than they are drawn,
+ * the whole width, split halfway between them. The progress bar's zone
+ * starts under the times; the volume's ends at the button bar. */
+static inline int player_bars_split(int label_w)
+{
+	ui_rect progress = player_progress_rect();
+	ui_rect volume = player_volume_rect(label_w);
+	return (progress.y + progress.h + volume.y) / 2;
+}
+
+static inline ui_rect player_seek_zone(int label_w)
+{
+	ui_rect progress = player_progress_rect();
+	int top = progress.y - SP_2;
+	ui_rect r = { 0, top, SCREEN_BOTTOM_W,
+	              player_bars_split(label_w) - top };
+	return r;
+}
+
+static inline ui_rect player_volume_zone(int label_w)
+{
+	ui_rect volume = player_volume_rect(label_w);
+	int top = player_bars_split(label_w);
+	ui_rect r = { volume.x - SP_2, top, SCREEN_BOTTOM_W - (volume.x - SP_2),
+	              SCREEN_H - BAR_H - top };
+	return r;
+}
+
+/* The share of bar `bar` at x, in thousandths, clamped: past either end
+ * is that end. */
+static inline int player_bar_permille(ui_rect bar, int x)
+{
+	if (bar.w <= 0 || x <= bar.x)
+		return 0;
+	if (x >= bar.x + bar.w)
+		return 1000;
+	return (x - bar.x) * 1000 / bar.w;
 }
 
 /* The notice of a failed track, under the tab bar. */
@@ -175,6 +260,24 @@ static inline void player_sample_download(player_download_sample *sample,
 		sample->shown = pct;
 		sample->frames = 0;
 	}
+}
+
+/* Without a connection only downloaded tracks play: from position `pos`
+ * of the play order, the next one `direction` (-1 or +1) away whose track
+ * `playable` says can play, or -1. `order` maps positions to the queue's
+ * indexes, as playback_order does. Like queue_step, it never wraps around
+ * the ends: a queue played through stops instead of starting over. */
+static inline int playback_next_playable(int pos, int count, int direction,
+                                         const int *order,
+                                         const bool *playable)
+{
+	if (count <= 0 || pos < -1 || pos > count ||
+	    (direction != -1 && direction != 1))
+		return -1;
+	for (int p = pos + direction; p >= 0 && p < count; p += direction)
+		if (playable[order[p]])
+			return p;
+	return -1;
 }
 
 #endif

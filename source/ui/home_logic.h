@@ -1,124 +1,86 @@
-/* Layout, hit testing and focus of the home view. Pure C with no 3DS
- * headers, so the host tests in tests/native_logic_test.c can exercise it.
- * Every measure comes from theme.h (docs/STYLES.md 4), in whole pixels.
+/* Layout, hit testing and focus of the home view (docs/STYLES.md 7.7).
+ * Pure C with no 3DS headers, so the host tests in
+ * tests/native_logic_test.c can exercise it. Every measure comes from
+ * theme.h (STYLES.md 4), in whole pixels.
  *
- * Bottom screen, 320 x 240, 8 px side margins:
+ * Bottom screen, 320 x 240, 8 px side margins. The six recent playlists:
  *   tabs      0..32   the tab bar (tabs_logic.h)
- *   search   48..80   the primary button (A, or tap), hugging its content
- *   label    96..112  "Last search", only when there is one
- *   repeat  116..148  secondary button that runs the last search again
- *   bubble  180..208  transient message (SELECT), centred
- *   hints   216..240  button bar */
+ *   label    36..52   "Recent" (or "Your playlists")
+ *   tiles    56..160  3 rows x 2 columns of tiles (grid_logic.h)
+ *   more    176..208  "Show more", a secondary button, when there are more
+ *   hints   216..240  button bar
+ * "Show more" is the same tab in another mode, not a detail level:
+ *   tiles    36..212  5 rows x 2 columns, scrolling, with the indicator
+ * Loading, error and empty use the results' notice, button and bubbles
+ * (list_logic.h). */
 #ifndef HOME_LOGIC_H
 #define HOME_LOGIC_H
 
+#include "grid_logic.h"
 #include "layout.h"
+#include "list_logic.h"
 #include "theme.h"
 
 #include <stdbool.h>
 
-typedef enum {
-	HOME_ITEM_NONE = -1,
-	/* Focusable with the D-pad and touchable, in this order. */
-	HOME_ITEM_SEARCH,
-	HOME_ITEM_REPEAT
-} home_item;
+/* Tiles in the first mode. */
+#define HOME_RECENT_SHOWN 6
 
-static inline int home_content_width(void)
+/* The six: three rows under the label. */
+static inline grid_geom home_six_geom(void)
 {
-	return SCREEN_BOTTOM_W - 2 * SP_2;
+	grid_geom g = { 2, TAB_H + SP_1 + SP_4 + SP_1, 3 };
+	return g;
 }
 
-/* A button hugs its content plus SP_3 each side, at least a square touch
- * target and at most the content width. */
-static inline int home_button_width(float content_width)
+/* "Show more": five rows filling the space between the bars. */
+static inline grid_geom home_more_geom(void)
 {
-	int w = ui_px_ceil(content_width) + 2 * SP_3;
-	if (w < TOUCH_MIN)
-		w = TOUCH_MIN;
-	if (w > home_content_width())
-		w = home_content_width();
-	return w;
-}
-
-static inline ui_rect home_hints_rect(void)
-{
-	ui_rect r = { 0, SCREEN_H - BAR_H, SCREEN_BOTTOM_W, BAR_H };
-	return r;
-}
-
-/* `content_width`: icon, gap and label of the button. */
-static inline ui_rect home_search_rect(float content_width)
-{
-	ui_rect r = { SP_2, TAB_H + SP_4, home_button_width(content_width),
-	              TOUCH_MIN };
-	return r;
+	grid_geom g = { 2, TAB_H + SP_1, 5 };
+	return g;
 }
 
 static inline ui_rect home_label_rect(void)
 {
-	ui_rect search = home_search_rect(0);
-	ui_rect r = { SP_2, search.y + search.h + SP_4, home_content_width(),
-	              SP_4 };
+	ui_rect r = { SP_2, TAB_H + SP_1, SCREEN_BOTTOM_W - 2 * SP_2, SP_4 };
 	return r;
 }
 
-static inline ui_rect home_repeat_rect(float text_width)
+/* SP_4 under the six, the width of the grid. */
+static inline ui_rect home_more_rect(void)
 {
-	ui_rect label = home_label_rect();
-	ui_rect r = { SP_2, label.y + label.h + SP_1,
-	              home_button_width(text_width), TOUCH_MIN };
+	grid_geom g = home_six_geom();
+	ui_rect r = { SP_2, g.top + g.rows * GRID_PITCH - GRID_GAP + SP_4,
+	              GRID_WIDTH, TOUCH_MIN };
 	return r;
 }
 
-/* The widest last-search text the repeat button can show. */
-static inline int home_repeat_max_text_width(void)
+static inline ui_rect home_hints_rect(void)
 {
-	return home_content_width() - 2 * SP_3;
+	return list_hints_rect();
 }
 
-/* Centred, SP_2 above the button bar. */
-static inline ui_rect home_bubble_rect(float content_width)
+/* Whether "Show more" exists: there are playlists past the six. */
+static inline bool home_has_more(int count)
 {
-	int w = ui_px_ceil(content_width) + 2 * SP_3;
-	if (w > home_content_width())
-		w = home_content_width();
-	ui_rect r = { (SCREEN_BOTTOM_W - w) / 2,
-	              SCREEN_H - BAR_H - SP_2 - BUBBLE_H, w, BUBBLE_H };
-	return r;
+	return count > HOME_RECENT_SHOWN;
 }
 
-/* What a touch at (x, y) lands on. The repeat button only exists with a
- * last search. */
-static inline home_item home_hit_test(int x, int y,
-                                      float search_content_width,
-                                      bool has_repeat,
-                                      float repeat_text_width)
-{
-	if (ui_rect_contains(home_search_rect(search_content_width), x, y))
-		return HOME_ITEM_SEARCH;
-	if (has_repeat &&
-	    ui_rect_contains(home_repeat_rect(repeat_text_width), x, y))
-		return HOME_ITEM_REPEAT;
-	return HOME_ITEM_NONE;
-}
+/* Where the focus is in the first mode: on the tiles or on "Show more". */
+typedef enum { HOME_FOCUS_TILES, HOME_FOCUS_MORE } home_focus;
 
-/* D-pad focus: `delta` -1 is up, +1 down. Stops at the ends; anything that
- * is not focusable (or a repeat button that went away) falls back to the
- * search button. */
-static inline home_item home_focus_move(home_item focus, int delta,
-                                        bool has_repeat)
+/* The D-pad between the tiles and the button (6.6): down from a tile that
+ * cannot go further down reaches "Show more" when it exists; up from the
+ * button goes back to the tiles. `tile_can_move_down` is the grid's own
+ * answer for the focused tile. */
+static inline home_focus home_focus_vertical(home_focus focus, bool down,
+                                             bool tile_can_move_down,
+                                             bool has_more)
 {
-	int last = has_repeat ? HOME_ITEM_REPEAT : HOME_ITEM_SEARCH;
-	int next = (int)focus;
-	if (next < HOME_ITEM_SEARCH || next > last)
-		next = HOME_ITEM_SEARCH;
-	next += delta;
-	if (next < HOME_ITEM_SEARCH)
-		next = HOME_ITEM_SEARCH;
-	if (next > last)
-		next = last;
-	return (home_item)next;
+	if (focus == HOME_FOCUS_TILES)
+		return down && !tile_can_move_down && has_more ? HOME_FOCUS_MORE
+		                                               : HOME_FOCUS_TILES;
+	return down ? HOME_FOCUS_MORE : HOME_FOCUS_TILES;
 }
 
 #endif

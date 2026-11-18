@@ -1,0 +1,183 @@
+/* A list of tracks on the bottom screen (docs/STYLES.md 5.3, 5.11, 6.6 and
+ * 6.9), shared by the results and the album and artist details.
+ *
+ * Rows of ROW_H below the tab bar (or a button, track_list_set_frame),
+ * RESULTS_PER_PAGE at a time (fewer under a button), with the
+ * focus kept on whole rows by the buttons, the list following the stylus
+ * when dragged, and a scroll indicator when the list does not fit. The
+ * square at the left of each row is either the cover thumbnail (thumbs.h)
+ * or, where every row shares the same cover (an album), the track's
+ * position in the list.
+ *
+ * The widget answers for the rows only: the view around it keeps its own
+ * modes, buttons, glyphs and button bar, decides what A, X or a tap on the
+ * focused row do, and composes track_list_look into its own look, so the
+ * frame is only redrawn when something changed (STYLES.md 9). Row text is
+ * parsed when the tracks or the language change, never per frame.
+ *
+ * Each list is its own instance, so the results keep their state under a
+ * detail. thumbs.c serves one list at a time: the one on screen, which
+ * claims it from its view's update (track_list_thumbs_frame), so a list
+ * shown under another never takes the covers from it. Main thread only. */
+#ifndef TRACK_LIST_H
+#define TRACK_LIST_H
+
+#include "lang.h"
+#include "list_logic.h"
+#include "offline_logic.h"
+#include "press_logic.h"
+#include "spclient.h"
+#include "thumbs.h"
+
+#include <3ds.h>
+#include <citro2d.h>
+
+#include <stdbool.h>
+
+/* The rows kept ready at once, text and covers: a search's worth
+ * (SEARCH_LIMIT), and the thumbnail pool (THUMBS_MAX). */
+#define TRACK_LIST_WINDOW 24
+/* The longest list: a playlist's loaded pages (DETAIL_PLAYLIST_MAX). Past
+ * the window, its rows are prepared as the list scrolls to them
+ * (list_window_base). */
+#define TRACK_LIST_MAX 500
+
+typedef enum {
+	TRACK_LIST_THUMBS,     /* the cover thumbnail, via thumbs.h */
+	TRACK_LIST_NUMBERS     /* the position in the list, 1-based */
+} track_list_style;
+
+typedef enum {
+	TRACK_LIST_IDLE,       /* the stylus is not on the list */
+	TRACK_LIST_BUSY,       /* it is: the rest of the input waits */
+	/* The focused row was tapped: act once `press` has been seen
+	 * (press_shown), as for a button. */
+	TRACK_LIST_ACTIVATE
+} track_list_touch;
+
+/* What the rows look like this frame. */
+typedef struct {
+	int selected, first, scroll;
+	int pressed;           /* the pressed row, -1 for none */
+	int edge;              /* the focused row's nudge, px */
+	int thumbs;            /* bumped when a thumbnail arrives */
+	bool active;           /* a header's button shows what it opened */
+} track_list_look;
+
+typedef struct {
+	track_list_style style;
+	/* Where the rows go: list_frame_full unless set. */
+	list_frame frame;
+	/* What each row is, for a list that is not only playable tracks (the
+	 * downloads): NULL for one that is. The owner's, like `tracks`. */
+	const track_row *rows;
+	const sp_track *tracks;   /* the owner's; valid while shown */
+	int count;
+	int selected;
+	int first;             /* first visible row: scroll / LIST_PITCH */
+	int base;              /* first row of the window kept ready */
+	int scroll;            /* px; whole rows except while dragging */
+	/* The covers, through thumbs.c's pool (TRACK_LIST_THUMBS only). */
+	thumbs_client thumbs;
+
+	press_state press;     /* the focused row's, for A and taps */
+	int press_index;
+	touch_track touch;
+	list_drag drag;
+	int edge_frames;
+	int edge_dir;
+
+	C2D_TextBuf buf, scratch;
+	bool stale;
+	lang_id parsed_lang;
+	/* Row base + i is entry i. */
+	C2D_Text title[TRACK_LIST_WINDOW];
+	C2D_Text artist[TRACK_LIST_WINDOW];
+	C2D_Text duration[TRACK_LIST_WINDOW];
+	C2D_Text number[TRACK_LIST_WINDOW];
+	float duration_width[TRACK_LIST_WINDOW];
+	bool button_active;
+} track_list;
+
+/* After ui_init. False when the text buffers cannot be made. */
+bool track_list_init(track_list *l, track_list_style style);
+void track_list_exit(track_list *l);
+
+/* New content: at most TRACK_LIST_MAX of `tracks`, `selected` focused and
+ * scrolled into view on whole rows. NULL/0 empties it. No press or drag
+ * carries over. */
+void track_list_set(track_list *l, const sp_track *tracks, int count,
+                    int selected);
+/* Where the rows go (list_logic.h): before track_list_set, which places
+ * the focus in it. A list starts with list_frame_full. */
+void track_list_set_frame(track_list *l, list_frame frame);
+/* What each row is (offline_logic.h), after track_list_set, which forgets
+ * it: collections and artists draw with a badge and a chevron (a search
+ * result's second line says what it is), rows that are
+ * off draw dimmed, take no focus and answer no tap. NULL for none. */
+void track_list_set_rows(track_list *l, const track_row *rows);
+/* A header's button (offline_logic.h) as on: what it shows is open (an
+ * artist's biography on the top screen). */
+void track_list_set_button_active(track_list *l, bool on);
+/* Back to where a list was left: `first` as the first visible row, on
+ * whole rows, with the focus kept in view. */
+void track_list_scroll_to(track_list *l, int first);
+/* The same tracks, more of them: a page appended at the end of the array
+ * `l` already shows (which must not have moved). Focus, scroll and the
+ * covers already fetched stay. */
+void track_list_extend(track_list *l, int count);
+/* No press, touch, drag or nudge in progress: entering the view. */
+void track_list_reset_input(track_list *l);
+
+/* Focuses `index` on whole rows, as the buttons do (6.6). */
+void track_list_focus(track_list *l, int index);
+
+/* Once per frame, before the input. */
+void track_list_tick(track_list *l);
+
+/* Once per frame from the update of the view showing `l`: a thumbnail
+ * list claims thumbs.c if another list had it, and uploads the covers
+ * that arrived (on the main thread, never while drawing). */
+void track_list_thumbs_frame(track_list *l);
+/* Gives thumbs.c `l` only if no list holds it: a list that is ready
+ * before it is on screen (results arriving on another tab) starts its
+ * covers early, without taking them from a list on screen. */
+void track_list_offer_thumbs(track_list *l);
+/* Whether the thumbnails may download: thumbs_allow, for every client. */
+void track_list_allow_thumbs(bool allow);
+
+/* The stylus on the list: tapping a row focuses it, tapping the focused
+ * row activates it, dragging scrolls (6.4, 6.9). Only touches that start
+ * inside the list area, and not on the tab bar, count. */
+track_list_touch track_list_update_touch(track_list *l, u32 down, u32 held,
+                                         u32 up);
+/* 6.6: with the focus dragged out of view, the first press of the D-pad or
+ * of one of `confirm_keys` only brings the list back to it. True when it
+ * did, and the press is spent; the caller shows its glyph pressed. */
+bool track_list_realign(track_list *l, u32 down, u32 confirm_keys);
+/* The D-pad: up/down by one, left/right by a page; L/R are the tab
+ * bar's. */
+void track_list_navigate(track_list *l, u32 down);
+/* The focused row as pressed by a button: returns its press_state for the
+ * caller to begin and wait on. */
+press_state *track_list_focused_press(track_list *l);
+/* The confirm button went up: the row's press ends, unless the stylus is
+ * on it. */
+void track_list_release(track_list *l);
+
+/* Parses the rows when the tracks or the language changed. */
+void track_list_ensure_parsed(track_list *l);
+/* True when the next frame would parse text. */
+bool track_list_text_stale(const track_list *l);
+
+track_list_look track_list_get_look(const track_list *l);
+bool track_list_same_look(const track_list_look *a, const track_list_look *b);
+
+/* The visible rows, the focused one last so its nudge draws over its
+ * neighbours, and the scroll indicator when the list does not fit. */
+void track_list_draw(const track_list *l, const track_list_look *look);
+/* Empty rows filling `frame`: the layout a list about to arrive will
+ * fill. */
+void track_list_draw_skeleton(list_frame frame);
+
+#endif

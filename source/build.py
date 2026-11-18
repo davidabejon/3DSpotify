@@ -60,6 +60,15 @@ APPS = {
     "probe_audio": (["probe_audio"], [], None, ["deps/stb_vorbis.c"]),
     "probe_play": (["probe_play", "platform3ds"], ["-DPROBE_BUILD"], "probe",
                    ["deps/stb_vorbis.c"]),
+    # Downloads and offline mode, phase 0: what the design assumes, measured.
+    "probe_offline": (["probe_offline", "platform3ds"], ["-DPROBE_BUILD"],
+                      "probe", []),
+    # Typed search results, phase 0: what searchview answers, measured.
+    "probe_search": (["probe_search", "platform3ds"], ["-DPROBE_BUILD"],
+                     "probe", []),
+    # Artist detail sections, phase 0: what the artist metadata carries.
+    "probe_artist": (["probe_artist", "platform3ds"], ["-DPROBE_BUILD"],
+                     "probe", []),
     # F0 of the citro2d plan: throwaway hardware spike, removed after F1.
     "probe_ui": (["probe_ui", "platform3ds"], ["-DPROBE_BUILD"], "probe",
                  ["deps/stb_vorbis.c"]),
@@ -279,7 +288,8 @@ def main():
     ap.add_argument("--fetch-deps", action="store_true",
                     help="download and verify pinned mbedTLS/stb_vorbis/qrcodegen "
                          "dependencies")
-    ap.add_argument("--debug", action="store_true", help="-O0 with assertions")
+    ap.add_argument("--debug", action="store_true", help="-O0 with assertions and APP_DEBUG "
+                         "diagnostics (search_trace.log)")
     ap.add_argument("--cia", action="store_true",
                     help="also build an installable .cia (3dspotify only)")
     args = ap.parse_args()
@@ -317,7 +327,9 @@ def main():
     stamp = time.strftime("%H:%M:%S")
     flags = ["-std=gnu11", "-D__3DS__", f'-DBUILD_STAMP="{stamp}"',
              "-O0" if args.debug else "-O2", "-g", "-mword-relocations",
-             "-ffunction-sections", "-fdata-sections", *defines]
+             "-ffunction-sections", "-fdata-sections", *defines,
+             # Debug-only diagnostics, such as the search trace.
+             *(["-DAPP_DEBUG"] if args.debug else [])]
     includes = ["-I" + str(sdk / "libctru" / "include"),
                 "-I" + str(ROOT / "deps"), "-I" + str(ROOT / "ui"),
                 "-I" + str(ROOT / "lang"),
