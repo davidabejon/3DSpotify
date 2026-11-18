@@ -37,4 +37,8 @@ void ui_background(ui_rect r);
  * on the first call: everything has to be redrawn then. */
 bool ui_take_restored(void);
 
+/* True once after the console wakes from sleep (the lid opened): the Wi-Fi
+ * the sleep dropped takes a few seconds to come back. */
+bool ui_take_woke(void);
+
 #endif
