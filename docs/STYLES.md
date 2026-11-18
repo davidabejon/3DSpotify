@@ -241,6 +241,14 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
 - Variante sin descargar (colección descargada, §7.14): título, artista y número en
   `texto_off`, y a la derecha, en lugar de la duración, el icono de su estado (reloj en
   cola, error si falló). No toma el foco ni responde al toque.
+- Cabecera de sección (detalle de artista, §7.11): ocupa el hueco de una fila (41 px) sin
+  superficie. Título en `t_cabeza` · `texto`, alineado con la miniatura (a `e1` del borde de
+  la fila) y apoyado abajo (a `e2` del borde inferior), con una banda de 2 px `clorofila`
+  del ancho del texto en el borde inferior del hueco. Si no cabe, se recorta con «...». No
+  toma el foco ni responde al toque; se desplaza y se arrastra con la lista.
+- Lanzamiento de la discografía (§7.11): variante de colección, con portada y chevron, sin
+  insignia. Segunda línea: tipo y año, «Álbum · 2004», «Sencillo · 2019», «EP · 2021»,
+  «Recopilatorio · 2010»; sin año, solo el tipo.
 
 ### 5.4 Barra de progreso
 
@@ -590,6 +598,8 @@ Duración:
   la fila de destino es más corta, al último de esa fila); izquierda/derecha cambian de
   columna dentro de la fila. Con 1 columna, izquierda/derecha saltan una página. En los bordes no hay vuelta: la tesela se desplaza 3 px hacia ese lado durante
   6 frames.
+- En una lista con secciones (artista, §7.11), la cruceta salta las cabeceras; la primera
+  fila de una sección trae su cabecera a la vista.
 
 ### 6.7 Volumen
 
@@ -1042,12 +1052,22 @@ Error:
 
 - Lista como resultados (§7.4), con su arrastre (§6.9) e indicador (§5.11). Álbum:
   filas con número (§5.3), en orden de disco; de más de 24 pistas se muestran las 24
-  primeras. Artista: sus canciones populares, con miniatura. Playlist: sus pistas con
+  primeras. Playlist: sus pistas con
   miniatura (cada una es de un álbum distinto), por páginas de 50: la siguiente se pide sola
   cuando la lista muestra una fila a 8 o menos de la última cargada, con la burbuja de
   espera «Cargando...» (§5.9) mientras llega; la lista sigue respondiendo. Hasta 500 pistas.
   Los episodios y archivos locales se omiten.
-- Artista: 4 filas, como resultados. Álbum y playlist: un botón secundario a todo el ancho
+- Artista: una lista en dos secciones, cada una con su cabecera (§5.3) y omitida si está
+  vacía: «Canciones populares» (sus pistas con miniatura) y «Discografía» (álbumes,
+  sencillos y EP, y recopilatorios mezclados, del más reciente al más antiguo; no
+  incluye aquello en lo que solo aparece). Hasta 200 lanzamientos. 4 filas a pantalla
+  completa, como resultados; el foco empieza en la primera canción.
+  - Sobre una canción: A, o tocarla en foco, reproduce las populares desde ella (solo ellas
+    son la cola); X abre su detalle. Barra `[A] Reproducir [X] Detalle [Y] Aleatorio [B]
+    Volver`.
+  - Sobre un lanzamiento: A, o tocarlo en foco, abre su detalle de álbum en la misma
+    pestaña. Barra `[A] Abrir [Y] Aleatorio [B] Volver`. Sin conexión, sin A.
+- Álbum y playlist: un botón secundario a todo el ancho
   a `e1` de la barra de pestañas (36..68) que los descarga enteros, y debajo 3 filas
   (76..207); las filas arrastradas pasan por debajo del botón, como por debajo de las barras:
 

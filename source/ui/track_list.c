@@ -1,5 +1,6 @@
 #include "track_list.h"
 
+#include "artist_logic.h"
 #include "draw.h"
 #include "icons.h"
 #include "tabbar.h"
@@ -136,9 +137,15 @@ static const track_row *row_of(const track_list *l, int index)
 	                                                  : NULL;
 }
 
+static bool is_header(const track_row *r)
+{
+	return r && r->kind == TRACK_ROW_HEADER;
+}
+
+/* A row that opens something: a collection, an artist, a release. */
 static bool is_collection(const track_row *r)
 {
-	return r && r->kind != TRACK_ROW_TRACK;
+	return r && r->kind != TRACK_ROW_TRACK && r->kind != TRACK_ROW_HEADER;
 }
 
 void track_list_set_frame(track_list *l, list_frame frame)
@@ -217,6 +224,18 @@ void track_list_ensure_parsed(track_list *l)
 		const sp_track *t = &l->tracks[l->base + i];
 		const track_row *r = row_of(l, l->base + i);
 		char text[16];
+		if (is_header(r)) {
+			/* A section's title alone, across the row (5.3). */
+			parse(&l->duration[i], l->buf, "");
+			l->duration_width[i] = 0;
+			ui_parse_fitted(&l->title[i], l->buf, l->scratch,
+			                tr((str_id)r->index), TXT_CABEZA,
+			                list_row_rect(0).w - 2 * SP_1);
+			parse(&l->artist[i], l->buf, "");
+			if (l->style == TRACK_LIST_NUMBERS)
+				parse(&l->number[i], l->buf, "");
+			continue;
+		}
 		/* A collection opens: a chevron. A track that is not on the card
 		 * shows its state as an icon: no text. */
 		if (is_collection(r))
@@ -246,6 +265,14 @@ void track_list_ensure_parsed(track_list *l)
 				         t->artist);
 			else
 				snprintf(sub, sizeof(sub), "%s", tr(STR_PLAYLIST_TYPE));
+		} else if (r && r->release) {
+			/* What it is and when: "Single · 2019", or the type alone. */
+			const char *type = tr(artist_type_label(r->album_type));
+			if (t->year > 0)
+				snprintf(sub, sizeof(sub), tr(STR_RELEASE_FMT), type,
+				         t->year);
+			else
+				snprintf(sub, sizeof(sub), "%s", type);
 		} else if (is_collection(r)) {
 			bool album = r->kind == TRACK_ROW_ALBUM;
 			if (r->done < r->count)
@@ -309,6 +336,9 @@ void track_list_focus(track_list *l, int index)
 {
 	l->selected = list_clamp(index, l->count);
 	l->first = list_align_in(l->frame, l->scroll, l->selected, l->count);
+	/* A section's first row brings its header along. */
+	l->first = track_row_show_header(l->rows, l->count, l->selected,
+	                                 l->first);
 	l->scroll = l->first * LIST_PITCH;
 	follow_window(l);
 }
@@ -484,7 +514,8 @@ static void draw_collection_cover(const track_list *l, ui_rect row, int index,
 	ui_art_or(box, shown ? &image : NULL,
 	          liked ? ICON_HEART
 	                : r->kind == TRACK_ROW_ARTIST ? ICON_USER : ICON_NOTE);
-	if (!shown || r->search)
+	/* A release's second line says what it is: no badge either. */
+	if (!shown || r->search || r->release)
 		return;
 	ui_rect badge = { box.x, box.y + box.h - ICON_S, ICON_S, ICON_S };
 	ui_fill(badge, COL_TINTA);
@@ -492,10 +523,30 @@ static void draw_collection_cover(const track_list *l, ui_rect row, int index,
 	ui_icon(&icon, badge.x, badge.y, COL_TEXTO);
 }
 
+/* 5.3, a section's header: the row's room without a surface, its title
+ * aligned with the thumbnails and resting on the bottom, over a 2 px
+ * `clorofila` band as wide as the text. It never takes the focus. */
+static void draw_header_row(const track_list *l, ui_rect row, int index)
+{
+	int w = index - l->base;
+	if (w < 0 || w >= TRACK_LIST_WINDOW)
+		return;
+	int h = ui_line_height(TXT_CABEZA);
+	int cy = row.y + row.h - SP_2 - h / 2;
+	int x = row.x + SP_1;
+	ui_text(&l->title[w], x, cy, TXT_CABEZA, COL_TEXTO);
+	int tw = ui_px_ceil(ui_text_width(&l->title[w], TXT_CABEZA));
+	ui_fill((ui_rect){ x, row.y + row.h - 2, tw, 2 }, COL_CLOROFILA);
+}
+
 /* 5.3. `index` < 0 draws an empty skeleton row. */
 static void draw_row(const track_list *l, ui_rect row, int index,
                      const track_list_look *look)
 {
+	if (l && is_header(row_of(l, index))) {
+		draw_header_row(l, row, index);
+		return;
+	}
 	bool focused = index >= 0 && index == look->selected;
 	bool pressed = index >= 0 && index == look->pressed;
 	if (focused)

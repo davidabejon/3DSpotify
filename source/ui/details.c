@@ -1,5 +1,6 @@
 #include "details.h"
 
+#include "artist_logic.h"
 #include "detail_logic.h"
 #include "downloads.h"
 #include "http3ds.h"
@@ -182,6 +183,87 @@ static void append_page(detail_doc *d)
 	          d->count < d->capacity;
 }
 
+/* A release as a row's track: what the list, the card and the album's
+ * detail need (its artist is this one). */
+static void release_as_track(const sp_release *r, const char *artist,
+                             sp_track *t)
+{
+	memset(t, 0, sizeof(*t));
+	snprintf(t->uri, sizeof(t->uri), "%s", r->uri);
+	snprintf(t->name, sizeof(t->name), "%s", r->name);
+	snprintf(t->artist, sizeof(t->artist), "%s", artist);
+	snprintf(t->album, sizeof(t->album), "%s", r->name);
+	snprintf(t->album_uri, sizeof(t->album_uri), "%s", r->uri);
+	snprintf(t->art_small, sizeof(t->art_small), "%s", r->art_small);
+	snprintf(t->art_large, sizeof(t->art_large), "%s", r->art_large);
+	t->year = r->date / 10000;
+}
+
+/* An artist's sections (artist_logic.h) into a buffer of their exact
+ * size: the popular tracks named by the load, then the releases that came
+ * named. False without the memory: the caller lists the tracks alone. */
+static bool apply_artist_rows(detail_doc *d)
+{
+	static int types[SP_ARTIST_RELEASES_MAX];
+	static int named[SP_ARTIST_RELEASES_MAX];
+	const sp_artist *a = &job.artist;
+	int releases = 0;
+	for (int i = 0; i < a->release_count; i++) {
+		const sp_release *r = &a->releases[i];
+		if (!r->name[0])
+			continue;   /* never named: no row without a title */
+		named[releases] = i;
+		types[releases++] = artist_release_type(r->type, r->group);
+	}
+	int max = 2 + job.count + releases;
+	sp_track *owned = calloc((size_t)max, sizeof(sp_track));
+	track_row *rows = malloc((size_t)max * sizeof(track_row));
+	if (!owned || !rows) {
+		free(owned);
+		free(rows);
+		return false;
+	}
+	int top_first;
+	int n = artist_rows(job.count, releases, types, rows, max, &top_first);
+	for (int i = 0; i < n; i++) {
+		const track_row *r = &rows[i];
+		if (r->kind == TRACK_ROW_TRACK)
+			owned[i] = job.tracks[r->index];
+		else if (r->release)
+			release_as_track(&a->releases[named[r->index]], a->name,
+			                 &owned[i]);
+	}
+	/* A load applied again (a retry) replaces what an earlier one left. */
+	free(d->owned);
+	free(d->rows);
+	d->owned = owned;
+	d->rows = rows;
+	d->tracks = owned;
+	d->capacity = max;
+	d->count = n;
+	d->track_rows = job.count;
+	d->coll_rows = releases;
+	d->selected = n > 0 ? track_row_first_on(rows, n, 0) : 0;
+	if (d->selected < 0)
+		d->selected = 0;
+	d->first = 0;
+	d->state = DETAIL_READY;
+	return true;
+}
+
+bool details_track_span(const detail_doc *d, int *first, int *count)
+{
+	*first = 0;
+	*count = 0;
+	if (!d || d->count <= 0)
+		return false;
+	if (!d->rows)
+		*count = d->count;
+	else
+		*count = track_row_track_span(d->rows, d->count, first);
+	return *count > 0;
+}
+
 /* The finished load into its document, unless the document moved on. */
 static void apply(detail_doc *d)
 {
@@ -219,6 +301,8 @@ static void apply(detail_doc *d)
 		d->total_tracks = a->track_count;
 		memcpy(d->bio, a->bio, sizeof(d->bio));
 		d->release_count = a->release_count;
+		if ((job.count > 0 || a->release_count > 0) && apply_artist_rows(d))
+			return;
 	}
 	d->count = job.count;
 	memcpy(d->tracks, job.tracks, (size_t)job.count * sizeof(d->tracks[0]));

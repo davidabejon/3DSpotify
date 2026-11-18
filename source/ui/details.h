@@ -10,6 +10,11 @@
  * stack, so going back costs no request (a new connection is a TLS
  * handshake of seconds on this console).
  *
+ * An artist's list comes in sections (artist_logic.h): its popular tracks
+ * and its discography under their headers, in `rows`, with the tracks and
+ * rows in a buffer made when the load is applied, at the size it needs.
+ * Without that memory it lists its popular tracks alone, as `inline_tracks`.
+ *
  * Opening a detail while another loads asks the running load to stop
  * without waiting for it, as the player does with a skipped track: the
  * request in flight ends on its own and is reaped by details_poll, which
@@ -90,9 +95,10 @@ typedef struct {
 	uint64_t retry_at;
 	/* A line for the card: where it was left ("title - artist"), or "". */
 	char resume[128];
-	/* The offline kinds: what each row is (offline_logic.h), in a buffer
-	 * of their own as long as `tracks`; how many rows are collections and
-	 * how many tracks (Downloads); whether the collection is an album, and
+	/* The offline kinds and an artist: what each row is (offline_logic.h),
+	 * in a buffer of their own as long as `tracks`; how many rows are
+	 * collections and how many tracks (Downloads; an artist's releases and
+	 * popular tracks); whether the collection is an album, and
 	 * the bytes of its tracks on the card; the downloads generation it was
 	 * filled at. */
 	track_row *rows;
@@ -117,6 +123,12 @@ bool details_active(app_tab tab);
 /* The detail on screen in `tab`, or NULL. The view may change `selected`
  * and `first`; everything else is the loader's. */
 detail_doc *details_top(app_tab tab);
+
+/* The playable tracks of `d`, the ones "Play" and a track's detail take:
+ * rows [*first, *first + *count). The whole list, except where rows say
+ * otherwise: the Downloads' tracks after their collections, an artist's
+ * popular tracks between its headers. False when there are none. */
+bool details_track_span(const detail_doc *d, int *first, int *count);
 
 /* Opens a track detail on `tab`'s stack from list[index]. The list is
  * copied (at most DETAIL_MAX_TRACKS, keeping `index` inside). `single`:

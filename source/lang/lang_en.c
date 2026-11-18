@@ -59,6 +59,8 @@ const char *const lang_strings_en[STR_COUNT] = {
 	[STR_ALBUM_TRACKS_FMT] = "%d tracks",
 	[STR_ALBUM_TRACKS_CUT_FMT] = "%d of %d tracks",
 	[STR_ARTIST_TOP_TRACKS] = "Popular tracks",
+	[STR_ARTIST_DISCOGRAPHY] = "Discography",
+	[STR_RELEASE_FMT] = "%s · %d",
 
 	/* Settings tab. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Language: %s",

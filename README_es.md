@@ -286,8 +286,9 @@ Desde una canción puedes abrir su detalle y, desde ahí, el de su artista y su 
   playlist** los descarga enteros; se llega subiendo desde la primera canción. Después
   muestra el progreso («Descargando 8 de 12») y **Descargado**, que abre la copia
   descargada.
-- **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares, con
-  miniaturas. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
+- **Álbum:** sus pistas, numeradas. **Artista:** sus canciones populares y, debajo, su
+  discografía (álbumes, sencillos y EP, recopilatorios); A sobre un lanzamiento abre el
+  álbum. **Playlist:** sus canciones, con miniaturas, de 50 en 50: la página
   siguiente llega sola al acercarte al final de la lista (mientras, se ve la burbuja
   «Cargando…»), hasta 500. Los episodios y archivos locales se omiten; la pantalla
   superior indica cuántas de cuántas hay cargadas.

@@ -1956,9 +1956,10 @@ static void queue_play_list(spotify_session *session, const detail_doc *doc)
 	}
 }
 
-/* A list from the downloads: its tracks on the card, from the focused
- * one; the collections and what is not downloaded yet stay out. */
-static void queue_play_offline(spotify_session *session, const detail_doc *doc)
+/* A list with rows that are not tracks: the downloads, or an artist's
+ * sections. Its tracks that can play, from the focused one; collections,
+ * releases, headers and what is not downloaded yet stay out. */
+static void queue_play_rows(spotify_session *session, const detail_doc *doc)
 {
 	sp_track *list = malloc((size_t)doc->count * sizeof(sp_track));
 	if (!list)
@@ -2096,7 +2097,7 @@ static void play_from_detail(spotify_session *session, app_tab tab)
 		if (doc->kind == DETAIL_TRACK && doc->single)
 			queue_play_radio(session, pick);
 		else if (doc->rows)
-			queue_play_offline(session, doc);
+			queue_play_rows(session, doc);
 		else
 			queue_play_list(session, doc);
 	}
@@ -2274,17 +2275,24 @@ static void detail_input(spotify_session *session, u32 down)
 			details_open_album(active_tab, track->album_uri);
 		switch_tab(active_tab);
 		break;
-	case DETAIL_ACTION_OPEN_TRACK:
+	case DETAIL_ACTION_OPEN_TRACK: {
 		/* The list comes along, as from the results: "Play" there queues
-		 * this album or artist. From the Downloads, only its tracks: the
-		 * collections before them are no tracks to play. */
-		if (doc->kind == DETAIL_DOWNLOADS)
-			details_open_track(active_tab, doc->tracks + doc->coll_rows,
-			                   doc->track_rows,
-			                   doc->selected - doc->coll_rows, false);
-		else
-			details_open_track(active_tab, doc->tracks, doc->count,
-			                   doc->selected, false);
+		 * this album or artist. Only its tracks: the Downloads'
+		 * collections and an artist's headers and releases are no tracks
+		 * to play. */
+		int from, n;
+		if (details_track_span(doc, &from, &n) && doc->selected >= from &&
+		    doc->selected < from + n)
+			details_open_track(active_tab, doc->tracks + from, n,
+			                   doc->selected - from, false);
+		switch_tab(active_tab);
+		break;
+	}
+	case DETAIL_ACTION_OPEN_ALBUM:
+		/* A release of the artist's discography: its row's URI is the
+		 * album's. */
+		if (track)
+			details_open_album(active_tab, track->uri);
 		switch_tab(active_tab);
 		break;
 	case DETAIL_ACTION_OPEN_COLLECTION:

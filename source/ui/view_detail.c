@@ -472,12 +472,22 @@ static bool focused_collection(void)
 	       list.rows[list.selected].kind != TRACK_ROW_TRACK;
 }
 
-/* A, or a tap, on the focused row: play from it, or open the collection;
- * nothing on a track that is not on the card. */
+/* The focused row is a release of an artist's discography, which opens
+ * its album over the network. */
+static bool focused_release(void)
+{
+	return shown_kind == DETAIL_ARTIST && focused_collection();
+}
+
+/* A, or a tap, on the focused row: play from it, or open the collection
+ * or the release; nothing on a track that is not on the card, nor on a
+ * release without a connection (6.1). */
 static detail_action row_action(void)
 {
 	if (list.count <= 0 || !track_row_on(list.rows, list.selected))
 		return DETAIL_ACTION_NONE;
+	if (focused_release())
+		return offline ? DETAIL_ACTION_NONE : DETAIL_ACTION_OPEN_ALBUM;
 	return focused_collection() ? DETAIL_ACTION_OPEN_COLLECTION
 	                            : DETAIL_ACTION_PLAY;
 }
@@ -941,7 +951,11 @@ static void draw_bar(const detail_look *look)
 			bool coll = list.rows && list.count > 0 &&
 			            list.rows[look->list.selected].kind !=
 			            TRACK_ROW_TRACK;
-			hints[n++] = hint(GLYPH_A, coll ? &hint_open : &hint_play, look);
+			/* A release opens over the network: offline, no A (6.1). */
+			bool release = coll && shown_kind == DETAIL_ARTIST;
+			if (!(release && offline))
+				hints[n++] = hint(GLYPH_A, coll ? &hint_open : &hint_play,
+				                  look);
 			if (!coll)
 				hints[n++] = hint(GLYPH_X, &hint_detail, look);
 		}

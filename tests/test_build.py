@@ -690,6 +690,17 @@ class BuildTests(unittest.TestCase):
         # A track detail opened from a single track starts a radio.
         self.assertIn("if (doc->kind == DETAIL_TRACK && doc->single)\n"
                       "\t\t\tqueue_play_radio(session, pick);", play)
+        # An artist's discography opens its albums; the track detail opened
+        # from a list with rows takes only its tracks along.
+        detail = app[app.index("static void detail_input("):]
+        detail = detail[:detail.index("\n}\n")]
+        self.assertIn("case DETAIL_ACTION_OPEN_ALBUM:", detail)
+        self.assertIn("details_open_album(active_tab, track->uri);", detail)
+        self.assertIn("details_track_span(doc, &from, &n)", detail)
+        for name in ("lang_en.c", "lang_es.c"):
+            table = (build.ROOT / "lang" / name).read_text(encoding="utf-8")
+            self.assertIn("[STR_ARTIST_DISCOGRAPHY] =", table, name)
+            self.assertIn('[STR_RELEASE_FMT] = "%s · %d",', table, name)
         # The queue's loads run beside the player and stop with the
         # session, before the TLS abort is lifted.
         loop = app[app.index("static tabs_exit run_tabs("):
@@ -707,8 +718,7 @@ class BuildTests(unittest.TestCase):
                         app.index("/* --- Tabs ---")]
         for wired in ("details_open_artist(active_tab, track->artist_uri);",
                       "details_open_album(active_tab, track->album_uri);",
-                      "details_open_track(active_tab, doc->tracks, "
-                      "doc->count,",
+                      "details_open_track(active_tab, doc->tracks + from, n,",
                       "details_retry(active_tab);",
                       "details_back(active_tab);"):
             self.assertIn(wired, detail_in)
@@ -1043,8 +1053,9 @@ class BuildTests(unittest.TestCase):
         text = text[:text.index("\n}\n")]
         self.assertIn("d->state = DETAIL_READY;", text)
         self.assertNotIn("DETAIL_LOADING", text)
-        # Playing from the downloads queues only the tracks on the card.
-        play = app[app.index("static void queue_play_offline("):]
+        # Playing from the downloads (or an artist's sections) queues only
+        # the tracks that can play.
+        play = app[app.index("static void queue_play_rows("):]
         play = play[:play.index("\n}\n")]
         self.assertIn("r->kind != TRACK_ROW_TRACK || r->off", play)
 

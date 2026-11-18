@@ -60,6 +60,8 @@ const char *const lang_strings_es[STR_COUNT] = {
 	[STR_ALBUM_TRACKS_FMT] = "%d canciones",
 	[STR_ALBUM_TRACKS_CUT_FMT] = "%d de %d canciones",
 	[STR_ARTIST_TOP_TRACKS] = "Canciones populares",
+	[STR_ARTIST_DISCOGRAPHY] = "Discografía",
+	[STR_RELEASE_FMT] = "%s · %d",
 
 	/* Pestaña de ajustes. */
 	[STR_SETTINGS_LANGUAGE_FMT] = "Idioma: %s",

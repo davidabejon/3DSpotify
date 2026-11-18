@@ -86,6 +86,9 @@ typedef enum {
 	STR_ALBUM_TRACKS_FMT,
 	STR_ALBUM_TRACKS_CUT_FMT,
 	STR_ARTIST_TOP_TRACKS,
+	STR_ARTIST_DISCOGRAPHY,
+	/* A release's second line: its type and its year. */
+	STR_RELEASE_FMT,
 
 	/* Settings tab. */
 	STR_SETTINGS_LANGUAGE_FMT,

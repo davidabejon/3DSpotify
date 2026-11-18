@@ -1,5 +1,6 @@
 #include "about_layout.h"
 #include "art_cache_logic.h"
+#include "artist_logic.h"
 #include "art_url.h"
 #include "detail_logic.h"
 #include "detail_nav.h"
@@ -1031,6 +1032,107 @@ static void test_meta_parse_album_batch(void)
 	}
 	assert(sp_parse_album_batch(body.p, 0, ASK, 3, out) == 0);
 	assert(sp_parse_album_batch(body.p, body.len, ASK, 0, out) == 0);
+}
+
+static void test_artist_rows(void)
+{
+	static track_row rows[32];
+	static const int TYPES[] = {
+		SP_ALBUM_ALBUM, SP_ALBUM_SINGLE, SP_ALBUM_EP,
+	};
+	int top_first;
+
+	/* Both sections: header, 3 tracks, header, 3 releases. */
+	int n = artist_rows(3, 3, TYPES, rows, 32, &top_first);
+	assert(n == 8 && top_first == 1);
+	assert(rows[0].kind == TRACK_ROW_HEADER && rows[0].off &&
+	       rows[0].index == STR_ARTIST_TOP_TRACKS);
+	for (int i = 0; i < 3; i++) {
+		assert(rows[1 + i].kind == TRACK_ROW_TRACK && !rows[1 + i].off);
+		assert(rows[1 + i].index == i && !rows[1 + i].release);
+	}
+	assert(rows[4].kind == TRACK_ROW_HEADER && rows[4].off &&
+	       rows[4].index == STR_ARTIST_DISCOGRAPHY);
+	for (int i = 0; i < 3; i++) {
+		const track_row *r = &rows[5 + i];
+		assert(r->kind == TRACK_ROW_ALBUM && r->release && !r->off);
+		assert(r->index == i && r->album_type == TYPES[i] && !r->search);
+	}
+	/* The focus starts on the first track; the tracks are one span. */
+	assert(track_row_first_on(rows, n, 0) == 1);
+	int from;
+	assert(track_row_track_span(rows, n, &from) == 3 && from == 1);
+
+	/* Popular tracks only; releases only; nothing. */
+	n = artist_rows(2, 0, NULL, rows, 32, &top_first);
+	assert(n == 3 && top_first == 1 && rows[2].kind == TRACK_ROW_TRACK);
+	n = artist_rows(0, 2, TYPES, rows, 32, &top_first);
+	assert(n == 3 && top_first == -1);
+	assert(rows[0].index == STR_ARTIST_DISCOGRAPHY);
+	assert(track_row_first_on(rows, n, 0) == 1);
+	assert(track_row_track_span(rows, n, &from) == 0 && from == 0);
+	assert(artist_rows(0, 0, TYPES, rows, 32, &top_first) == 0);
+	assert(top_first == -1);
+
+	/* Capped: the rows that fit, in order. */
+	n = artist_rows(3, 3, TYPES, rows, 5, &top_first);
+	assert(n == 5 && top_first == 1 && rows[4].kind == TRACK_ROW_HEADER);
+	n = artist_rows(3, 3, TYPES, rows, 1, &top_first);
+	assert(n == 1 && top_first == -1);
+
+	/* A release's type: its own, else its group's. */
+	assert(artist_release_type(SP_ALBUM_EP, SP_GROUP_SINGLE) == SP_ALBUM_EP);
+	assert(artist_release_type(0, SP_GROUP_ALBUM) == SP_ALBUM_ALBUM);
+	assert(artist_release_type(0, SP_GROUP_SINGLE) == SP_ALBUM_SINGLE);
+	assert(artist_release_type(0, SP_GROUP_COMPILATION) ==
+	       SP_ALBUM_COMPILATION);
+	assert(artist_release_type(9, SP_GROUP_SINGLE) == SP_ALBUM_SINGLE);
+	assert(artist_type_label(SP_ALBUM_SINGLE) == STR_ALBUM_TYPE_SINGLE);
+	assert(artist_type_label(0) == STR_ALBUM_TYPE_ALBUM);
+}
+
+static void test_section_navigation(void)
+{
+	static track_row rows[16];
+	static const int TYPES[] = {
+		SP_ALBUM_ALBUM, SP_ALBUM_ALBUM, SP_ALBUM_ALBUM,
+	};
+	int top_first;
+	/* 0 header, 1-3 tracks, 4 header, 5-7 releases. */
+	int n = artist_rows(3, 3, TYPES, rows, 16, &top_first);
+	bool bumped;
+
+	/* The D-pad skips the headers, both ways. */
+	assert(track_row_move(rows, n, 3, 1, &bumped) == 5 && !bumped);
+	assert(track_row_move(rows, n, 5, -1, &bumped) == 3 && !bumped);
+	/* Up from the first track: the header above is no stop, so it bumps. */
+	assert(track_row_move(rows, n, 1, -1, &bumped) == 1 && bumped);
+	/* A page across the sections counts only rows that take the focus. */
+	assert(track_row_move(rows, n, 1, 4, &bumped) == 6 && !bumped);
+	assert(track_row_move(rows, n, 7, -4, &bumped) == 2 && !bumped);
+
+	/* The first row of a section brings its header along. */
+	assert(track_row_show_header(rows, n, 5, 5) == 4);  /* scrolled past */
+	assert(track_row_show_header(rows, n, 5, 3) == 3);  /* already shown */
+	assert(track_row_show_header(rows, n, 1, 1) == 0);
+	assert(track_row_show_header(rows, n, 6, 6) == 6);  /* not a first */
+	assert(track_row_show_header(rows, n, 0, 0) == 0);
+	assert(track_row_show_header(NULL, n, 5, 5) == 5);
+	/* A short list: everything fits from 0 and stays. */
+	n = artist_rows(1, 1, TYPES, rows, 16, &top_first);
+	assert(track_row_show_header(rows, n, 3, 0) == 0);
+	assert(track_row_show_header(rows, n, 1, 0) == 0);
+
+	/* The Downloads' span: the tracks after the collections. */
+	track_row dl[4];
+	memset(dl, 0, sizeof(dl));
+	dl[0].kind = TRACK_ROW_ALBUM;
+	dl[1].kind = TRACK_ROW_PLAYLIST;
+	dl[2].kind = dl[3].kind = TRACK_ROW_TRACK;
+	dl[3].off = true;
+	int from;
+	assert(track_row_track_span(dl, 4, &from) == 2 && from == 2);
+	assert(track_row_track_span(dl, 2, &from) == 0 && from == 0);
 }
 
 static void expect_bio(const char *in, size_t cap, const char *want)
@@ -4735,6 +4837,8 @@ int main(void)
 	test_release_sort();
 	test_meta_parse_album_batch();
 	test_bio_clean();
+	test_artist_rows();
+	test_section_navigation();
 	test_meta_parse_batch();
 	test_meta_parse_rootlist();
 	test_meta_parse_playlist();
