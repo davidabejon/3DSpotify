@@ -36,6 +36,7 @@
 #include "tabs_logic.h"
 #include "text_compose.h"
 #include "text_fit.h"
+#include "text_wrap.h"
 #include "thumb_queue.h"
 #include "theme.h"
 #include "top_logic.h"
@@ -1146,6 +1147,86 @@ static void test_artist_listeners(void)
 	assert(!sp_parse_artist_insights(NEG, sizeof(NEG) - 1, &v) && v == -1);
 	assert(!sp_parse_artist_insights("", 0, &v) && v == -1);
 	assert(!sp_parse_artist_insights(NULL, 0, &v) && v == -1);
+}
+
+/* One pixel per byte. */
+static float wrap_measure(const char *text, void *ctx)
+{
+	(void)ctx;
+	return (float)strlen(text);
+}
+
+static void test_text_wrap(void)
+{
+	static char l[ARTIST_BIO_LINES][TEXT_WRAP_LINE_MAX];
+
+	/* By words; the spaces where it breaks go. */
+	int n = text_wrap("the killers are a band from las vegas", 12, 5,
+	                  wrap_measure, NULL, l);
+	assert(n == 4);
+	assert(strcmp(l[0], "the killers") == 0);
+	assert(strcmp(l[1], "are a band") == 0);
+	assert(strcmp(l[2], "from las") == 0);
+	assert(strcmp(l[3], "vegas") == 0);
+
+	/* Text left over: the last line ends in "...". */
+	n = text_wrap("one two three four five six", 9, 2, wrap_measure, NULL,
+	              l);
+	assert(n == 2 && strcmp(l[0], "one two") == 0);
+	assert(strcmp(l[1], "three...") == 0);
+	n = text_wrap("one two three", 9, 1, wrap_measure, NULL, l);
+	assert(n == 1 && strcmp(l[0], "one...") == 0);
+
+	/* A word wider than a line is cut between characters, never inside
+	 * an n with tilde (2 bytes). */
+	n = text_wrap("abcdefghij xy", 4, 5, wrap_measure, NULL, l);
+	assert(n == 4 && strcmp(l[0], "abcd") == 0 &&
+	       strcmp(l[1], "efgh") == 0 && strcmp(l[2], "ij") == 0 &&
+	       strcmp(l[3], "xy") == 0);
+	n = text_wrap("a\xC3\xB1" "bc", 2, 5, wrap_measure, NULL, l);
+	assert(n == 3 && strcmp(l[0], "a") == 0 &&
+	       strcmp(l[1], "\xC3\xB1") == 0 && strcmp(l[2], "bc") == 0);
+
+	/* Fits whole; leading and doubled spaces; nothing. */
+	n = text_wrap("  short", 20, 5, wrap_measure, NULL, l);
+	assert(n == 1 && strcmp(l[0], "short") == 0);
+	n = text_wrap("aa  bb cc", 5, 5, wrap_measure, NULL, l);
+	assert(n == 2 && strcmp(l[0], "aa") == 0 && strcmp(l[1], "bb cc") == 0);
+	assert(text_wrap("", 10, 5, wrap_measure, NULL, l) == 0);
+	assert(text_wrap(NULL, 10, 5, wrap_measure, NULL, l) == 0);
+	assert(text_wrap("abc", 10, 0, wrap_measure, NULL, l) == 0);
+	/* Narrower than one character: one per line, still moving on. */
+	n = text_wrap("abc", 0, 5, wrap_measure, NULL, l);
+	assert(n == 3 && strcmp(l[2], "c") == 0);
+}
+
+static void test_now_detail_block(void)
+{
+	const int T = 23, B = 15, M = 14, Y = 40;
+	/* Without a paragraph, as before it existed. */
+	assert(now_detail_block_h(T, B, 2, M, 0) == T + SP_1 + 2 * B);
+	assert(now_detail_text_dy_meta_at(T, B, 2, M, 0, Y) ==
+	       Y + (ART_SIZE - (T + SP_1 + 2 * B)) / 2 - SP_3);
+	assert(now_detail_text_dy_at(T, B, 2, Y) ==
+	       now_detail_text_dy_meta_at(T, B, 2, M, 0, Y));
+	/* Listeners and five lines of biography: 120 px, which the cover's
+	 * height always holds. */
+	int h = now_detail_block_h(T, B, 1, M, 5);
+	assert(h == T + SP_1 + B + SP_2 + 5 * M && h <= ART_SIZE);
+	/* Capped at ARTIST_BIO_LINES and NOW_LINES. */
+	assert(now_detail_block_h(T, B, 9, M, 9) ==
+	       now_detail_block_h(T, B, NOW_LINES, M, ARTIST_BIO_LINES));
+	/* The paragraph starts SP_2 under the last t_cuerpo line, or under the
+	 * title without one, and moves with the block. */
+	int dy = 7;
+	int top = SP_3 + T + SP_1 + B + SP_2;
+	assert(now_detail_meta_cy(T, B, 1, M, 0, dy) == top + M / 2 + dy);
+	assert(now_detail_meta_cy(T, B, 1, M, 4, 0) == top + 4 * M + M / 2);
+	assert(now_detail_meta_cy(T, B, 0, M, 0, 0) == SP_3 + T + SP_2 + M / 2);
+	/* Centred: the block's middle is the cover's. */
+	dy = now_detail_text_dy_meta_at(T, B, 1, M, 5, Y);
+	int block_top = SP_3 + dy;
+	assert(abs((block_top + h / 2) - (Y + ART_SIZE / 2)) <= 1);
 }
 
 static void test_artist_naming(void)
@@ -4927,6 +5008,8 @@ int main(void)
 	test_artist_rows();
 	test_artist_naming();
 	test_artist_listeners();
+	test_text_wrap();
+	test_now_detail_block();
 	test_section_navigation();
 	test_meta_parse_batch();
 	test_meta_parse_rootlist();

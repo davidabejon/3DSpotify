@@ -163,7 +163,7 @@ pestañas, cada una con su icono:
   carga.
 - Con un detalle abierto ([Detalles](#detalles)), la pantalla superior muestra su
   ficha: la carátula o el retrato, el nombre y hasta cuatro líneas (artista, álbum,
-  duración y número de pista, año, sello…; los oyentes mensuales de un artista). Una línea demasiado larga se desplaza de
+  duración y número de pista, año, sello…; los oyentes mensuales de un artista y el principio de su biografía). Una línea demasiado larga se desplaza de
   lado para poder leerla entera.
 - Con resultados de búsqueda en pantalla, la pestaña **Búsqueda** muestra una franja
   con los tipos de resultado y cuántos hay de cada uno, con el que está en pantalla

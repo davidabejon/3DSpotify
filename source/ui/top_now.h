@@ -41,10 +41,14 @@ void top_now_draw_card(artwork_state *art);
  * >= 0, puts the cover's top there (under the strip of kinds). `rolls`, NULL for
  * none, holds 1 + count entries, the title's first: -1 for a text drawn
  * as it is, otherwise how far it has rolled inside now_text_w()
- * (marquee_logic.h; such a text is the whole string, not fitted). */
+ * (marquee_logic.h; such a text is the whole string, not fitted).
+ * `meta`, centred only (NULL, 0 for none): up to ARTIST_BIO_LINES t_meta
+ * lines SP_2 under the rest, already wrapped to now_text_w(), which never
+ * roll; the block is centred with them. */
 void top_now_draw_header(artwork_state *art, bool centred, int art_y,
                          const C2D_Text *title, const C2D_Text *const *lines,
-                         int count, const int *rolls, int icon);
+                         int count, const int *rolls, int icon,
+                         const C2D_Text *const *meta, int meta_count);
 /* `icon` shows in the cover's place while it loads, or when there is none
  * (centred only: the card of what plays shows a note). */
 void top_now_draw_big(artwork_state *art);

@@ -77,15 +77,52 @@ static inline ui_rect now_detail_art_rect(void)
 	return now_detail_art_rect_at((SCREEN_H - ART_SIZE) / 2);
 }
 
+/* Lines of a detail card's paragraph, t_meta, under its t_cuerpo lines:
+ * an artist's biography (STYLES.md 7.12). */
+#define ARTIST_BIO_LINES 5
+
+static inline int now_clamp_lines(int n, int max)
+{
+	return n < 0 ? 0 : n > max ? max : n;
+}
+
+/* The card's text block: the title, `count` t_cuerpo lines SP_1 under it,
+ * and `meta` t_meta lines SP_2 under those (or under the title, with no
+ * t_cuerpo lines). */
+static inline int now_detail_block_h(int title_h, int body_h, int count,
+                                     int meta_h, int meta)
+{
+	count = now_clamp_lines(count, NOW_LINES);
+	meta = now_clamp_lines(meta, ARTIST_BIO_LINES);
+	return title_h + (count > 0 ? SP_1 + count * body_h : 0) +
+	       (meta > 0 ? SP_2 + meta * meta_h : 0);
+}
+
+/* The centre of t_meta line `n` of that block, moved down by `dy` like
+ * the rest of the card (now_detail_text_dy_meta_at). */
+static inline int now_detail_meta_cy(int title_h, int body_h, int count,
+                                     int meta_h, int n, int dy)
+{
+	count = now_clamp_lines(count, NOW_LINES);
+	int top = SP_3 + title_h + (count > 0 ? SP_1 + count * body_h : 0) +
+	          SP_2;
+	return top + n * meta_h + meta_h / 2 + dy;
+}
+
+/* How far the card's text moves down so the whole block, paragraph and
+ * all, is centred on the cover whose top is `art_y`. */
+static inline int now_detail_text_dy_meta_at(int title_h, int body_h,
+                                             int count, int meta_h, int meta,
+                                             int art_y)
+{
+	int block_h = now_detail_block_h(title_h, body_h, count, meta_h, meta);
+	return art_y + (ART_SIZE - block_h) / 2 - SP_3;
+}
+
 static inline int now_detail_text_dy_at(int title_h, int body_h, int count,
                                         int art_y)
 {
-	if (count < 0)
-		count = 0;
-	if (count > NOW_LINES)
-		count = NOW_LINES;
-	int block_h = title_h + (count > 0 ? SP_1 + count * body_h : 0);
-	return art_y + (ART_SIZE - block_h) / 2 - SP_3;
+	return now_detail_text_dy_meta_at(title_h, body_h, count, 0, 0, art_y);
 }
 
 static inline int now_detail_text_dy(int title_h, int body_h, int count)

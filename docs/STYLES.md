@@ -121,7 +121,8 @@ Fuente del sistema (`C2D_FontLoadSystem` o fuente por defecto de citro2d) para t
 - No usar escalas por debajo de `t_meta`.
 - Una línea por dato. Recortar con `...` midiendo con `C2D_TextGetDimensions`. Única
   excepción: la ficha de detalle de la pantalla superior (§7.12), donde el texto que no cabe
-  rueda (§5.15) en vez de recortarse.
+  rueda (§5.15) en vez de recortarse, salvo la biografía del artista, que se ajusta por
+  palabras (§7.12).
 - Mayúscula solo al inicio de frase.
 - Alinear a la izquierda en listas y metadatos; centrar solo en pantallas de un único mensaje.
 - Coordenadas de texto en píxeles enteros.
@@ -425,7 +426,8 @@ enlace no es un botón:
 ### 5.15 Texto que rueda
 
 Para un dato que no cabe en su línea y que no se ve entero en ningún otro sitio: solo la
-ficha de detalle de la pantalla superior (§7.12).
+ficha de detalle de la pantalla superior (§7.12). La biografía de un artista no rueda: un
+párrafo que se mueve no se puede leer (§7.12).
 
 - Empieza quieto en su sitio durante 1,5 s (`MARQUEE_PAUSE_MS`).
 - Después se desplaza a la izquierda a 30 px/s (`MARQUEE_SPEED`), seguido de una copia del
@@ -1121,6 +1123,11 @@ Error:
   - Artista: sus oyentes mensuales, «12.345.678 oyentes mensuales» («12,345,678 monthly
     listeners» en inglés; «1 oyente mensual»), pedidos en la misma carga que el resto; si
     el servicio no los da, «Artista». «Canciones populares» encabeza la lista de abajo.
+    Debajo, a `e2`, el principio de su biografía en `t_meta` · `texto_2`, ajustado por
+    palabras a la columna en hasta 5 líneas, sin rodar; la última acaba en «...» si queda
+    texto. Llega en el idioma en que la sirve Spotify. Sin oyentes ni biografía,
+    «Artista». El bloque entero se centra en la altura del retrato (cabe siempre: 120 px
+    como mucho). La biografía se ajusta al parsear la ficha, no al dibujar.
   - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
     página). Sin propietario: el
     servicio solo da un id de usuario opaco.

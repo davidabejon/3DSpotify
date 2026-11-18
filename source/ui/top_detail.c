@@ -1,6 +1,7 @@
 #include "top_detail.h"
 
 #include "artist_logic.h"
+#include "text_wrap.h"
 #include "downloads_view_logic.h"
 #include "draw.h"
 #include "icons.h"
@@ -18,13 +19,18 @@
 #include <stdio.h>
 #include <string.h>
 
-#define TEXT_GLYPHS    ((1 + NOW_LINES) * UI_FIELD_SIZE)
+#define TEXT_GLYPHS    ((1 + NOW_LINES + ARTIST_BIO_LINES) * UI_FIELD_SIZE)
 
 static C2D_TextBuf text_buf;
 /* The title, then up to NOW_LINES lines under it. */
 static C2D_Text texts[1 + NOW_LINES];
 static int text_w[1 + NOW_LINES];
 static int line_count;
+/* An artist's biography, wrapped to the column when parsed (text_wrap.h),
+ * and the buffer its lines are measured in. */
+static C2D_Text bio_texts[ARTIST_BIO_LINES];
+static int bio_count;
+static C2D_TextBuf measure_buf;
 /* When the texts were parsed, the start of every marquee; and how far
  * each one had rolled when drawn. */
 static u64 parsed_ms;
@@ -36,13 +42,16 @@ static unsigned parsed_serial;
 static detail_state parsed_state;
 /* A playlist's count grows as its pages arrive. */
 static int parsed_count;
+/* An artist's listeners may come after the rest. */
+static long parsed_listeners;
 static lang_id parsed_lang = LANG_COUNT;
 static bool drawn_valid;
 
 bool top_detail_init(void)
 {
 	text_buf = C2D_TextBufNew(TEXT_GLYPHS);
-	if (!text_buf) {
+	measure_buf = C2D_TextBufNew(TEXT_WRAP_LINE_MAX);
+	if (!text_buf || !measure_buf) {
 		top_detail_exit();
 		return false;
 	}
@@ -54,6 +63,9 @@ void top_detail_exit(void)
 	if (text_buf)
 		C2D_TextBufDelete(text_buf);
 	text_buf = NULL;
+	if (measure_buf)
+		C2D_TextBufDelete(measure_buf);
+	measure_buf = NULL;
 	parsed_doc = NULL;
 	parsed_lang = LANG_COUNT;
 	drawn_valid = false;
@@ -229,10 +241,13 @@ static void parse_offline_collection(const detail_doc *d)
 	add_line(line);
 }
 
+static void parse_bio(const char *bio);
+
 static void parse(const detail_doc *d)
 {
 	C2D_TextBufClear(text_buf);
 	line_count = 0;
+	bio_count = 0;
 	if (d->kind == DETAIL_TRACK) {
 		parse_track(&d->tracks[d->selected]);
 	} else if (d->state == DETAIL_LOADING) {
@@ -266,9 +281,12 @@ static void parse(const detail_doc *d)
 				snprintf(line, sizeof(line), tr(STR_ARTIST_LISTENERS_FMT),
 				         count);
 			add_line(line);
-		} else {
+		} else if (d->preview || !d->bio[0]) {
+			/* Neither: the title is not left alone. */
 			add_line(tr(STR_RESULT_ARTIST));
 		}
+		if (!d->preview && d->bio[0])
+			parse_bio(d->bio);
 	}
 }
 
@@ -276,7 +294,28 @@ static bool changed(const detail_doc *d)
 {
 	return d != parsed_doc || d->serial != parsed_serial ||
 	       d->state != parsed_state || d->count != parsed_count ||
+	       d->listeners != parsed_listeners ||
 	       parsed_lang != lang_get();
+}
+
+static float measure_meta(const char *string, void *ctx)
+{
+	(void)ctx;
+	return ui_measure(measure_buf, string, TXT_META);
+}
+
+/* The start of a biography, word-wrapped to the column in up to
+ * ARTIST_BIO_LINES lines, the last ending in "..." when there is more
+ * (STYLES.md 7.12): a paragraph that rolled could not be read. */
+static void parse_bio(const char *bio)
+{
+	static char wrapped[ARTIST_BIO_LINES][TEXT_WRAP_LINE_MAX];
+	bio_count = text_wrap(bio, (float)now_text_w(), ARTIST_BIO_LINES,
+	                      measure_meta, NULL, wrapped);
+	for (int i = 0; i < bio_count; i++) {
+		ui_parse(&bio_texts[i], text_buf, wrapped[i]);
+		C2D_TextOptimize(&bio_texts[i]);
+	}
 }
 
 /* --- State and drawing ------------------------------------------------- */
@@ -317,6 +356,7 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y)
 		parsed_serial = doc->serial;
 		parsed_state = doc->state;
 		parsed_count = doc->count;
+		parsed_listeners = doc->listeners;
 		parsed_lang = lang_get();
 		parsed_ms = osGetTime();
 	}
@@ -324,7 +364,10 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y)
 	for (int i = 0; i < line_count; i++)
 		lines[i] = &texts[1 + i];
 	current_rolls(drawn_rolls);
+	const C2D_Text *bio[ARTIST_BIO_LINES];
+	for (int i = 0; i < bio_count; i++)
+		bio[i] = &bio_texts[i];
 	top_now_draw_header(art, true, art_y, &texts[0], lines, line_count,
-	                    drawn_rolls, placeholder(doc));
+	                    drawn_rolls, placeholder(doc), bio, bio_count);
 	drawn_valid = true;
 }
