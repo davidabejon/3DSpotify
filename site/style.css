@@ -699,11 +699,30 @@ main > .wrap:first-child {
 	box-shadow: calc(3 * var(--u)) calc(3 * var(--u)) 0 var(--sombra);
 }
 
+/* Ficha (§7.12): centrada en la altura; bajo la franja de tipos, más abajo (§5.17). */
 .m-cover--ficha {
 	left: calc(12 * var(--u));
-	top: calc(12 * var(--u));
+	top: calc(40 * var(--u));
 	width: calc(160 * var(--u));
 	height: calc(160 * var(--u));
+}
+
+.m-cover--baja { top: calc(56 * var(--u)); }
+
+/* Sin portada: `capa_alta` con el icono centrado. */
+.m-cover--icono {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--capa-alta);
+	color: var(--texto-2);
+}
+
+.m-cover--tesela {
+	left: calc(3 * var(--u));
+	top: calc(3 * var(--u));
+	width: calc(24 * var(--u));
+	height: calc(24 * var(--u));
 }
 
 .m-cover--grande {
@@ -720,29 +739,123 @@ main > .wrap:first-child {
 	height: calc(33 * var(--u));
 }
 
-/* Superior: ficha de lo que suena (§7.5). */
+/* Superior: textos de la ficha, centrados junto a la portada (§7.12). */
 .m-ficha {
 	left: calc(188 * var(--u));
-	top: calc(16 * var(--u));
+	top: calc(40 * var(--u));
 	width: calc(200 * var(--u));
-	display: grid;
+	height: calc(160 * var(--u));
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
 	gap: calc(4 * var(--u));
 }
+
+.m-ficha--baja { top: calc(56 * var(--u)); }
 
 .m-ficha .m-cuerpo {
 	color: var(--texto-2);
 }
 
-.m-progreso-sup {
-	left: calc(12 * var(--u));
-	right: calc(12 * var(--u));
-	top: calc(196 * var(--u));
+/* Franja de tipos (§5.17): 4 segmentos de 91 px en y 24..48, no es un control. */
+.m-tipo {
+	top: calc(24 * var(--u));
+	width: calc(91 * var(--u));
+	height: calc(24 * var(--u));
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: calc(4 * var(--u));
+	background: var(--capa);
+	border: var(--outline-w) solid var(--tinta);
+	color: var(--texto);
+}
+
+.m-tipo .m-meta { color: var(--texto); }
+
+.m-tipo--activo {
+	background: var(--clorofila);
+	color: var(--tinta);
+	box-shadow: inset 0 calc(-2 * var(--u)) 0 var(--musgo);
+}
+
+.m-tipo--activo .m-meta { color: var(--tinta); }
+
+/* Ajustes (§7.8): cuenta y créditos sobre el logotipo oscurecido. */
+.m-velo {
+	inset: 0;
+	background: rgb(8 48 30 / 0.8);
+}
+
+.m-cuenta {
+	left: calc(16 * var(--u));
+	top: calc(16 * var(--u));
+	width: calc(368 * var(--u));
+	height: calc(64 * var(--u));
+	display: flex;
+	align-items: center;
+	gap: calc(12 * var(--u));
+	padding: 0 calc(12 * var(--u)) 0 calc(7 * var(--u));
+	background: var(--capa);
+	border: var(--outline-w) solid var(--tinta);
+}
+
+.m-cuenta__foto {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: calc(48 * var(--u));
+	height: calc(48 * var(--u));
+	background: var(--capa-alta);
+	border: var(--outline-w) solid var(--tinta);
+	color: var(--texto-2);
+}
+
+.m-cuenta__texto {
+	min-width: 0;
+	display: grid;
+	gap: calc(2 * var(--u));
+}
+
+.m-cuenta__texto .m-cuerpo { color: var(--texto-2); }
+
+.m-credito {
+	left: calc(20 * var(--u));
+	right: calc(16 * var(--u));
+	height: calc(20 * var(--u));
+	display: flex;
+	align-items: center;
+}
+
+.m-credito .m-meta {
+	flex: 0 0 calc(88 * var(--u));
+	color: var(--clorofila);
+}
+
+.m-credito .m-cuerpo { min-width: 0; }
+
+.m-regla {
+	left: calc(16 * var(--u));
+	right: calc(16 * var(--u));
+	top: calc(180 * var(--u));
+	height: 1px;
+	background: var(--capa-luz);
+}
+
+.m-marca {
+	left: calc(16 * var(--u));
+	right: calc(16 * var(--u));
+	top: calc(188 * var(--u));
+	margin: 0;
 }
 
 .m-tiempos {
 	display: flex;
 	justify-content: space-between;
-	margin-bottom: calc(4 * var(--u));
+	height: calc(14 * var(--u));
+	line-height: calc(14 * var(--u));
+	margin-bottom: calc(3 * var(--u));
 }
 
 /* Barras de progreso (§5.4) y volumen (§5.5). */
@@ -886,30 +999,53 @@ main > .wrap:first-child {
 	justify-content: flex-start;
 }
 
-/* Reproductor (§7.5). */
-.m-cabeza-rep {
+.pantalla .m-centro { justify-content: center; }
+
+/* Reproductor (§7.5, player_logic.h): título en 36..68, artista, álbum y
+ * descarga en 72..104, controles en 108..156. */
+.m-rep-titulo {
 	left: calc(8 * var(--u));
 	right: calc(8 * var(--u));
-	top: calc(40 * var(--u));
-	display: grid;
-	gap: calc(2 * var(--u));
-}
-
-.m-fila {
+	top: calc(36 * var(--u));
+	height: calc(32 * var(--u));
 	display: flex;
 	justify-content: space-between;
-	align-items: baseline;
+	align-items: center;
 	gap: calc(8 * var(--u));
 }
 
-.m-fila .m-meta {
+.m-rep-titulo .m-meta {
 	flex: none;
 }
+
+.m-rep-enlace {
+	top: calc(72 * var(--u));
+	width: calc(132 * var(--u));
+	line-height: calc(32 * var(--u));
+	color: var(--texto-2);
+}
+
+.pantalla .m-descarga {
+	left: calc(280 * var(--u));
+	top: calc(72 * var(--u));
+	width: calc(32 * var(--u));
+	height: calc(32 * var(--u));
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: 0;
+	color: var(--texto);
+}
+
+.pantalla .m-descarga.is-pressed { color: var(--lima); }
+
+.m-descarga--hecha { color: var(--lima); }
 
 .m-controles {
 	left: 0;
 	right: 0;
-	top: calc(80 * var(--u));
+	top: calc(108 * var(--u));
 	height: calc(48 * var(--u));
 	display: flex;
 	justify-content: center;
@@ -932,16 +1068,19 @@ main > .wrap:first-child {
 	height: calc(48 * var(--u));
 }
 
+/* Tiempos en 163..177 y barra en 180..188. */
 .m-progreso-inf {
 	left: calc(8 * var(--u));
 	right: calc(8 * var(--u));
-	top: calc(140 * var(--u));
+	top: calc(163 * var(--u));
 }
 
+/* Barra de volumen en 201..207. */
 .m-volumen {
 	left: calc(8 * var(--u));
 	right: calc(8 * var(--u));
-	top: calc(180 * var(--u));
+	top: calc(197 * var(--u));
+	height: calc(14 * var(--u));
 	display: flex;
 	align-items: center;
 	gap: calc(8 * var(--u));
@@ -1009,6 +1148,20 @@ main > .wrap:first-child {
 	color: var(--tinta);
 }
 
+/* Tesela (§5.16): la fila en compacto, 150×32 en la rejilla de 2 columnas. */
+.pantalla .m-tesela {
+	width: calc(150 * var(--u));
+	height: calc(32 * var(--u));
+}
+
+.m-tesela__nombre {
+	position: absolute;
+	left: calc(35 * var(--u));
+	right: calc(7 * var(--u));
+	top: 50%;
+	transform: translateY(-50%);
+}
+
 /* Indicador de desplazamiento (§5.11). */
 .m-scroll {
 	right: 0;
@@ -1061,7 +1214,22 @@ main > .wrap:first-child {
 
 .m-glifo--a { background: var(--btn-a); }
 .m-glifo--b { background: var(--btn-b); }
+.m-glifo--x { background: var(--btn-x); }
 .m-glifo--y { background: var(--btn-y); }
+
+/* Cruceta: sin color propio, como START y SELECT (§5.6). */
+.m-glifo--sys {
+	width: calc(16 * var(--u));
+	padding: 0;
+	background: var(--texto-2);
+}
+
+.pantalla .m-glifo .icon {
+	width: calc(14 * var(--u));
+	height: calc(14 * var(--u));
+}
+
+.m-accion--der { margin-left: auto; }
 
 /* ------------------------------------------------------------------ */
 /* Características y controles                                          */
