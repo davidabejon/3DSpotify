@@ -228,12 +228,12 @@ Paneles no interactivos (barra de botones, paneles de detalle) y pestañas en re
   foco: el cuadrado sigue siendo `capa_alta` y `tinta` sobre él apenas se leería. Sin
   descarga de miniaturas.
 - Variante de colección o artista (Descargas, §7.14, y resultados, §7.4): un álbum, una
-  playlist o un artista. Con portada (o retrato), en su esquina inferior izquierda una
-  insignia: el icono de disco, de líneas o de cuenta (16 px, `texto` sobre `tinta`); sin
-  ella, la nota de siempre sin insignia, salvo el artista, que lleva el icono de cuenta
-  centrado en lugar de la nota. A la derecha va un chevron `>` en lugar de la duración: A la
-  abre, no la reproduce. Se distingue de una canción sin depender del color, y los estados de
-  foco no cambian.
+  playlist o un artista. En Descargas, con portada, en su esquina inferior izquierda una
+  insignia: el icono de disco o de líneas (16 px, `texto` sobre `tinta`). En resultados no hay
+  insignia: la segunda línea ya dice qué es. Sin portada, la nota de siempre sin insignia,
+  salvo el artista, que lleva el icono de cuenta centrado en lugar de la nota. A la derecha va
+  un chevron `>` en lugar de la duración: A la abre, no la reproduce. Se distingue de una
+  canción sin depender del color, y los estados de foco no cambian.
 - Segunda línea de la variante de colección: en Descargas, lo descargado («Álbum ·
   Canciones: 12», «Playlist · 8 de 40»); en resultados, qué es: «Artista», «Álbum ·
   <artista>» o «Playlist · <propietario>» («Playlist» sin propietario). Sin año: el

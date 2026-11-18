@@ -468,8 +468,9 @@ static void draw_number(const track_list *l, ui_rect row, int index)
 	                 box.y + box.h / 2, TXT_META, COL_TEXTO_2);
 }
 
-/* A collection's or an artist's cover (5.3), with a badge, the album,
- * playlist or user icon, at its bottom left. Without a cover the square
+/* A collection's or an artist's cover (5.3). In the downloads, with a
+ * badge, the album or playlist icon, at its bottom left; a search result
+ * has none, its second line says what it is. Without a cover the square
  * shows the note, as everywhere (the heart for Liked Songs, the user for
  * an artist), and no badge over it: the kind still reads without colour. */
 static void draw_collection_cover(const track_list *l, ui_rect row, int index,
@@ -478,13 +479,12 @@ static void draw_collection_cover(const track_list *l, ui_rect row, int index,
 	ui_rect box = list_thumb_rect(row);
 	C2D_Image image;
 	bool shown = thumbs_client_image(&l->thumbs, index - l->base, &image);
-	int badge_icon = r->kind == TRACK_ROW_ALBUM ? ICON_ALBUM
-	               : r->kind == TRACK_ROW_ARTIST ? ICON_USER : ICON_PLAYLIST;
+	int badge_icon = r->kind == TRACK_ROW_ALBUM ? ICON_ALBUM : ICON_PLAYLIST;
 	bool liked = strcmp(l->tracks[index].uri, SP_LIKED_URI) == 0;
 	ui_art_or(box, shown ? &image : NULL,
 	          liked ? ICON_HEART
 	                : r->kind == TRACK_ROW_ARTIST ? ICON_USER : ICON_NOTE);
-	if (!shown)
+	if (!shown || r->search)
 		return;
 	ui_rect badge = { box.x, box.y + box.h - ICON_S, ICON_S, ICON_S };
 	ui_fill(badge, COL_TINTA);
