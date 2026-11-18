@@ -1098,13 +1098,63 @@ class BuildTests(unittest.TestCase):
                     app.index("static void search_poll(")]
         self.assertIn("background_priority()", start)
         self.assertNotIn("0x18", start)
-        self.assertLess(
-            app.index("if (!job->cancel_requested"),
-            app.index("job->count = sp_track_metadata_batch"),
-        )
+        # A cancel is looked at before the tracks are named, on both ways.
+        fallback = app[app.index("static int search_fallback("):
+                       app.index("static void search_worker(")]
+        self.assertLess(fallback.index("if (job->cancel_requested)"),
+                        fallback.index("search_name_tracks("))
+        typed = app[app.index("static int search_typed_once("):
+                    app.index("static int search_fallback(")]
+        self.assertIn("&job->cancel_requested", typed)
+        self.assertLess(typed.index("if (job->cancel_requested)"),
+                        typed.index("if (job->count < 0)"))
         self.assertTrue(
             (build.ROOT / "ui" / "player_logic.h").is_file()
         )
+
+    def test_typed_search_goes_through_pathfinder_with_a_fallback(self):
+        import re
+        root = build.ROOT
+        app = (root / "main.c").read_text(encoding="utf-8")
+        # Both ways stay reachable from the worker: pathfinder first, the
+        # old search whenever it fails.
+        searching = app[app.index("static int search_typed_once("):
+                        app.index("/* What to suggest for a failed search")]
+        self.assertIn("sp_search_typed(", searching)
+        self.assertIn("sp_search_tracks(", searching)
+        worker = searching[searching.index("static void search_worker("):]
+        self.assertLess(worker.index("search_pathfinder("),
+                        worker.index("search_fallback("))
+        self.assertIn("pf_hash_refresh(", searching)
+        # The browser User-Agent pathfinder needs is written once.
+        holders = [f.name for f in sorted((root / "platform3ds").glob("*.[ch]"))
+                   if "Mozilla/5.0" in f.read_text(encoding="utf-8")]
+        self.assertEqual(holders, ["pathfinder.c"])
+        pf_hash = (root / "platform3ds" / "pf_hash.h").read_text(
+            encoding="utf-8")
+        match = re.search(r'#define PF_HASH_DEFAULT\s*\\?\s*"([^"]*)"',
+                          pf_hash)
+        self.assertIsNotNone(match)
+        self.assertRegex(match.group(1), r"^[0-9a-f]{64}$")
+        # The trace exists in debug builds only, and never holds the query
+        # or the token.
+        self.assertIn('["-DAPP_DEBUG"] if args.debug',
+                      (root / "build.py").read_text(encoding="utf-8"))
+        trace = app[app.index("#ifdef APP_DEBUG\n/* One line per search"):
+                    app.index("/* Names `n` track URIs")]
+        self.assertIn("search_trace.log", trace)
+        self.assertEqual(app.count("search_trace.log"),
+                         trace.count("search_trace.log"))
+        traced = re.findall(r"TRACE\(([^;]*)\);", app)
+        self.assertTrue(traced)
+        for call in traced:
+            self.assertNotIn("query", call)
+            self.assertNotIn("token", call)
+        # The pure parts are in the host tests.
+        native = (root.parent / "tests" / "test_native_logic.py").read_text(
+            encoding="utf-8")
+        self.assertIn('"search_results.c"', native)
+        self.assertIn('"json3ds.c"', native)
 
     def test_native_queue_boundaries_and_cleanup_order_are_explicit(self):
         app = (build.ROOT / "main.c").read_text(

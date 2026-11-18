@@ -88,6 +88,12 @@ int  http_session_request(http_session *s, const char *path,
                           const char *ctype, const char *accept,
                           const void *body, size_t len, size_t limit,
                           http_reply *out);
+/* With `extra` header lines, as http_request_ex. */
+int  http_session_request_ex(http_session *s, const char *path,
+                             const char *method, const char *bearer,
+                             const char *ctype, const char *accept,
+                             const char *extra, const void *body, size_t len,
+                             size_t limit, http_reply *out);
 void http_session_close(http_session *s);
 /* 1 when the last request reused the open link, 0 when it reconnected. */
 int  http_session_last_reused(const http_session *s);

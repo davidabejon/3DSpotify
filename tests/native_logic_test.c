@@ -10,6 +10,7 @@
 #include "home_feed_logic.h"
 #include "home_logic.h"
 #include "http_logic.h"
+#include "json3ds.h"
 #include "image_util.h"
 #include "lang.h"
 #include "layout.h"
@@ -25,6 +26,7 @@
 #include "power_logic.h"
 #include "press_logic.h"
 #include "search_path.h"
+#include "search_results.h"
 #include "spinner_logic.h"
 #include "stream_chunks.h"
 #include "spotify_id.h"
@@ -40,6 +42,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void test_search_path_encoding(void)
@@ -3908,6 +3911,376 @@ static void test_playback_next_playable(void)
 	assert(playback_next_playable(9, 5, -1, order, playable) == -1);
 }
 
+/* A file under tests/fixtures, NUL-terminated; the caller frees it. */
+static char *read_fixture(const char *name, size_t *len)
+{
+	char path[160];
+	snprintf(path, sizeof(path), "tests/fixtures/%s", name);
+	FILE *f = fopen(path, "rb");
+	assert(f);
+	assert(fseek(f, 0, SEEK_END) == 0);
+	long n = ftell(f);
+	assert(n > 0);
+	assert(fseek(f, 0, SEEK_SET) == 0);
+	char *b = malloc((size_t)n + 1);
+	assert(b);
+	assert(fread(b, 1, (size_t)n, f) == (size_t)n);
+	fclose(f);
+	b[n] = '\0';
+	*len = (size_t)n;
+	return b;
+}
+
+static void test_json_member(void)
+{
+	static const char J[] =
+	    "{\"artists\":{\"items\":[{\"profile\":{\"name\":\"Inner\"}}]},"
+	    " \"note\" : \"a } brace, a ] and \\\"quotes\\\" {\","
+	    "\"name\":\"Outer\",\"n\":42,\"z\":null,\"list\":[1, \"two\", {}]}";
+	const size_t len = sizeof(J) - 1;
+	const char *v;
+	size_t vl;
+	char out[64];
+	long n;
+
+	/* The nested "name" comes first and is not the object's own. */
+	assert(json_member(J, len, "name", &v, &vl));
+	assert(json_slice_str(v, vl, out, sizeof(out)));
+	assert(strcmp(out, "Outer") == 0);
+	assert(!json_member(J, len, "profile", &v, &vl));
+	assert(!json_member(J, len, "missing", &v, &vl));
+
+	/* Braces and escaped quotes inside a string are not structure. */
+	assert(json_member_str(J, len, "note", out, sizeof(out)));
+	assert(strcmp(out, "a } brace, a ] and \"quotes\" {") == 0);
+	assert(json_member_int(J, len, "n", &n) && n == 42);
+	assert(!json_member_int(J, len, "z", &n));
+	assert(!json_member_str(J, len, "n", out, sizeof(out)));
+
+	/* A path down, then the items of an array. */
+	assert(json_member_str(J, len, "artists.items", out, sizeof(out)) == false);
+	assert(json_path(J, len, "artists.items", &v, &vl) && *v == '[');
+	size_t cur = 0;
+	const char *it;
+	size_t il;
+	assert(json_item_next(v, vl, &cur, &it, &il));
+	assert(json_member_str(it, il, "profile.name", out, sizeof(out)));
+	assert(strcmp(out, "Inner") == 0);
+	assert(!json_item_next(v, vl, &cur, &it, &il));
+
+	assert(json_path(J, len, "list", &v, &vl));
+	cur = 0;
+	int items = 0;
+	while (json_item_next(v, vl, &cur, &it, &il))
+		items++;
+	assert(items == 3);
+
+	/* Cut short: nothing past the cut is found, nor guessed. */
+	assert(!json_member(J, 40, "name", &v, &vl));
+	assert(!json_member("[1]", 3, "name", &v, &vl));
+}
+
+static void test_json_str_utf8(void)
+{
+	char out[32];
+	assert(json_str("{\"k\":\"\\u00ed\"}", "k", out, sizeof(out)));
+	assert(strcmp(out, "\xc3\xad") == 0);
+	assert(json_str("{\"k\":\"\\u5b87\"}", "k", out, sizeof(out)));
+	assert(strcmp(out, "\xe5\xae\x87") == 0);
+	/* U+1F342 as a pair, one 4-byte character. */
+	assert(json_str("{\"k\":\"\\ud83c\\udf42\"}", "k", out, sizeof(out)));
+	assert(strcmp(out, "\xf0\x9f\x8d\x82") == 0);
+	/* A surrogate on its own. */
+	assert(json_str("{\"k\":\"a\\ud83cb\"}", "k", out, sizeof(out)));
+	assert(strcmp(out, "a?b") == 0);
+	assert(json_str("{\"k\":\"\\udf42\"}", "k", out, sizeof(out)));
+	assert(strcmp(out, "?") == 0);
+	/* Raw UTF-8 passes as it is. */
+	assert(json_str("{\"k\":\"rosal\xc3\xad" "a\"}", "k", out, sizeof(out)));
+	assert(strcmp(out, "rosal\xc3\xad" "a") == 0);
+	/* A character that does not fit whole is a failure, not half of it. */
+	assert(!json_str("{\"k\":\"\\u5b87\"}", "k", out, 3));
+	assert(!json_str("{\"k\":\"\\u5bz7\"}", "k", out, sizeof(out)));
+}
+
+static void test_pf_parse_kinds(void)
+{
+	static sp_track rows[SEARCH_ITEMS_MAX];
+	size_t len;
+	char *json;
+
+	json = read_fixture("pf_tracks.json", &len);
+	assert(pf_parse_page(json, len, RESULT_TRACKS, rows, SEARCH_ITEMS_MAX) == 3);
+	assert(strcmp(rows[0].uri, "spotify:track:003vvx7Niy0yvhvHt4a68B") == 0);
+	assert(rows[0].name[0] == '\0');     /* the metadata batch names it */
+	assert(pf_parse_page(json, len, RESULT_TRACKS, rows, 2) == 2);
+	assert(pf_parse_page(json, len, RESULT_ARTISTS, rows, 4) == -1);
+	assert(pf_parse_page(json, len / 2, RESULT_TRACKS, rows, 4) == -1);
+	free(json);
+
+	json = read_fixture("pf_artists.json", &len);
+	assert(pf_parse_page(json, len, RESULT_ARTISTS, rows, SEARCH_ITEMS_MAX) == 3);
+	assert(strcmp(rows[0].uri, "spotify:artist:0C0XlULifJtAgn6ZNCW2eu") == 0);
+	assert(strcmp(rows[0].name, "The Killers") == 0);
+	assert(strcmp(rows[0].art_large, "https://i.scdn.co/image/"
+	              "ab6761610000e5eb207b21f3ed0ee96adce3166a") == 0);
+	assert(strcmp(rows[0].art_small, "https://i.scdn.co/image/"
+	              "ab6761610000f178207b21f3ed0ee96adce3166a") == 0);
+	assert(strcmp(rows[2].name, "Arctic Monkeys") == 0);
+	assert(!rows[2].art_large[0] && !rows[2].art_small[0]);
+	free(json);
+
+	json = read_fixture("pf_albums.json", &len);
+	assert(pf_parse_page(json, len, RESULT_ALBUMS, rows, SEARCH_ITEMS_MAX) == 2);
+	/* The album's own name, not the artist's met before it. */
+	assert(strcmp(rows[0].name, "Hot Fuss") == 0);
+	assert(strcmp(rows[0].artist, "The Killers") == 0);
+	assert(strcmp(rows[0].art_large, "https://i.scdn.co/image/"
+	              "ab67616d0000b273ccdddd46119a4ff53eaf1f5d") == 0);
+	assert(strcmp(rows[0].art_small, "https://i.scdn.co/image/"
+	              "ab67616d00004851ccdddd46119a4ff53eaf1f5d") == 0);
+	assert(strcmp(rows[1].name, "Sam's Town") == 0);
+	assert(rows[1].year == 0);
+	free(json);
+
+	json = read_fixture("pf_playlists.json", &len);
+	assert(pf_parse_page(json, len, RESULT_PLAYLISTS, rows, SEARCH_ITEMS_MAX) == 4);
+	assert(strcmp(rows[0].name, "This Is The Killers") == 0);
+	assert(strcmp(rows[0].artist, "Spotify") == 0);
+	assert(!rows[0].art_large[0] && !rows[0].art_small[0]);   /* pickasso */
+	assert(strcmp(rows[1].artist, "Someone") == 0);
+	assert(strcmp(rows[1].art_large, "https://i.scdn.co/image/"
+	              "ab67616d00001e020f35726025e0f025da4c688f") == 0);
+	assert(strcmp(rows[1].art_small, rows[1].art_large) == 0);
+	assert(strcmp(rows[2].art_large, "https://i.scdn.co/image/"
+	              "ab67706c0000da84be6af36e677bf525daebd455") == 0);
+	assert(strcmp(rows[3].art_large, "https://i.scdn.co/image/"
+	              "ab67706f00000002409a98a40d38e6c16f39d796") == 0);
+	free(json);
+
+	/* findTopResults carries the same sections. */
+	json = read_fixture("pf_top.json", &len);
+	for (int k = 0; k < RESULT_KINDS; k++)
+		assert(pf_parse_page(json, len, (result_kind)k, rows,
+		                     SEARCH_ITEMS_MAX) == 2);
+	free(json);
+}
+
+static void test_pf_parse_best(void)
+{
+	static const struct {
+		const char *type, *uri;
+		result_kind kind;
+	} CASES[] = {
+		{ "Artist", "spotify:artist:a", RESULT_ARTISTS },
+		{ "Album", "spotify:album:b", RESULT_ALBUMS },
+		{ "Track", "spotify:track:c", RESULT_TRACKS },
+	};
+	char json[512], uri[SP_URI_MAX];
+	result_kind kind;
+	for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); i++) {
+		snprintf(json, sizeof(json),
+		         "{\"data\":{\"searchV2\":{\"topResultsV2\":{\"itemsV2\":["
+		         "{\"item\":{\"data\":{\"__typename\":\"%s\",\"uri\":\"%s\"}}}"
+		         "]}}}}", CASES[i].type, CASES[i].uri);
+		assert(pf_parse_best(json, strlen(json), &kind, uri, sizeof(uri)));
+		assert(kind == CASES[i].kind);
+		assert(strcmp(uri, CASES[i].uri) == 0);
+	}
+
+	/* "lofi": a Genre first, which is passed over for the Playlist. */
+	size_t len;
+	char *top = read_fixture("pf_top.json", &len);
+	assert(pf_parse_best(top, len, &kind, uri, sizeof(uri)));
+	assert(kind == RESULT_PLAYLISTS);
+	assert(strcmp(uri, "spotify:playlist:6zCID88oNjNv9zx6puDHKj") == 0);
+	free(top);
+
+	snprintf(json, sizeof(json),
+	         "{\"data\":{\"searchV2\":{\"topResultsV2\":{\"itemsV2\":["
+	         "{\"item\":{\"data\":{\"__typename\":\"Genre\",\"uri\":\"g\"}}}"
+	         "]}}}}");
+	assert(!pf_parse_best(json, strlen(json), &kind, uri, sizeof(uri)));
+	assert(!pf_parse_best("{}", 2, &kind, uri, sizeof(uri)));
+}
+
+static void test_pf_cover_url(void)
+{
+	char out[80];
+	pf_cover_url("https://i.scdn.co/image/ab67616d0000b273aa", out, sizeof(out));
+	assert(strcmp(out, "https://i.scdn.co/image/ab67616d0000b273aa") == 0);
+	pf_cover_url("https://image-cdn-fa.spotifycdn.com/image/ab67706f00000002bb",
+	             out, sizeof(out));
+	assert(strcmp(out, "https://i.scdn.co/image/ab67706f00000002bb") == 0);
+	pf_cover_url("https://image-cdn-ak.spotifycdn.com/image/"
+	             "ab67706c0000d72cbe6af36e677bf525daebd455", out, sizeof(out));
+	assert(strcmp(out, "https://i.scdn.co/image/"
+	              "ab67706c0000da84be6af36e677bf525daebd455") == 0);
+	pf_cover_url("https://i.scdn.co/image/ab67706c0000d72cbe6af36e677bf525daebd455",
+	             out, sizeof(out));
+	assert(strcmp(out, "https://i.scdn.co/image/"
+	              "ab67706c0000da84be6af36e677bf525daebd455") == 0);
+	pf_cover_url("https://mosaic.scdn.co/300/"
+	             "ab67616d00001e020f35726025e0f025da4c688f"
+	             "ab67616d00001e026898a982ff3c6049ba52586c", out, sizeof(out));
+	assert(strcmp(out, "https://i.scdn.co/image/"
+	              "ab67616d00001e020f35726025e0f025da4c688f") == 0);
+	pf_cover_url("https://mosaic.scdn.co/300/ab67", out, sizeof(out));
+	assert(out[0] == '\0');
+	pf_cover_url("https://pickasso.spotifycdn.com/image/ab67c0de0000deef/dt/v1/"
+	             "img/thisisv3/0C0XlULifJtAgn6ZNCW2eu/en", out, sizeof(out));
+	assert(out[0] == '\0');
+	pf_cover_url("https://t.scdn.co/images/728ed47fc1674feb.jpeg", out,
+	             sizeof(out));
+	assert(out[0] == '\0');
+	/* Too long for the row's field. */
+	pf_cover_url("https://i.scdn.co/image/"
+	             "0123456789012345678901234567890123456789"
+	             "0123456789012345678901234567890123456789", out, sizeof(out));
+	assert(out[0] == '\0');
+	/* Not an id: a path or a query is not passed through. */
+	pf_cover_url("https://i.scdn.co/image/ab/../x", out, sizeof(out));
+	assert(out[0] == '\0');
+	pf_cover_url(NULL, out, sizeof(out));
+	assert(out[0] == '\0');
+}
+
+static void test_pf_bodies(void)
+{
+	static const char HASH[] =
+	    "903df2a65d8121e27d73a2be03c01e88ebe6021bb6d4eb82a389e35d87e51d27";
+	char body[1024];
+	assert(pf_body_top("a\"b\\c canci\xc3\xb3n", 10, HASH, body, sizeof(body)));
+	assert(strstr(body, "\"query\":\"a\\\"b\\\\c canci\xc3\xb3n\""));
+	assert(strstr(body, "\"numberOfTopResults\":10"));
+	assert(strstr(body, "\"operationName\":\"findTopResults\""));
+	assert(strstr(body, HASH));
+
+	assert(pf_body_page(RESULT_ALBUMS, "ok computer", 12, HASH, body,
+	                    sizeof(body)));
+	assert(strstr(body, "\"limit\":12,\"offset\":0"));
+	assert(strstr(body, "\"operationName\":\"findAlbums\""));
+	assert(pf_body_page(RESULT_PLAYLISTS, "x", 1, HASH, body, sizeof(body)));
+	assert(strstr(body, "findPlaylists"));
+
+	char long_query[512];
+	memset(long_query, 'q', sizeof(long_query) - 1);
+	long_query[sizeof(long_query) - 1] = '\0';
+	assert(!pf_body_top(long_query, 10, HASH, body, sizeof(body)));
+	assert(!pf_body_page(RESULT_TRACKS, long_query, 20, HASH, body,
+	                     sizeof(body)));
+	assert(!pf_body_top("fits", 10, HASH, body, 64));
+	assert(!pf_body_top("", 10, HASH, body, sizeof(body)));
+	assert(!pf_body_top("x", 10, "not-a-hash", body, sizeof(body)));
+}
+
+static void test_pf_hash_steps(void)
+{
+	size_t len;
+	char *page = read_fixture("pf_page.html", &len);
+	char url[256];
+	/* The stylesheet of the same name comes first and is not it. */
+	assert(pf_find_bundle(page, url, sizeof(url)));
+	assert(strcmp(url, "https://open.spotifycdn.com/cdn/build/"
+	              "mobile-web-player/mobile-web-player.c1d99a6a.js") == 0);
+	assert(!pf_find_bundle(page, url, 40));
+	free(page);
+	assert(!pf_find_bundle("<link href=\"https://open.spotifycdn.com/cdn/"
+	                       "build/mobile-web-player/mobile-web-player."
+	                       "5a38bf59.css\"/>", url, sizeof(url)));
+
+	static const char JS[] =
+	    "a,\"findArtists\",\"query\",\"0123\"),b=new x(\"findTopResults\","
+	    "\"query\",\"903df2a65d8121e27d73a2be03c01e88ebe6021bb6d4eb82a389e35d87e51d27\""
+	    ",{},null),c=new x(\"findAlbums\",\"query\",\"903df2a65d8121e27d73a2be0"
+	    "3c01e88ebe6021bb6d4eb82a389e35d87e51d2\",{})";
+	char hash[65];
+	assert(pf_find_hash(JS, sizeof(JS) - 1, "findTopResults", hash));
+	assert(strcmp(hash, "903df2a65d8121e27d73a2be03c01e88ebe6021bb6d4eb82a389e35d87e51d27") == 0);
+	assert(!pf_find_hash(JS, sizeof(JS) - 1, "findTracks", hash));
+	assert(!pf_find_hash(JS, sizeof(JS) - 1, "findArtists", hash));   /* short */
+	assert(!pf_find_hash(JS, sizeof(JS) - 1, "findAlbums", hash));    /* 63 hex */
+
+	/* The CDN's header: FNAME set, the name a temporary file's. */
+	static const uint8_t NAMED[] = {
+		0x1f, 0x8b, 8, 8, 0x4e, 0x5e, 0xfd, 0x6a, 2, 0xff,
+		't', 'm', 'p', '4', 'g', '6', 'x', 'a', '0', 't', '0', 0,
+		0xAA, 0xBB, 0xCC,                       /* deflate data */
+		1, 2, 3, 4,                             /* CRC32 */
+		0x07, 0x9e, 0x15, 0x00,                 /* 1416711 bytes */
+	};
+	size_t off, dlen, isize;
+	assert(gzip_payload(NAMED, sizeof(NAMED), &off, &dlen, &isize));
+	assert(off == 22 && dlen == 3 && isize == 0x159e07);
+
+	static const uint8_t EXTRA[] = {
+		0x1f, 0x8b, 8, 4, 0, 0, 0, 0, 0, 0xff,
+		3, 0, 'a', 'b', 'c',                    /* FEXTRA, 3 bytes */
+		0x11, 0x22,
+		0, 0, 0, 0, 9, 0, 0, 0,
+	};
+	assert(gzip_payload(EXTRA, sizeof(EXTRA), &off, &dlen, &isize));
+	assert(off == 15 && dlen == 2 && isize == 9);
+
+	assert(!gzip_payload(NAMED, 17, &off, &dlen, &isize));
+	static const uint8_t UNENDED[] = {
+		0x1f, 0x8b, 8, 8, 0, 0, 0, 0, 0, 0xff,
+		'n', 'a', 'm', 'e', 'n', 'a', 'm', 'e', 'n', 'a',
+	};
+	assert(!gzip_payload(UNENDED, sizeof(UNENDED), &off, &dlen, &isize));
+	static const uint8_t PLAIN[] = "not gzip at all, just a script.";
+	assert(!gzip_payload(PLAIN, sizeof(PLAIN), &off, &dlen, &isize));
+}
+
+static void test_search_derive(void)
+{
+	static sp_track tracks[6], out[SEARCH_ITEMS_MAX];
+	static const struct {
+		const char *artist_uri, *artist, *album_uri, *album;
+	} T[] = {
+		{ "spotify:artist:A", "Ann", "spotify:album:X", "Xa" },
+		{ "spotify:artist:B", "Bob", "spotify:album:X", "Xa" },
+		{ "spotify:artist:A", "Ann", "spotify:album:Y", "Ya" },
+		{ "", "", "", "" },
+		{ "spotify:artist:C", "Cid", "spotify:album:Z", "Za" },
+		{ "spotify:artist:B", "Bob", "spotify:album:Y", "Ya" },
+	};
+	memset(tracks, 0, sizeof(tracks));
+	for (int i = 0; i < 6; i++) {
+		snprintf(tracks[i].artist_uri, sizeof(tracks[i].artist_uri), "%s",
+		         T[i].artist_uri);
+		snprintf(tracks[i].artist, sizeof(tracks[i].artist), "%s", T[i].artist);
+		snprintf(tracks[i].album_uri, sizeof(tracks[i].album_uri), "%s",
+		         T[i].album_uri);
+		snprintf(tracks[i].album, sizeof(tracks[i].album), "%s", T[i].album);
+		snprintf(tracks[i].art_small, sizeof(tracks[i].art_small),
+		         "https://i.scdn.co/image/%d", i);
+	}
+
+	assert(search_derive_artists(tracks, 6, out, SEARCH_ITEMS_MAX) == 3);
+	assert(strcmp(out[0].uri, "spotify:artist:A") == 0);
+	assert(strcmp(out[0].name, "Ann") == 0);
+	assert(strcmp(out[1].uri, "spotify:artist:B") == 0);
+	assert(strcmp(out[2].uri, "spotify:artist:C") == 0);
+	assert(!out[0].art_small[0]);                 /* no portrait */
+	assert(search_derive_artists(tracks, 6, out, 2) == 2);
+	assert(search_derive_artists(tracks, 0, out, 2) == 0);
+
+	assert(search_derive_albums(tracks, 6, out, SEARCH_ITEMS_MAX) == 3);
+	assert(strcmp(out[0].uri, "spotify:album:X") == 0);
+	assert(strcmp(out[0].name, "Xa") == 0);
+	assert(strcmp(out[0].artist, "Ann") == 0);    /* its first track's */
+	assert(strcmp(out[0].art_small, "https://i.scdn.co/image/0") == 0);
+	assert(strcmp(out[1].uri, "spotify:album:Y") == 0);
+	assert(strcmp(out[2].uri, "spotify:album:Z") == 0);
+	assert(search_derive_albums(tracks, 6, out, 1) == 1);
+
+	assert(search_find_uri(tracks, 6, "") == -1);
+	snprintf(tracks[4].uri, sizeof(tracks[4].uri), "spotify:track:t4");
+	assert(search_find_uri(tracks, 6, "spotify:track:t4") == 4);
+	assert(search_find_uri(tracks, 4, "spotify:track:t4") == -1);
+}
+
 int main(void)
 {
 	test_login_qr_url();
@@ -3949,6 +4322,14 @@ int main(void)
 	test_image_pow2();
 	test_image_copy_to_texture();
 	test_search_path_encoding();
+	test_json_member();
+	test_json_str_utf8();
+	test_pf_parse_kinds();
+	test_pf_parse_best();
+	test_pf_cover_url();
+	test_pf_bodies();
+	test_pf_hash_steps();
+	test_search_derive();
 	test_spotify_id();
 	test_meta_parse_track();
 	test_meta_parse_album();
