@@ -157,7 +157,7 @@ icon:
   with the loading indicator over the logo or the card.
 - With a detail open ([Details](#details)), the top screen shows its card instead:
   the cover or portrait, the name and up to four lines (artist, album, length and
-  track number, year, label…). A line too long to fit scrolls sideways so it can be
+  track number, year, label…; an artist's monthly listeners). A line too long to fit scrolls sideways so it can be
   read in full.
 - With search results on screen, the **Search** tab shows a strip of the result
   types with how many of each were found, the one on screen highlighted, and below it

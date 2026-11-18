@@ -1,5 +1,6 @@
 #include "top_detail.h"
 
+#include "artist_logic.h"
 #include "downloads_view_logic.h"
 #include "draw.h"
 #include "icons.h"
@@ -250,8 +251,24 @@ static void parse(const detail_doc *d)
 	} else {
 		set_text(&texts[0], d->title[0] ? d->title : tr(STR_UNKNOWN_ARTIST),
 		    TXT_TITULO);
-		/* A search result's preview: what it is, not what it lists. */
-		add_line(tr(d->preview ? STR_RESULT_ARTIST : STR_ARTIST_TOP_TRACKS));
+		/* Its monthly listeners when known; else, and in a search
+		 * result's preview, what it is. "Popular tracks" heads the list
+		 * below now. */
+		if (!d->preview && d->listeners >= 0) {
+			char count[24], line[64];
+			artist_format_count(d->listeners,
+			                    lang_get() == LANG_ES ? '.' : ',', count,
+			                    sizeof(count));
+			if (d->listeners == 1)
+				snprintf(line, sizeof(line), "%s",
+				         tr(STR_ARTIST_LISTENER_ONE));
+			else
+				snprintf(line, sizeof(line), tr(STR_ARTIST_LISTENERS_FMT),
+				         count);
+			add_line(line);
+		} else {
+			add_line(tr(STR_RESULT_ARTIST));
+		}
 	}
 }
 

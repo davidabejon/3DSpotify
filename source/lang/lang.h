@@ -89,6 +89,9 @@ typedef enum {
 	STR_ARTIST_DISCOGRAPHY,
 	/* A release's second line: its type and its year. */
 	STR_RELEASE_FMT,
+	/* The artist's card: monthly listeners, the number already grouped. */
+	STR_ARTIST_LISTENERS_FMT,
+	STR_ARTIST_LISTENER_ONE,
 
 	/* Settings tab. */
 	STR_SETTINGS_LANGUAGE_FMT,

@@ -97,6 +97,34 @@ static inline int artist_rows(int top, int releases, const int *types,
 	return n + artist_discography_rows(releases, types, rows + n, max - n);
 }
 
+/* `n` with `sep` between groups of three digits ("12.345.678" with '.',
+ * "12,345,678" with ','), into `out`; "" for a negative `n` or no room. */
+static inline void artist_format_count(long n, char sep, char *out,
+                                       size_t len)
+{
+	if (!out || len == 0)
+		return;
+	out[0] = '\0';
+	if (n < 0)
+		return;
+	char digits[24];
+	int nd = 0;
+	do {
+		digits[nd++] = (char)('0' + n % 10);
+		n /= 10;
+	} while (n > 0 && nd < (int)sizeof(digits));
+	size_t need = (size_t)nd + (size_t)(nd - 1) / 3 + 1;
+	if (need > len)
+		return;
+	size_t o = 0;
+	for (int i = nd - 1; i >= 0; i--) {
+		out[o++] = digits[i];
+		if (i > 0 && i % 3 == 0)
+			out[o++] = sep;
+	}
+	out[o] = '\0';
+}
+
 /* Naming the releases: `n` of them in batches of `size` (SP_ALBUM_BATCH).
  * How many batches, and how long batch `b` is. */
 static inline int artist_batches(int n, int size)

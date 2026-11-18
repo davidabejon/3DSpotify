@@ -96,6 +96,11 @@ void sp_sort_releases(sp_release *r, int n);
 int  sp_parse_album_batch(const uint8_t *body, size_t len,
                           const char *const *uris, int n, sp_release *out);
 
+/* creatorabout's artist-insights JSON (probe_artist step 5a): its
+ * top-level monthlyListeners into `*listeners`. False, with -1 there,
+ * when it is absent or negative. */
+bool sp_parse_artist_insights(const char *json, size_t len, long *listeners);
+
 /* ------------------------------------------------------------ playlists
  *
  * playlist4_external.proto, checked against the wire (probe_meta step 15):

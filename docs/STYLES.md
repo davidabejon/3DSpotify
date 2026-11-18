@@ -1118,7 +1118,9 @@ Error:
   - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
     año.
   - Álbum: artista / «Album - 2004» / «11 canciones» o «24 de 31 canciones» / sello.
-  - Artista: «Canciones populares».
+  - Artista: sus oyentes mensuales, «12.345.678 oyentes mensuales» («12,345,678 monthly
+    listeners» en inglés; «1 oyente mensual»), pedidos en la misma carga que el resto; si
+    el servicio no los da, «Artista». «Canciones populares» encabeza la lista de abajo.
   - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
     página). Sin propietario: el
     servicio solo da un id de usuario opaco.
@@ -1126,7 +1128,7 @@ Error:
 - Vista previa de un resultado de búsqueda (§7.4): se hace con los datos de la fila, sin
   pedir nada salvo la imagen, así que no hay recuentos ni año que contar:
   - Canción: la de siempre (es la pista en foco).
-  - Artista: «Artista» en lugar de «Canciones populares».
+  - Artista: «Artista», sin oyentes.
   - Álbum: «Álbum · <artista>», sin más líneas.
   - Playlist: «Playlist · <propietario>» (aquí sí hay nombre), sin «0 canciones».
 - El texto que no cabe en la columna rueda (§5.15).

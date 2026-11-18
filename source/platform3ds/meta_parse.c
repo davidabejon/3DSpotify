@@ -1,4 +1,5 @@
 #include "meta_parse.h"
+#include "json3ds.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -459,6 +460,16 @@ int sp_parse_album_batch(const uint8_t *body, size_t len,
 		}
 	}
 	return named;
+}
+
+bool sp_parse_artist_insights(const char *json, size_t len, long *listeners)
+{
+	long v = -1;
+	/* Top level only: every city in "cities" has "listeners" too. */
+	bool ok = json && json_member_int(json, len, "monthlyListeners", &v) &&
+	          v >= 0;
+	*listeners = ok ? v : -1;
+	return ok;
 }
 
 /* ------------------------------------------------------------- biography */

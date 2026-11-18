@@ -49,6 +49,7 @@ typedef struct {
 	int  count;
 	/* An artist's releases were named (and sorted) by this load. */
 	bool releases_named;
+	long listeners;               /* an artist's; -1 when unknown */
 	int  result;                  /* 0 or -1 */
 	char error[192];
 	volatile bool cancel_requested;
@@ -193,6 +194,13 @@ static void worker_main(void *arg)
 			rc = -1;
 		else
 			job.count = got;
+	}
+	/* An artist's monthly listeners, on the same link (~150 ms): a failure
+	 * leaves the number unknown and the detail as it is. */
+	if (rc == 0 && job.kind == DETAIL_ARTIST && !job.cancel_requested) {
+		char err[160];
+		sp_artist_insights_s(sess, job.token, job.uri, &job.listeners, err,
+		                     sizeof(err));
 	}
 	/* An artist with no popular tracks has nothing to show meanwhile: its
 	 * discography is named in this load rather than in one of its own. */
@@ -376,6 +384,7 @@ static void apply(detail_doc *d)
 		d->total_tracks = a->track_count;
 		memcpy(d->bio, a->bio, sizeof(d->bio));
 		d->release_count = a->release_count;
+		d->listeners = job.listeners;
 		if ((job.count > 0 || a->release_count > 0) && apply_artist_rows(d))
 			return;
 	}
@@ -430,6 +439,7 @@ static void start(int slot, const char *host, const char *token,
 	job.from = job.page ? d->next_from : 0;
 	job.doc = slot;
 	job.serial = d->serial;
+	job.listeners = -1;
 	snprintf(job.uri, sizeof(job.uri), "%s", d->uri);
 	snprintf(job.host, sizeof(job.host), "%s", host);
 	snprintf(job.token, sizeof(job.token), "%s", token);

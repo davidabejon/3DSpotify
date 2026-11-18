@@ -1103,6 +1103,51 @@ static void test_artist_rows(void)
 	assert(artist_discography_rows(3, TYPES, rows, 2) == 2);
 }
 
+static void expect_count(long n, char sep, const char *want)
+{
+	char out[24];
+	artist_format_count(n, sep, out, sizeof(out));
+	assert(strcmp(out, want) == 0);
+}
+
+static void test_artist_listeners(void)
+{
+	expect_count(0, '.', "0");
+	expect_count(1, '.', "1");
+	expect_count(999, '.', "999");
+	expect_count(1000, '.', "1.000");
+	expect_count(12345678, '.', "12.345.678");
+	expect_count(12345678, ',', "12,345,678");
+	expect_count(100000, ',', "100,000");
+	expect_count(-5, '.', "");
+	char small[5];
+	artist_format_count(12345, '.', small, sizeof(small));  /* no room */
+	assert(small[0] == '\0');
+	artist_format_count(1234, '.', small, sizeof(small));
+	assert(strcmp(small, "1.234") != 0 && small[0] == '\0');
+	char fits[6];
+	artist_format_count(1234, '.', fits, sizeof(fits));
+	assert(strcmp(fits, "1.234") == 0);
+
+	/* artist-insights, cut down from probe_artist's reply: the top-level
+	 * number, not a city's. */
+	static const char J[] =
+	    "{\"artistGid\":\"142571008feb40c881095ffe591b793a\","
+	    "\"name\":\"The Killers\",\"autobiography\":{\"body\":\"x\"},"
+	    "\"cities\":[{\"city\":\"London\",\"listeners\":671573}],"
+	    "\"monthlyListeners\":36483914,\"monthlyListenersDelta\":-23280,"
+	    "\"followerCount\":8948735}";
+	long v = 0;
+	assert(sp_parse_artist_insights(J, sizeof(J) - 1, &v) && v == 36483914);
+	static const char NONE[] =
+	    "{\"name\":\"x\",\"cities\":[{\"monthlyListeners\":5}]}";
+	assert(!sp_parse_artist_insights(NONE, sizeof(NONE) - 1, &v) && v == -1);
+	static const char NEG[] = "{\"monthlyListeners\":-3}";
+	assert(!sp_parse_artist_insights(NEG, sizeof(NEG) - 1, &v) && v == -1);
+	assert(!sp_parse_artist_insights("", 0, &v) && v == -1);
+	assert(!sp_parse_artist_insights(NULL, 0, &v) && v == -1);
+}
+
 static void test_artist_naming(void)
 {
 	/* Batches of 50: 200 is four, 43 is one, 101 ends with one. */
@@ -4881,6 +4926,7 @@ int main(void)
 	test_bio_clean();
 	test_artist_rows();
 	test_artist_naming();
+	test_artist_listeners();
 	test_section_navigation();
 	test_meta_parse_batch();
 	test_meta_parse_rootlist();

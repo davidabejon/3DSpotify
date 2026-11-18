@@ -425,6 +425,38 @@ static int metadata_batch_request(const char *host, http_session *sess,
 	return filled;
 }
 
+int sp_artist_insights_s(http_session *sess, const char *token,
+                         const char *artist_uri, long *listeners,
+                         char *err, size_t errlen)
+{
+	*listeners = -1;
+	static const char PREFIX[] = "spotify:artist:";
+	if (strncmp(artist_uri, PREFIX, sizeof(PREFIX) - 1) != 0) {
+		snprintf(err, errlen, "not an artist: %s", artist_uri);
+		return -1;
+	}
+	char path[128];
+	snprintf(path, sizeof(path),
+	         "/creatorabout/v0/artist-insights/%.22s?format=json",
+	         artist_uri + sizeof(PREFIX) - 1);
+	http_reply r;
+	if (http_session_request(sess, path, "GET", token, NULL,
+	                         "application/json", NULL, 0, 0, &r) != 0) {
+		snprintf(err, errlen, "insights: %s", r.err);
+		return -1;
+	}
+	if (r.status != 200) {
+		snprintf(err, errlen, "insights returned HTTP %d", r.status);
+		http_reply_free(&r);
+		return -1;
+	}
+	bool ok = sp_parse_artist_insights(r.body, r.len, listeners);
+	http_reply_free(&r);
+	if (!ok)
+		snprintf(err, errlen, "insights carried no listeners");
+	return ok ? 0 : -1;
+}
+
 int sp_album_metadata_batch_s(http_session *sess, const char *token,
                               const char *const *uris, int n,
                               sp_release *out, char *err, size_t errlen)

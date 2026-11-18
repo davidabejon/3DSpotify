@@ -218,6 +218,14 @@ int  sp_artist_metadata(http_session *sess, const char *token,
                         const char *artist_uri, const char *country,
                         sp_artist *out, char *err, size_t errlen);
 
+/* An artist's monthly listeners from creatorabout's artist-insights, the
+ * JSON the desktop client's "About" reads (~150 ms on the open link,
+ * probe_artist step 5a). Not a stable service: a failure here only leaves
+ * the number out. Returns 0 with `*listeners` set, or -1 (-1 there). */
+int  sp_artist_insights_s(http_session *sess, const char *token,
+                          const char *artist_uri, long *listeners,
+                          char *err, size_t errlen);
+
 /* Names releases: `n` (at most SP_ALBUM_BATCH) album URIs in one batch,
  * each answer into the out[] whose index matches its URI in `uris`
  * (sp_parse_album_batch). Returns how many were named, or -1. */
