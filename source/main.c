@@ -2511,13 +2511,24 @@ static void go_offline(spotify_session *session)
 /* Online, Wi-Fi is asked about once a second (ACU answers at once). */
 #define WIFI_CHECK_FRAMES 60
 
+/* Wi-Fi missing just after a sleep is the sleep's doing, not a lost
+ * connection: the console joins it again by itself (power_wifi_settling).
+ * Only if it is still missing after that do the tabs go offline. */
 static bool connection_lost(void)
 {
 	static int frames;
+	static bool woke;
+	static u64 woke_at;
+	if (ui_take_woke()) {
+		woke = true;
+		woke_at = osGetTime();
+	}
 	if (!net_online || ++frames < WIFI_CHECK_FRAMES)
 		return false;
 	frames = 0;
-	return wifi_down();
+	if (!wifi_down())
+		return false;
+	return !power_wifi_settling(woke, osGetTime(), woke_at);
 }
 
 /* The app once the session is up: one loop for every tab, so the audio

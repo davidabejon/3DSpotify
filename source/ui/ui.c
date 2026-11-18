@@ -9,6 +9,7 @@ static bool c2d_ready;
 static aptHookCookie apt_cookie;
 static bool apt_hooked;
 static volatile bool restored = true;
+static volatile bool woke;
 
 /* Back from the HOME menu, a sleeping lid or an applet, the screens may show
  * something else; with on-demand rendering nothing would repaint them. */
@@ -17,6 +18,8 @@ static void on_apt_event(APT_HookType hook, void *param)
 	(void)param;
 	if (hook == APTHOOK_ONRESTORE || hook == APTHOOK_ONWAKEUP)
 		restored = true;
+	if (hook == APTHOOK_ONWAKEUP)
+		woke = true;
 }
 
 bool ui_init(void)
@@ -105,5 +108,12 @@ bool ui_take_restored(void)
 {
 	bool was = restored;
 	restored = false;
+	return was;
+}
+
+bool ui_take_woke(void)
+{
+	bool was = woke;
+	woke = false;
 	return was;
 }

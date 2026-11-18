@@ -3599,6 +3599,12 @@ static void test_power_policy(void)
 	assert(!power_screens_lit(false, true));
 	/* Music over with the lid shut: lit again before sleeping. */
 	assert(power_screens_lit(false, false));
+
+	/* Wi-Fi missing after a wake is the sleep's, for a while. */
+	assert(!power_wifi_settling(false, 1000, 0));
+	assert(power_wifi_settling(true, 1000, 1000));
+	assert(power_wifi_settling(true, 1000 + POWER_WAKE_GRACE_MS - 1, 1000));
+	assert(!power_wifi_settling(true, 1000 + POWER_WAKE_GRACE_MS, 1000));
 }
 
 static void test_download_retry_delay(void)

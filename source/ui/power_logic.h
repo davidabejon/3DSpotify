@@ -33,4 +33,15 @@ static inline bool power_screens_lit(bool lid_open, bool keep_awake)
 	return lid_open || !keep_awake;
 }
 
+/* Sleep drops the Wi-Fi, and after waking the console takes a few seconds
+ * to join it again. Missing Wi-Fi only counts as a lost connection once
+ * this long has passed since the wake; before, it is the sleep's. */
+#define POWER_WAKE_GRACE_MS 30000
+
+static inline bool power_wifi_settling(bool woke, unsigned long long now,
+                                       unsigned long long woke_at)
+{
+	return woke && now - woke_at < POWER_WAKE_GRACE_MS;
+}
+
 #endif
