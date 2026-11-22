@@ -2,7 +2,8 @@
  * 7.12): the logo while no music plays, else the "now playing" card, or
  * the big cover on the Playing tab; on Settings, always the account and
  * the credits; the card of a detail, or of a preview, over any of them;
- * and on Search's results, the strip of kinds above that card. Pure C
+ * and on Search's results, the strip of kinds above that card; with music
+ * on and the top screen busy, the mini player in a corner (5.18). Pure C
  * with no 3DS headers, tested in tests/native_logic_test.c. */
 #ifndef TOP_LOGIC_H
 #define TOP_LOGIC_H
@@ -65,6 +66,18 @@ static inline bool top_shows_strip(app_tab tab, bool detail_open,
                                    bool results_list)
 {
 	return tab == TAB_SEARCH && !detail_open && results_list;
+}
+
+/* The mini player (STYLES.md 5.18): with music on, over a detail's card or
+ * a preview and the downloads manager. The card and the big cover already
+ * show the track; the logo means nothing plays; Settings' account and
+ * credits leave no corner free; an artist's whole biography (`page`) is a
+ * page of text to read, left alone. */
+static inline bool top_shows_mini(top_mode mode, player_phase phase,
+                                  bool page)
+{
+	return top_music_on(phase) &&
+	       ((mode == TOP_DETAIL && !page) || mode == TOP_DOWNLOADS);
 }
 
 /* The spinner, centred over whatever the top screen shows, on any tab:

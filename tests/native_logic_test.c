@@ -1209,6 +1209,9 @@ static void test_now_detail_block(void)
 	       Y + (ART_SIZE - (T + SP_1 + 2 * B)) / 2 - SP_3);
 	assert(now_detail_text_dy_at(T, B, 2, Y) ==
 	       now_detail_text_dy_meta_at(T, B, 2, M, 0, Y));
+	/* Over the mini player the block hangs from the cover's top: its
+	 * title's line starts on it, whatever the block holds. */
+	assert(now_detail_text_dy_top_at(Y) == Y - SP_3);
 	/* Listeners and five lines of biography: 120 px, which the cover's
 	 * height always holds. */
 	int h = now_detail_block_h(T, B, 1, M, 5);
@@ -3449,6 +3452,165 @@ static void test_now_layout(void)
 	assert(on_top_screen(big_shadow, 0));
 }
 
+/* The lowest pixel of a detail card's text block whose cover's top is
+ * `art_y`: it hangs from the cover's top edge (7.12). */
+static int detail_block_bottom(int art_y, int title_h, int body_h, int count,
+                               int meta_h, int meta)
+{
+	return art_y + now_detail_block_h(title_h, body_h, count, meta_h, meta);
+}
+
+/* The parts of a mini player in `panel`, checked against the guide's
+ * table relative to its corner (5.18). */
+static void check_mini_panel(ui_rect panel)
+{
+	assert(panel.w == 200 && panel.h == 40);
+	ui_rect cover = now_mini_cover_rect(panel);
+	assert(cover.x == panel.x + 4 && cover.y == panel.y + 4);
+	assert(cover.w == 32 && cover.h == 32);
+	assert(now_mini_text_x(panel) == panel.x + 44);
+	assert(now_mini_text_w() == 124);
+	ui_rect icon = now_mini_icon_rect(panel);
+	assert(icon.x == panel.x + 176 && icon.y == panel.y + 12);
+	assert(icon.w == ICON_S && icon.h == ICON_S);
+	ui_rect band = now_mini_band_rect(panel);
+	assert(band.x == panel.x + 1 && band.y == panel.y + 37);
+	assert(band.w == 198 && band.h == 2);
+	assert(now_mini_title_cy(panel, 15, 14) == panel.y + 12);
+	assert(now_mini_line_cy(panel, 15, 14) == panel.y + 27);
+	assert(now_mini_clear_bottom(panel) == panel.y - SP_2);
+	assert(on_top_screen(panel, SP_3));
+
+	/* Everything inside the panel's outline, nothing overlapping. */
+	ui_rect inner = ui_rect_inset(panel, OUTLINE_W);
+	ui_rect text = { now_mini_text_x(panel), cover.y, now_mini_text_w(),
+	                 cover.h };
+	ui_rect parts[] = { cover, text, icon, band };
+	for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+		ui_rect r = parts[i];
+		assert(r.w >= 1 && r.h >= 1);
+		assert(r.x >= inner.x && r.y >= inner.y);
+		assert(r.x + r.w <= inner.x + inner.w);
+		assert(r.y + r.h <= inner.y + inner.h);
+		for (size_t j = i + 1; j < sizeof(parts) / sizeof(parts[0]); j++)
+			assert(!overlaps(r, parts[j]));
+	}
+	/* A free row between the cover and the band. */
+	assert(band.y - (cover.y + cover.h) >= 1);
+
+	/* With either font the two lines sit on the cover's height. */
+	static const int heights[][2] = { { 15, 14 }, { 16, 15 } };
+	for (size_t k = 0; k < sizeof(heights) / sizeof(heights[0]); k++) {
+		int body_h = heights[k][0], meta_h = heights[k][1];
+		int top = now_mini_title_cy(panel, body_h, meta_h) - body_h / 2;
+		int bottom = now_mini_line_cy(panel, body_h, meta_h) +
+		             (meta_h + 1) / 2;
+		assert(top >= cover.y && bottom <= cover.y + cover.h);
+	}
+
+	/* The spinner's veil never cuts it. */
+	assert(!overlaps(spinner_backdrop_rect(SCREEN_TOP_W / 2, SCREEN_H / 2),
+	                 panel));
+}
+
+static void test_mini_player_layout(void)
+{
+	/* 5.18: its corner on what it sits by. Over the card, the cover's
+	 * bottom, in the text column: alone and under the strip of kinds. */
+	int art_y = now_detail_art_rect().y;
+	ui_rect card = now_mini_card_rect(art_y);
+	assert(card.x == 188 && card.y == 160);
+	assert(card.x == now_text_x());
+	assert(card.x + card.w == SCREEN_TOP_W - SP_3);
+	assert(card.y + card.h == art_y + ART_SIZE);
+	ui_rect strip = now_mini_card_rect(RESULTS_CARD_Y);
+	assert(strip.x == 188 && strip.y == 176);
+	assert(strip.y + strip.h == RESULTS_CARD_Y + ART_SIZE);
+	/* Under the manager's card, on its panel's edges. */
+	ui_rect panel = now_mini_panel_rect();
+	assert(panel.x == 184 && panel.y == 184);
+	ui_rect mgr = dlv_top_panel_rect(false);
+	assert(panel.x + panel.w == mgr.x + mgr.w);
+	assert(panel.y + panel.h == mgr.y + mgr.h);
+	ui_rect places[] = { card, strip, panel };
+	for (size_t i = 0; i < sizeof(places) / sizeof(places[0]); i++)
+		check_mini_panel(places[i]);
+
+	/* Over it, the card's text hangs from the cover's top: the title's
+	 * line starts on it, with or without the strip. */
+	assert(now_title_cy(23) + now_detail_text_dy_top_at(art_y) - 23 / 2 ==
+	       art_y);
+	assert(now_detail_text_dy_top_at(RESULTS_CARD_Y) -
+	       now_detail_text_dy_top_at(art_y) == RESULTS_CARD_Y - art_y);
+	/* Clear of the mini player, e2 above it, with the nominal 23/15/14:
+	 * four lines, alone and under the strip; the artist with listeners
+	 * and the shorter biography. Without the mini player, five lines of
+	 * biography still end beside the cover. */
+	assert(detail_block_bottom(art_y, 23, 15, NOW_LINES, 14, 0) <=
+	       now_mini_clear_bottom(card));
+	assert(detail_block_bottom(RESULTS_CARD_Y, 23, 15, NOW_LINES, 14, 0) <=
+	       now_mini_clear_bottom(strip));
+	assert(now_detail_bio_lines(true) == ARTIST_BIO_LINES - 1);
+	assert(now_detail_bio_lines(false) == ARTIST_BIO_LINES);
+	assert(detail_block_bottom(art_y, 23, 15, 1, 14,
+	                           now_detail_bio_lines(true)) <=
+	       now_mini_clear_bottom(card));
+	assert(detail_block_bottom(art_y, 23, 15, 1, 14,
+	                           now_detail_bio_lines(false)) <=
+	       art_y + ART_SIZE);
+	assert(SP_3 + ART_SIZE + ART_SHADOW_OFF < card.x);
+
+	/* The download spinner in place of the state icon: the ring at an
+	 * icon's size, its blocks inside the icon's box, apart, around an
+	 * empty centre. */
+	assert((int)SPINNER_MINI_SIZE == (int)ICON_S);
+	ui_rect box = now_mini_icon_rect(card);
+	ui_rect centre = { box.x + SPINNER_MINI_CELL + SPINNER_MINI_GAP,
+	                   box.y + SPINNER_MINI_CELL + SPINNER_MINI_GAP,
+	                   SPINNER_MINI_CELL, SPINNER_MINI_CELL };
+	for (int i = 0; i < SPINNER_CELLS; i++) {
+		ui_rect a = spinner_mini_cell_rect(box, i);
+		assert(a.w == SPINNER_MINI_CELL && a.h == SPINNER_MINI_CELL);
+		assert(a.x >= box.x && a.y >= box.y);
+		assert(a.x + a.w <= box.x + box.w && a.y + a.h <= box.y + box.h);
+		assert(!overlaps(a, centre));
+		for (int j = i + 1; j < SPINNER_CELLS; j++)
+			assert(!overlaps(a, spinner_mini_cell_rect(box, j)));
+	}
+	assert(spinner_mini_cell_rect(box, 0).x == box.x);
+	assert(spinner_mini_cell_rect(box, 4).x + SPINNER_MINI_CELL ==
+	       box.x + box.w);
+
+	/* The downloads manager's card (7.13): as ever with nothing playing;
+	 * with the mini player, its bottom edge e2 above it and its content
+	 * still e3 inside, laid out as view_downloads_draw_top does with the
+	 * nominal 23/15 and t_cabeza's 18. */
+	assert(mgr.x == 16 && mgr.y == 16 && mgr.w == 368 && mgr.h == 208);
+	ui_rect short_mgr = dlv_top_panel_rect(true);
+	assert(short_mgr.x == mgr.x && short_mgr.y == mgr.y &&
+	       short_mgr.w == mgr.w);
+	assert(short_mgr.y + short_mgr.h == now_mini_clear_bottom(panel));
+	assert(!overlaps(short_mgr, panel));
+	int y = short_mgr.y + SP_4 + 23 / 2;
+	y += 23 / 2 + SP_4;
+	for (int i = 0; i < 3; i++)
+		y += 15 / 2 + 15 / 2 + SP_2;
+	y += SP_2 + 18 / 2;
+	int content_bottom = y + (18 + 1) / 2;
+	assert(content_bottom == 162);
+	assert(content_bottom + SP_3 <= short_mgr.y + short_mgr.h);
+
+	/* The band: empty at the start, full once finished, never past its
+	 * width, no division by an unknown length. */
+	int band_w = now_mini_band_rect(card).w;
+	assert(now_mini_band_px(false, 0, 240) == 0);
+	assert(now_mini_band_px(true, 0, 240) == band_w);
+	assert(now_mini_band_px(true, 0, 0) == band_w);
+	assert(now_mini_band_px(false, 10, 0) == 0);
+	assert(now_mini_band_px(false, 120, 240) == band_w / 2);
+	assert(now_mini_band_px(false, 999, 240) == band_w);
+}
+
 static void test_list_bubbles(void)
 {
 	/* 5.9: centred SP_2 above the button bar; a second bubble stacks
@@ -3544,6 +3706,33 @@ static void test_top_mode(void)
 			else
 				assert(mode == TOP_NOW_CARD);
 		}
+
+	/* The mini player (5.18): over a detail's card and the downloads
+	 * manager while music is on; never where the top screen already shows
+	 * the track, or nothing plays, on Settings' account, or over an
+	 * artist's whole biography. */
+	static const top_mode modes[] = {
+		TOP_LOGO, TOP_NOW_CARD, TOP_ART_BIG, TOP_DETAIL, TOP_ABOUT,
+		TOP_DOWNLOADS
+	};
+	for (size_t m = 0; m < sizeof(modes) / sizeof(modes[0]); m++)
+		for (size_t i = 0; i < sizeof(phases) / sizeof(phases[0]); i++)
+			for (int page = 0; page < 2; page++) {
+				bool expect = ((modes[m] == TOP_DETAIL && !page) ||
+				               modes[m] == TOP_DOWNLOADS) &&
+				              top_music_on(phases[i]);
+				assert(top_shows_mini(modes[m], phases[i], page) ==
+				       expect);
+			}
+	assert(!top_shows_mini(TOP_DETAIL, PLAYER_PHASE_IDLE, false));
+	assert(!top_shows_mini(TOP_DETAIL, PLAYER_PHASE_FAILED, false));
+	assert(top_shows_mini(TOP_DETAIL, PLAYER_PHASE_LOADING, false));
+	assert(top_shows_mini(TOP_DETAIL, PLAYER_PHASE_PLAYING, false));
+	assert(top_shows_mini(TOP_DETAIL, PLAYER_PHASE_FINISHED, false));
+	assert(!top_shows_mini(TOP_DETAIL, PLAYER_PHASE_PLAYING, true));
+	assert(top_shows_mini(TOP_DOWNLOADS, PLAYER_PHASE_PLAYING, false));
+	assert(!top_shows_mini(TOP_DOWNLOADS, PLAYER_PHASE_IDLE, false));
+	assert(!top_shows_mini(TOP_ABOUT, PLAYER_PHASE_PLAYING, false));
 }
 
 static void test_http_redirects(void)
@@ -5006,6 +5195,7 @@ int main(void)
 	test_stream_chunks();
 	test_player_shared_helpers();
 	test_now_layout();
+	test_mini_player_layout();
 	test_list_bubbles();
 	test_recent_searches();
 	test_art_cache();

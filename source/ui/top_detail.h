@@ -50,4 +50,14 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y);
 int top_detail_bio_max_scroll(const detail_doc *d);
 int top_detail_bio_page_lines(void);
 
+/* Whether the mini player (STYLES.md 5.18) shows under the card, once per
+ * frame before the calls above: the card's texts then hang from the
+ * cover's top instead of being centred on it, and its start of a
+ * biography is a line shorter. The whole biography never has it. */
+void top_detail_set_mini(bool on);
+
+/* Whether `d` shows its whole biography instead of the card: a page of
+ * text to read, which the mini player stays off. */
+bool top_detail_showing_page(const detail_doc *d);
+
 #endif

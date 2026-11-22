@@ -59,8 +59,10 @@ bool view_downloads_target_collection(char *uri, size_t len,
 bool view_downloads_dirty(void);
 void view_downloads_draw_bottom(void);
 
-/* The top screen while the manager shows. */
+/* The top screen while the manager shows. With `mini` the card ends above
+ * the mini player (top_mini.h); top.c asks for the frame when it comes or
+ * goes, so view_downloads_top_dirty does not track it. */
 bool view_downloads_top_dirty(void);
-void view_downloads_draw_top(void);
+void view_downloads_draw_top(bool mini);
 
 #endif

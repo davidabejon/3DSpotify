@@ -163,6 +163,12 @@ icon:
   types with how many of each were found, the one on screen highlighted, and below it
   the card of the highlighted result (its cover or portrait arrives once you stop on it
   for a moment).
+- With a detail, a preview or the downloads manager on the top screen, if something is
+  playing, a mini player in the bottom right corner shows the cover, the title, the
+  artist, whether it is paused and the progress; while a track loads, the loading
+  spinner turns in it instead of in the middle of the screen. An artist's whole
+  biography, a page to read, has none. It is not a control: pause and skip on the
+  **Playing** tab.
 
 ### Home
 

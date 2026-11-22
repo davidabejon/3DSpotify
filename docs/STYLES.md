@@ -90,7 +90,8 @@ Todas las combinaciones de la tabla tienen un contraste ≥ 4.5:1, también en e
   (`romfs/gfx/logo.png`) se dibuja con su propio canal alfa, y el spinner de descarga de la
   pantalla superior va sobre un velo gris `#404040` al ~70 % de opacidad (`SCRIM_*` en
   `theme.h`), 8 px más grande que el spinner por cada lado. En las pantallas de arranque
-  (§7.2) el spinner va sin velo, porque no hay nada debajo que tapar. La pantalla superior
+  (§7.2) el spinner va sin velo, porque no hay nada debajo que tapar; tampoco en el mini
+  reproductor (§5.18), donde va en pequeño sobre `capa`. La pantalla superior
   de Ajustes (§7.8) oscurece el fondo y el logotipo con un velo `sombra` al 80 % de opacidad
   (`ABOUT_VEIL_*` en `theme.h`); el resultado queda más oscuro que `capa`, así que el texto
   sobre él sigue las combinaciones de `capa` (§2.6).
@@ -498,7 +499,8 @@ La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 
   ella, la ficha de §7.12 baja: franja, `e2` y portada (24 + 8 + 160 = 192 px) van
   centradas juntas en la altura, con 24 px arriba y abajo. Franja en y 24..48
   (`RESULTS_STRIP_Y`), portada en y 56..216 (`RESULTS_CARD_Y`), y el texto de la ficha
-  centrado junto a la portada, como siempre.
+  centrado junto a la portada, como siempre (alineado arriba con el mini reproductor,
+  §5.18).
 - **No es un control:** en la pantalla superior no hay táctil, y el tipo se cambia con
   izquierda/derecha en la inferior (§6.6). Por eso basta con 24 px de alto.
 - Un segmento por tipo que ofrece la búsqueda, separados 4 px (`GRID_GAP`); el resto de la
@@ -523,9 +525,95 @@ La fila de lista (§5.3) en compacto, de una sola línea, para rejillas de 1, 2 
   vuelve, por encima de su vecino.
 - Solo en «Búsqueda», con la lista de resultados en pantalla y sin detalle abierto.
   Buscando, con error, vacío o antes de buscar, la superior es la de siempre.
-- El spinner de descarga (centro de la pantalla) puede taparla: va encima de todo.
+- El spinner de descarga (centro de la pantalla) puede taparla: va encima de todo. Con
+  el mini reproductor en pantalla, el spinner va dentro de él (§5.18).
 - Lógica pura en `results_logic.h` (`results_strip_layout`) y `top_logic.h`
   (`top_shows_strip`); dibujo en `top_strip.[ch]`.
+
+### 5.18 Mini reproductor (pantalla superior)
+
+```
+ SUPERIOR (400×240), ficha sola
+ ┌──────────────────────────────────────────────┐
+ │                                              │ 0..40 margen
+ │ ┌──────────┐  Nombre (t_titulo)              │ 40 textos desde arriba
+ │ │          │  líneas t_cuerpo ...            │
+ │ │ portada  │                                 │ textos ≤ 152
+ │ │ 160×160  │  x 188                     388  │
+ │ │          │ ┌──────────────────────────────┐│ 160
+ │ │          │ │┌──┐ Título de la can...    ≡ ││ t_cuerpo · texto / icono 16
+ │ │          │ ││32│ Artista                 ││ t_meta · texto_2
+ │ │          │ │└──┘                          ││
+ │ └──────────┘ │▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░││ 200 = borde de la portada
+ │              └──────────────────────────────┘│
+ │                                              │ 200..240 margen
+ └──────────────────────────────────────────────┘
+```
+
+Lo que suena, en la esquina inferior derecha, mientras la pantalla superior muestra otra
+cosa: la ficha de un detalle o de una vista previa (§7.12), también bajo la franja de tipos
+(§5.17), y el gestor de descargas (§7.13). La biografía completa no lo lleva: es una
+página para leer.
+
+- **No es un control:** la pantalla superior no tiene táctil y no lleva ningún botón. Pausar
+  y saltar se hace en «Reproducción» (§7.5).
+- Siempre 200×40 y en la esquina inferior derecha, con esa esquina sobre lo que tiene al
+  lado; lo demás se aparta para dejarle sitio, y solo mientras se ve:
+
+  | Pantalla | Panel | Esquina |
+  |----------|-------|---------|
+  | Ficha sola (§7.12) | x 188, y 160 | Abajo, el de la portada (y 200); a la izquierda, la columna de textos (x 188); a la derecha, `e3` |
+  | Ficha bajo la franja (§5.17) | x 188, y 176 | Igual: la portada acaba en y 216 |
+  | Gestor de descargas (§7.13) | x 184, y 184 | Los bordes derecho e inferior de su panel (`e4`) |
+
+- En la ficha, texto arriba y mini abajo: mientras se ve el mini, el bloque de textos
+  cuelga del borde superior de la portada y el mini apoya en el inferior, así que los dos
+  márgenes de la ficha (40 px arriba y abajo) quedan iguales. Sin mini, el bloque vuelve a
+  centrarse en la altura de la portada.
+- Sin nada en reproducción (o tras un error) no hay mini y nada se aparta.
+
+Dentro del panel, en píxeles desde su esquina superior izquierda (en la ficha sola, sumar
+188 en x y 160 en y):
+
+| Elemento | Rect / posición | Nota |
+|----------|-----------------|------|
+| Panel | 0, 0, 200×40 | Panel no interactivo (§5.1): `capa`, contorno 1 px `tinta`, sin relieve ni sombra. Del ancho de la columna de textos de la ficha |
+| Carátula | 4, 4, 32×32 | A `e1` dentro del panel, contorno 1 px `tinta`; sin imagen, `capa_alta` con la nota (16 px) centrada |
+| Textos | x 44, 124 px de ancho | A `e2` de la carátula y hasta `e2` antes del icono |
+| Título | cy 12 | `t_cuerpo` · `texto`, recortado con «...» (§3.3, sin rodar) |
+| Segunda línea | cy 27 | `t_meta` · `texto_2`: el artista, recortado |
+| Icono de estado | 176, 12, 16×16 | Centrado en la altura de la carátula, a `e2` del borde derecho; `texto` sobre `capa` (§5.10). En su sitio, el spinner mientras carga |
+| Banda de progreso | 1, 37, 198×2 | Las dos filas interiores de abajo del panel (la de encima queda libre bajo la carátula): pista `capa_alta`, progreso `clorofila`, sin tirador ni capa de descarga |
+
+Las dos líneas se centran como bloque en la altura de la carátula con las alturas reales de
+línea (15 y 14 px con la fuente del sistema: cy 12 y 27).
+
+| Fase del reproductor | Segunda línea | Icono | Banda |
+|----------------------|---------------|-------|-------|
+| Cargando (descarga al 0 %) | artista | el spinner de descarga, en pequeño | vacía |
+| Sonando | artista | reproducción (ecualizador) | progreso |
+| En pausa | artista | pausa | progreso |
+| Terminada | «Pista terminada» | ninguno | llena |
+| Sin nada o con error | — no hay mini | | |
+
+- Sin título, «(sin título)»; sin artista, «(artista desconocido)».
+- Sale también si el detalle es la misma canción que suena: una sola regla, y la banda de
+  progreso es información que la ficha no da.
+- Imagen: la textura de la carátula de lo que suena, reducida a 32×32, sin descargas ni
+  texturas nuevas. Solo se dibuja: nunca pide otra imagen, porque el reproductor la espera
+  antes de preparar la pista.
+- Spinner: mientras la descarga de la pista está al 0 % (cargando, o sonando sin nada
+  descargado aún), el spinner de descarga gira en el sitio del icono en lugar de en el
+  centro de la pantalla: el mismo anillo de 8 bloques, con bloques de 4 px (`e1`)
+  separados 2 px (`SPINNER_MINI_*`), 16×16 justos; `clorofila` el encendido, `musgo` el de
+  detrás y `capa_alta` el resto, con contorno 1 px `tinta`, sin velo (está sobre `capa`).
+  Avanza cada `LOADER_STEP` frames, como el grande. En las pantallas sin mini, el spinner
+  sigue en el centro, como siempre (§2.7).
+- La franja de tipos no lo toca.
+- Ajustes no lo lleva (§7.8).
+- Nada más se anima en él (§8): ni marquesina ni indicador de carga.
+- Lógica pura en `now_layout.h` (`now_mini_*`, un rectángulo por pantalla) y `top_logic.h`
+  (`top_shows_mini`); dibujo en `top_mini.[ch]`.
 
 ---
 
@@ -765,7 +853,8 @@ Error:
   como vista previa, igual que hace «Inicio» con sus teselas; las dos juntas, centradas en
   la altura (§5.17). La ficha cambia con el foco; su
   imagen grande se pide cuando el foco lleva `PREVIEW_DELAY` (18) frames quieto (antes, si ya
-  está en la caché), y mientras llega se ve la miniatura escalada.
+  está en la caché), y mientras llega se ve la miniatura escalada. Si suena algo, el mini
+  reproductor (§5.18) va en la esquina inferior derecha.
 - Superior en los demás estados (buscando, vacío, error, antes de buscar): la de cualquier
   pestaña (el logotipo, o la ficha de lo que suena). Con un detalle abierto, su ficha, sin
   franja.
@@ -835,7 +924,8 @@ Error:
   `t_cuerpo` · `texto_2`.
 - Superior: esta ficha (carátula 160×160, título, artista, álbum, tiempos y barra de
   progreso) en las demás pestañas; en «Reproducción», solo la carátula grande de 216×216
-  centrada, a `e3` arriba y abajo.
+  centrada, a `e3` arriba y abajo. Con la superior ocupada por otra cosa (un detalle, una
+  vista previa), el mini reproductor (§5.18) sigue diciendo qué suena.
 - Inferior, bajo la barra de pestañas: título `t_cabeza` · `texto` con la posición en la cola
   («3 de 24») en `t_meta` · `texto_2` a la derecha; debajo, artista y álbum en `t_cuerpo` ·
   `texto_2`, cada uno en su mitad (132 px, separadas 4 px) y recortado a ella, y a su
@@ -941,7 +1031,8 @@ Error:
 - Superior: con una tesela en foco, su ficha (§7.12) como vista previa: portada, nombre,
   «N canciones» y «Lo ultimo: <canción - artista>» si la hay. La portada se pide cuando
   el foco lleva `PREVIEW_DELAY` (18 frames, 300 ms) quieto, para no descargar al recorrer
-  la rejilla. Con
+  la rejilla. Si suena algo, el mini reproductor (§5.18) va en la esquina inferior
+  derecha. Con
   el foco en «Mostrar más» o mientras carga, logotipo o la ficha de lo que suena; con un
   detalle abierto, su ficha.
   Volver a conectar y emparejar están en «Ajustes».
@@ -1002,6 +1093,9 @@ Error:
     con «...». El autor y lo que nombra `NOTICE`; los nombres propios no se traducen.
   - Aviso de marca de `NOTICE` en `t_meta` · `texto_2`, en varias líneas.
   - Se muestra en Ajustes siempre, suene música o no; el spinner de descarga va encima.
+  - Sin mini reproductor (§5.18), suene algo o no: los créditos llegan hasta x 384 y el
+    aviso de marca, que `NOTICE` exige mantener visible, ocupa todo el ancho desde y 188;
+    no queda una esquina libre de 40 px sin rehacerlos.
 - B vuelve a «Inicio».
 
 ### 7.9 Detalles: navegación común
@@ -1124,8 +1218,10 @@ Error:
 
 - Carátula, portada o retrato a 160×160 con contorno y sombra dura de 3 px, como la ficha de
   §7.5, pero sin tiempos ni barra: la carátula va centrada en la altura (y 40) y el bloque de
-  textos, centrado junto a ella. Sin imagen, o mientras llega, el icono de nota (la flecha
-  para «Descargas», la cuenta para un artista).
+  textos, centrado junto a ella. Con el mini reproductor (§5.18), el bloque se alinea en
+  cambio con el borde superior de la carátula (la línea del título empieza en el mismo
+  píxel) y la esquina inferior queda para el mini. Sin imagen, o mientras llega, el icono
+  de nota (la flecha para «Descargas», la cuenta para un artista).
 - Título en `t_titulo` · `texto` y hasta 4 líneas en `t_cuerpo` · `texto_2`:
   - Canción: artista / álbum / «3:42 - pista 2 - disco 2» (disco solo si hay más de uno) /
     año.
@@ -1134,10 +1230,11 @@ Error:
     listeners» en inglés; «1 oyente mensual»), pedidos en la misma carga que el resto; si
     el servicio no los da, «Artista». «Canciones populares» encabeza la lista de abajo.
     Debajo, a `e2`, el principio de su biografía en `t_meta` · `texto_2`, ajustado por
-    palabras a la columna en hasta 5 líneas, sin rodar; la última acaba en «...» si queda
-    texto. Llega en el idioma en que la sirve Spotify. Sin oyentes ni biografía,
-    «Artista». El bloque entero se centra en la altura del retrato (cabe siempre: 120 px
-    como mucho). La biografía se ajusta al parsear la ficha, no al dibujar.
+    palabras a la columna en hasta 5 líneas (4 con el mini reproductor), sin rodar; la
+    última acaba en «...» si queda texto. Llega en el idioma en que la sirve Spotify. Sin
+    oyentes ni biografía, «Artista». El bloque entero cabe siempre junto al retrato: 120 px
+    como mucho, 106 con el mini. La biografía se ajusta al parsear la ficha (también cuando
+    el mini aparece o desaparece), no al dibujar.
 - Biografía completa (su botón, §7.11): la pantalla superior muestra solo el texto, entero
   (hasta 16 KB), en `t_cuerpo` · `texto`, ajustado por palabras al ancho de la pantalla
   menos `e3` a cada lado y el indicador, desde `e3` arriba, sin rodar. Si no cabe, el
@@ -1145,6 +1242,8 @@ Error:
   parsean las líneas a la vista. Spotify solo la sirve en inglés: en cualquier otro
   idioma, encima del texto, a `e3` del borde y `e2` sobre él, la línea «Texto solo
   disponible en inglés» en `t_meta` · `texto_2`, que no se desplaza.
+  Sin mini reproductor (§5.18), suene algo o no: es una página para leer y la ocupa
+  entera.
   - Playlist: «Playlist» / «11 canciones» o «100 de 312 canciones» (crece con cada
     página). Sin propietario: el
     servicio solo da un id de usuario opaco.
@@ -1157,6 +1256,12 @@ Error:
   - Playlist: «Playlist · <propietario>» (aquí sí hay nombre), sin «0 canciones».
 - El texto que no cabe en la columna rueda (§5.15).
 - La imagen es la del detalle, nunca la de la pista que suena.
+- Si suena algo, el mini reproductor (§5.18) ocupa la esquina inferior derecha, bajo la
+  columna de textos y con su borde inferior en el de la portada: x 188..388, y 160..200
+  (176..216 bajo la franja de tipos). Texto arriba, mini abajo: el bloque de textos acaba
+  siempre a `e2` o más de él (y 152 como mucho, 168 bajo la franja). Con 4 líneas acaba en
+  127 (143 bajo la franja); el artista con oyentes y 4 líneas de biografía, en 146. La
+  portada y su sombra quedan a la izquierda (x ≤ 175).
 
 ---
 
@@ -1212,7 +1317,11 @@ botones con el foco en «Descargas».
   `t_cuerpo` · `texto`, «Canciones: 48 · Álbumes: 3 · Playlists: 2», «Ocupado: 312 MB»
   y «Libre en la SD: 5,1 GB»; debajo, en `t_cabeza` · `texto_2`, el estado de la cola:
   «Descargando», «Nada pendiente», «En pausa», «La tarjeta SD está llena» o «Sin
-  conexión». El espacio libre se lee al abrir y cada 10 s, no en cada frame.
+  conexión». El espacio libre se lee al abrir y cada 10 s, no en cada frame. Mientras suena
+  algo, el mini reproductor (§5.18) va en la esquina del panel, con sus bordes derecho e
+  inferior en los del panel (x 184..384, y 184..224), y el panel acaba a `e2` sobre él, en
+  y 176. Los textos van anclados arriba y no se mueven; el estado de la cola acaba hacia
+  y 162, a 14 px del borde. Sin nada en reproducción, el panel es el de siempre.
 - Solo pide frame al pulsar, al cambiar las descargas y con el porcentaje (§9).
 
 ### 7.14 Descargas en Inicio
@@ -1309,6 +1418,11 @@ botones con el foco en «Descargas».
 - En los resultados, la pantalla superior solo marca `dirty` cuando cambia el tipo o el
   foco, llega una imagen, rueda un texto (§5.15) o empieza y acaba el empujón de la franja
   (§5.17). Nada por frame: el audio no da tirones al recorrer la lista.
+- El mini reproductor (§5.18) marca `dirty` en la pantalla superior al aparecer o
+  desaparecer y, mientras se ve, solo cuando cambia la fase, la pista, la pausa, el píxel de
+  la banda (no el segundo: con 198 px, una canción de 4 min avanza un píxel cada ~1,2 s), el
+  idioma o llega la carátula, y cada `LOADER_STEP` frames mientras gira su spinner. Sus
+  textos se parsean solo al cambiar de pista o de idioma.
 - Las playlists de «Inicio» se cargan una vez al entrar en las pestañas, en otro hilo por
   debajo del decodificador y con una sesión keep-alive (historial, carpeta y la cabecera de
   las recientes que no están en ella). La rejilla solo marca `dirty` por pulsación, llegada

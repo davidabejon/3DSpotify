@@ -38,14 +38,18 @@ void top_now_draw_card(artwork_state *art);
  * texts must be fitted to now_text_w(). `centred` (the detail card, with
  * no bar under it) centres the cover on the screen's height and the texts
  * beside it (now_detail_art_rect, now_detail_text_dy), or, with `art_y`
- * >= 0, puts the cover's top there (under the strip of kinds). `rolls`, NULL for
- * none, holds 1 + count entries, the title's first: -1 for a text drawn
- * as it is, otherwise how far it has rolled inside now_text_w()
- * (marquee_logic.h; such a text is the whole string, not fitted).
- * `meta`, centred only (NULL, 0 for none): up to ARTIST_BIO_LINES t_meta
- * lines SP_2 under the rest, already wrapped to now_text_w(), which never
- * roll; the block is centred with them. */
-void top_now_draw_header(artwork_state *art, bool centred, int art_y,
+ * >= 0, puts the cover's top there (under the strip of kinds). `top`,
+ * centred only: over the mini player (STYLES.md 5.18) the texts hang from
+ * the cover's top edge instead (now_detail_text_dy_top_at), leaving the
+ * bottom corner to it. `rolls`, NULL for none, holds 1 + count entries,
+ * the title's first: -1 for a text drawn as it is, otherwise how far it
+ * has rolled inside now_text_w() (marquee_logic.h; such a text is the
+ * whole string, not fitted). `meta`, centred only (NULL, 0 for none): up
+ * to ARTIST_BIO_LINES t_meta lines SP_2 under the rest, already wrapped
+ * to now_text_w(), which never roll; a centred block is centred with
+ * them. */
+void top_now_draw_header(artwork_state *art, bool centred, bool top,
+                         int art_y,
                          const C2D_Text *title, const C2D_Text *const *lines,
                          int count, const int *rolls, int icon,
                          const C2D_Text *const *meta, int meta_count);

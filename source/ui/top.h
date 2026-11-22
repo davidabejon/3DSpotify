@@ -3,15 +3,19 @@
  * the account and the credits on Settings (top_about.h); the card of a
  * detail (top_detail.h) whenever the active tab shows one, or of the
  * focused tile or result as a preview; and, on Search's results, the strip
- * of kinds above that card (top_strip.h). top_logic.h decides which. While
- * a track's download is
- * still at 0%, a spinner (spinner_logic.h) turns at the centre of the
- * screen, over any of them and on any tab. Before the session (start-up,
- * pairing, errors) the top screen is view_login.h's.
+ * of kinds above that card (top_strip.h). With music on and a detail's
+ * card, a preview or the downloads manager on screen, the mini player
+ * (top_mini.h) in the bottom right corner says what plays. top_logic.h
+ * decides which. While a track's download is still at 0%, a spinner
+ * (spinner_logic.h) turns in the mini player's icon place when it shows,
+ * else at the centre of the screen, over any of them and on any tab.
+ * Before the session (start-up, pairing, errors) the top screen is
+ * view_login.h's.
  *
  * Per STYLES.md 9 it only asks for a frame when what it shows changes: the
- * spinner adds one every LOADER_STEP frames while it turns. Main thread
- * only. */
+ * spinner adds one every LOADER_STEP frames while it turns, the mini
+ * player one when it comes or goes and when its own look changes. Main
+ * thread only. */
 #ifndef TOP_H
 #define TOP_H
 

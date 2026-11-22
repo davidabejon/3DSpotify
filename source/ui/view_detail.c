@@ -878,6 +878,10 @@ detail_action view_detail_update(detail_doc *doc, u32 down)
 	bio_open = doc && doc->bio_open;
 	bio_scroll = doc ? doc->bio_scroll : 0;
 	bio_max = bio_open ? top_detail_bio_max_scroll(doc) : 0;
+	/* The page holds a line fewer with the "English only" note, which
+	 * comes and goes with the language: the first step up must move it. */
+	if (bio_scroll > bio_max)
+		bio_scroll = bio_max;
 	bio_page = top_detail_bio_page_lines();
 	detail_action action = update(down);
 	/* Open only while its button has the focus: a tap elsewhere closes it. */

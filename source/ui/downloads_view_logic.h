@@ -17,13 +17,19 @@
  * entries one under the other, a header DLV_HEADER_H high, a row ROW_H
  * with SP_1 under it as in the results (5.3). The list scrolls by pixels:
  * the buttons keep the focused row in view, with its section's header when
- * the row is the first of it; the stylus drags it (6.9). */
+ * the row is the first of it; the stylus drags it (6.9).
+ *
+ * Top screen: the manager's card, a panel e4 from the edges (16, 16, 368,
+ * 208), whose bottom edge ends e2 above the mini player while it shows
+ * (5.18): 16..176, the mini player on the same right edge. Its texts hang
+ * from the top and do not move. */
 #ifndef DOWNLOADS_VIEW_LOGIC_H
 #define DOWNLOADS_VIEW_LOGIC_H
 
 #include "downloads_logic.h"
 #include "layout.h"
 #include "list_logic.h"
+#include "now_layout.h"
 #include "theme.h"
 
 #include <stdbool.h>
@@ -445,6 +451,16 @@ static inline void dlv_format_size(uint64_t bytes, char decimal, char *out,
 	} else {
 		snprintf(out, len, "%u MB", (unsigned)((bytes + mb / 2) / mb));
 	}
+}
+
+/* The manager's card on the top screen (STYLES.md 7.13): e4 from the
+ * edges, or ending e2 above the mini player while it shows (5.18). */
+static inline ui_rect dlv_top_panel_rect(bool mini)
+{
+	int bottom = mini ? now_mini_clear_bottom(now_mini_panel_rect())
+	                  : SCREEN_H - SP_4;
+	ui_rect r = { SP_4, SP_4, SCREEN_TOP_W - 2 * SP_4, bottom - SP_4 };
+	return r;
 }
 
 #endif

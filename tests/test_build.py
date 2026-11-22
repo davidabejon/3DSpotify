@@ -1437,6 +1437,83 @@ class BuildTests(unittest.TestCase):
         theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
         self.assertIn("ART_BIG = 216", theme)
 
+    def test_mini_player_on_the_top_screen(self):
+        import re
+        ui_dir = build.ROOT / "ui"
+        mini = (ui_dir / "top_mini.c").read_text(encoding="utf-8")
+        # It only draws the player's cover: asking it for another image
+        # would hold the next track up (5.18).
+        for call in ("artwork_request", "artwork_set_preview"):
+            self.assertNotIn(call, mini)
+        self.assertIn("artwork_draw_in(art, now_mini_cover_rect(panel), 0)",
+                      mini)
+        for call in ("ui_panel(panel)", "ui_parse_fitted(",
+                     "now_mini_text_w()", "STR_PLAYER_FINISHED_TITLE",
+                     "STR_UNTITLED", "STR_UNKNOWN_ARTIST", "ICON_PLAYING",
+                     "ICON_PAUSE", "COL_CLOROFILA", "COL_CAPA_ALTA"):
+            self.assertIn(call, mini)
+        # Nothing loose (1.5) and nothing that rolls or spins (8).
+        self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6}", mini))
+        self.assertIsNone(re.search(r"\b0\.(?!0f)\d+f\b", mini))
+        for call in ("ui_text_marquee(", "ui_loader(", "ui_spinner(",
+                     "C2D_DrawRect"):
+            self.assertNotIn(call, mini)
+        # Wired into the top screen, asking for a frame only while shown.
+        top = (ui_dir / "top.c").read_text(encoding="utf-8")
+        self.assertIn("top_shows_mini(mode, phase, top_detail_showing_page("
+                      "detail))", top)
+        self.assertIn("top_mini_draw(art, mini_rect(mode), spinning ? "
+                      "spinner_step() : -1);", top)
+        self.assertIn("top_mini_set(info);", top)
+        start = top.index("bool top_dirty(")
+        dirty = top[start:top.index("\n}\n", start)]
+        self.assertIn("(mini && top_mini_dirty(art))", dirty)
+        # Its corner on what it sits by: the card's cover, the manager's
+        # panel. Never over the whole biography.
+        start = top.index("static ui_rect mini_rect(")
+        place = top[start:top.index("\n}\n", start)]
+        for call in ("now_mini_panel_rect()",
+                     "now_mini_card_rect(strip_on ? RESULTS_CARD_Y"):
+            self.assertIn(call, place)
+        # The download spinner turns in it, in place of its icon, and at
+        # the centre only where it does not show.
+        draw = top[top.index("void top_draw("):]
+        self.assertIn("if (spinning && !mini)\n\t\tui_spinner(", draw)
+        mini_src = (ui_dir / "top_mini.c").read_text(encoding="utf-8")
+        self.assertIn("ui_spinner_mini(now_mini_icon_rect(panel), spin_step)",
+                      mini_src)
+        theme = (ui_dir / "theme.h").read_text(encoding="utf-8")
+        self.assertIn("SPINNER_MINI_CELL = 4", theme)
+        layout = (ui_dir / "now_layout.h").read_text(encoding="utf-8")
+        self.assertIn("now_mini_rect_at(SCREEN_TOP_W - SP_3, art_y + ART_SIZE)",
+                      layout)
+        self.assertIn("now_mini_rect_at(SCREEN_TOP_W - SP_4, SCREEN_H - SP_4)",
+                      layout)
+        self.assertNotIn("now_mini_page_rect", layout)
+        # The card's text is centred on the cover, or hangs from its top
+        # over the mini player; an artist's biography is a line shorter
+        # beside it.
+        top_now = (ui_dir / "top_now.c").read_text(encoding="utf-8")
+        self.assertIn("top ? now_detail_text_dy_top_at(art_y)", top_now)
+        self.assertIn("now_detail_text_dy_meta_at(", top_now)
+        card = (ui_dir / "top_detail.c").read_text(encoding="utf-8")
+        self.assertIn("top_now_draw_header(art, true, mini, art_y,", card)
+        self.assertIn("now_detail_bio_lines(mini)", card)
+        self.assertIn("mini != parsed_mini", card)
+        self.assertIn("top_detail_set_mini(top_shows_mini(TOP_DETAIL, phase, "
+                      "false));", top)
+        # The whole biography keeps its page; the view that scrolls it keeps
+        # the scroll inside it when the language note comes or goes.
+        self.assertIn("SCREEN_H - SP_3 - top };", card)
+        self.assertIn("visible != page_visible", card)
+        view = (ui_dir / "view_detail.c").read_text(encoding="utf-8")
+        self.assertIn("if (bio_scroll > bio_max)\n\t\tbio_scroll = bio_max;",
+                      view)
+        # The downloads manager's card makes room for it.
+        manager = (ui_dir / "view_downloads.c").read_text(encoding="utf-8")
+        self.assertIn("dlv_top_panel_rect(mini)", manager)
+        self.assertIn("view_downloads_draw_top(mini);", top)
+
     def test_session_start_up_runs_in_a_worker(self):
         app = (build.ROOT / "main.c").read_text(encoding="utf-8")
         # One global job, never on a stack: the worker holds its address.

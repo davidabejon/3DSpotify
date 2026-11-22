@@ -118,6 +118,9 @@ void ui_spinner(int cx, int cy, int step);
 /* The ring alone, for a flat background with nothing to veil: the login
  * screens (STYLES.md 7.2). */
 void ui_spinner_ring(int cx, int cy, int step);
+/* The same ring at an icon's size, filling `box` (ICON_S square), with no
+ * veil: the mini player's, in place of its state icon (STYLES.md 5.18). */
+void ui_spinner_mini(ui_rect box, int step);
 
 /* A notice (5.8): raised `coral` (error) or `ambar` (warning) surface with
  * an icon, a title and an explanation that wraps inside it, all `tinta`. */

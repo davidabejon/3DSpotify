@@ -215,7 +215,8 @@ static void header_text(const C2D_Text *text, int x, int cy, float scale,
 		                SCREEN_TOP_W);
 }
 
-void top_now_draw_header(artwork_state *art, bool centred, int art_y,
+void top_now_draw_header(artwork_state *art, bool centred, bool top,
+                         int art_y,
                          const C2D_Text *title, const C2D_Text *const *lines,
                          int count, const int *rolls, int icon,
                          const C2D_Text *const *meta, int meta_count)
@@ -231,9 +232,12 @@ void top_now_draw_header(artwork_state *art, bool centred, int art_y,
 		meta_count = ARTIST_BIO_LINES;
 	if (art_y < 0)
 		art_y = now_detail_art_rect().y;
-	int dy = centred ? now_detail_text_dy_meta_at(title_h, body_h, count,
-	                                              meta_h, meta_count, art_y)
-	                 : 0;
+	/* The detail card's text is centred on the cover, or hangs from its
+	 * top over the mini player (7.12). */
+	int dy = !centred ? 0
+	       : top ? now_detail_text_dy_top_at(art_y)
+	       : now_detail_text_dy_meta_at(title_h, body_h, count, meta_h,
+	                                    meta_count, art_y);
 	if (centred)
 		artwork_draw_or(art, now_detail_art_rect_at(art_y), ART_SHADOW_OFF,
 		                icon);
@@ -258,7 +262,7 @@ void top_now_draw_card(artwork_state *art)
 	now_look look = current_look(false);
 
 	const C2D_Text *lines[] = { &artist_text, &album_text };
-	top_now_draw_header(art, false, -1, &title_text, lines,
+	top_now_draw_header(art, false, false, -1, &title_text, lines,
 	                    has_album ? 2 : 1,
 	                    NULL, ICON_NOTE, NULL, 0);
 	draw_bar(&look);

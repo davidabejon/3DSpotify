@@ -889,14 +889,14 @@ bool view_downloads_top_dirty(void)
 	       !same_card(&card, &drawn_card);
 }
 
-/* A `capa` panel with the title and four lines (STYLES.md 7.13). */
-void view_downloads_draw_top(void)
+/* A `capa` panel with the title and four lines (STYLES.md 7.13), shorter
+ * over the mini player (5.18). */
+void view_downloads_draw_top(bool mini)
 {
 	if (!card_parsed || card_lang != lang_get() ||
 	    !same_card(&card, &parsed_card))
 		parse_card();
-	ui_rect panel = { SP_4, SP_4, SCREEN_TOP_W - 2 * SP_4,
-	                  SCREEN_H - 2 * SP_4 };
+	ui_rect panel = dlv_top_panel_rect(mini);
 	ui_fill(panel, COL_TINTA);
 	ui_fill(ui_rect_inset(panel, OUTLINE_W), COL_CAPA);
 	int x = panel.x + SP_4;

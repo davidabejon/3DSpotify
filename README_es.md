@@ -169,6 +169,12 @@ pestañas, cada una con su icono:
   con los tipos de resultado y cuántos hay de cada uno, con el que está en pantalla
   resaltado, y debajo la ficha del resultado resaltado (su portada o retrato llega
   cuando te paras un momento en él).
+- Con un detalle, una vista previa o el gestor de descargas en la pantalla superior, si
+  suena algo, un mini reproductor en la esquina inferior derecha muestra la carátula, el
+  título, el artista, si está en pausa y el progreso; mientras carga una pista, el spinner
+  de carga gira dentro de él en lugar de en el centro de la pantalla. La biografía
+  completa de un artista, una página para leer, no lo lleva. No es un control: pausar y
+  saltar se hace en **Reproducción**.
 
 ### Inicio
 

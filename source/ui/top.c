@@ -2,9 +2,11 @@
 
 #include "draw.h"
 #include "logo.h"
+#include "now_layout.h"
 #include "top_about.h"
 #include "top_detail.h"
 #include "top_logic.h"
+#include "top_mini.h"
 #include "top_now.h"
 #include "top_strip.h"
 #include "view_downloads.h"
@@ -19,6 +21,8 @@ static artwork_state *account_art;
 static bool manager;
 static results_strip strip;
 static bool strip_on, drawn_strip_on;
+/* The mini player (top_mini.h): whether it was drawn last time. */
+static bool drawn_mini;
 static top_mode drawn_mode;
 static bool drawn_valid;
 /* The spinner: whether it shows, its frame count, and what was drawn. */
@@ -36,7 +40,7 @@ bool top_init(void)
 {
 	drawn_valid = false;
 	if (!top_now_init() || !top_detail_init() || !top_about_init() ||
-	    !top_strip_init()) {
+	    !top_strip_init() || !top_mini_init()) {
 		top_exit();
 		return false;
 	}
@@ -45,6 +49,7 @@ bool top_init(void)
 
 void top_exit(void)
 {
+	top_mini_exit();
 	top_strip_exit();
 	top_about_exit();
 	top_detail_exit();
@@ -55,6 +60,7 @@ void top_set(const player_info *info)
 {
 	phase = info->phase;
 	top_now_set(info);
+	top_mini_set(info);
 	/* The real share, not the sampled one: it disappears with the first
 	 * byte. */
 	spinning = top_shows_spinner(info->phase, info->download_pct);
@@ -65,6 +71,9 @@ void top_set_detail(const detail_doc *doc, artwork_state *art)
 {
 	detail = doc && art ? doc : NULL;
 	detail_art = art;
+	/* top_set already put this frame's phase. Whether the card has it:
+	 * the whole biography never does. */
+	top_detail_set_mini(top_shows_mini(TOP_DETAIL, phase, false));
 }
 
 void top_set_account(const about_account *acc, artwork_state *art)
@@ -85,13 +94,21 @@ void top_set_results(const results_strip *s)
 		strip = *s;
 }
 
+/* Whether the mini player shows over `mode` (5.18). */
+static bool shows_mini(top_mode mode)
+{
+	return top_shows_mini(mode, phase, top_detail_showing_page(detail));
+}
+
 bool top_dirty(app_tab tab, const artwork_state *art)
 {
 	top_mode mode = top_mode_with_manager(
 		top_mode_for(tab, phase, detail != NULL), manager);
+	bool mini = shows_mini(mode);
 	if (!drawn_valid || mode != drawn_mode || spinning != drawn_spinning ||
 	    (spinning && spinner_step() != drawn_step) ||
-	    strip_on != drawn_strip_on || (strip_on && top_strip_dirty(&strip)))
+	    strip_on != drawn_strip_on || (strip_on && top_strip_dirty(&strip)) ||
+	    mini != drawn_mini || (mini && top_mini_dirty(art)))
 		return true;
 	switch (mode) {
 	case TOP_NOW_CARD:
@@ -110,10 +127,21 @@ bool top_dirty(app_tab tab, const artwork_state *art)
 	}
 }
 
+/* Where it goes: its corner on what it sits by -- the card's cover, lower
+ * under the strip; the manager's panel. */
+static ui_rect mini_rect(top_mode mode)
+{
+	if (mode == TOP_DOWNLOADS)
+		return now_mini_panel_rect();
+	return now_mini_card_rect(strip_on ? RESULTS_CARD_Y
+	                                   : now_detail_art_rect().y);
+}
+
 void top_draw(app_tab tab, artwork_state *art)
 {
 	top_mode mode = top_mode_with_manager(
 		top_mode_for(tab, phase, detail != NULL), manager);
+	bool mini = shows_mini(mode);
 	switch (mode) {
 	case TOP_NOW_CARD:
 		top_now_draw_card(art);
@@ -133,7 +161,7 @@ void top_draw(app_tab tab, artwork_state *art)
 		logo_draw_centered(SCREEN_TOP_W / 2, SCREEN_H / 2);
 		break;
 	case TOP_DOWNLOADS:
-		view_downloads_draw_top();
+		view_downloads_draw_top(mini);
 		break;
 	default:
 		logo_draw_centered(SCREEN_TOP_W / 2, SCREEN_H / 2);
@@ -143,8 +171,13 @@ void top_draw(app_tab tab, artwork_state *art)
 	if (strip_on)
 		top_strip_draw(&strip);
 	drawn_strip_on = strip_on;
-	/* Over whatever is below, on any tab. */
-	if (spinning)
+	/* In its corner, clear of the rest. While the track's download is at
+	 * 0%, the spinner turns in it, in place of its icon. */
+	if (mini)
+		top_mini_draw(art, mini_rect(mode), spinning ? spinner_step() : -1);
+	drawn_mini = mini;
+	/* Otherwise over whatever is below, on any tab. */
+	if (spinning && !mini)
 		ui_spinner(SCREEN_TOP_W / 2, SCREEN_H / 2, spinner_step());
 	drawn_spinning = spinning;
 	drawn_step = spinner_step();

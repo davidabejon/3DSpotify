@@ -119,6 +119,8 @@ enum {
 	SPINNER_CELL = 12,    /* spinner: bloques de 12 px (como la barra de §5.7) */
 	SPINNER_GAP = 4,      /* spinner: separación e1; anillo de 3·12 + 2·4 = 44 px */
 	SPINNER_PAD = 8,      /* spinner: velo e2 alrededor; 44 + 2·8 = 60 px */
+	SPINNER_MINI_CELL = 4, /* §5.18 spinner del mini: bloques de e1 */
+	SPINNER_MINI_GAP = 2,  /* §5.18 separación 2 px; 3·4 + 2·2 = 16 px = ICON_S */
 	TAB_LIFT_ACTIVE = 2,  /* §5.12 pestaña activa: el borde inferior sube 2 px */
 	TAB_LIFT_PRESSED = 4, /* §5.12 pestaña pulsada: sube 4 px */
 	/* §5.17 franja de tipos: con la portada de la ficha debajo, a e2,

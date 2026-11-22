@@ -341,15 +341,23 @@ void ui_spinner(int cx, int cy, int step)
 	ui_spinner_ring(cx, cy, step);
 }
 
+/* The lit block, the one behind it, and the rest. */
+static u32 spinner_fill(int i, int step)
+{
+	return i == spinner_lit(step) ? COL_CLOROFILA
+	     : i == spinner_lit(step - 1) ? COL_MUSGO : COL_CAPA_ALTA;
+}
+
 void ui_spinner_ring(int cx, int cy, int step)
 {
-	int lit = spinner_lit(step);
-	int trail = spinner_lit(step - 1);
-	for (int i = 0; i < SPINNER_CELLS; i++) {
-		u32 fill = i == lit ? COL_CLOROFILA
-		         : i == trail ? COL_MUSGO : COL_CAPA_ALTA;
-		outlined(spinner_cell_rect(cx, cy, i), fill);
-	}
+	for (int i = 0; i < SPINNER_CELLS; i++)
+		outlined(spinner_cell_rect(cx, cy, i), spinner_fill(i, step));
+}
+
+void ui_spinner_mini(ui_rect box, int step)
+{
+	for (int i = 0; i < SPINNER_CELLS; i++)
+		outlined(spinner_mini_cell_rect(box, i), spinner_fill(i, step));
 }
 
 void ui_notice(ui_rect r, bool error, const C2D_Image *icon,

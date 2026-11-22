@@ -47,7 +47,12 @@ static const char *page_src;
 static C2D_TextBuf page_buf;
 static C2D_Text page_texts[BIO_PAGE_VISIBLE_MAX];
 static C2D_Text page_note;
-static int page_first = -1, page_shown;
+/* How many lines the page held when parsed: fewer with the "English
+ * only" note over them, which comes and goes with the language. */
+static int page_first = -1, page_shown, page_visible;
+/* The mini player shows under the card (STYLES.md 5.18): its texts hang
+ * from the cover's top, and an artist's biography is a line shorter. */
+static bool mini;
 static lang_id page_lang = LANG_COUNT;
 static bool drawn_page;
 static int drawn_bio_scroll;
@@ -64,6 +69,8 @@ static detail_state parsed_state;
 static int parsed_count;
 /* An artist's listeners may come after the rest. */
 static long parsed_listeners;
+/* An artist's biography is a line shorter over the mini player. */
+static bool parsed_mini;
 static lang_id parsed_lang = LANG_COUNT;
 static bool drawn_valid;
 
@@ -323,6 +330,7 @@ static bool changed(const detail_doc *d)
 	return d != parsed_doc || d->serial != parsed_serial ||
 	       d->state != parsed_state || d->count != parsed_count ||
 	       d->listeners != parsed_listeners ||
+	       (d->bio && !d->preview && mini != parsed_mini) ||
 	       parsed_lang != lang_get();
 }
 
@@ -333,13 +341,15 @@ static float measure_meta(const char *string, void *ctx)
 }
 
 /* The start of a biography, word-wrapped to the column in up to
- * ARTIST_BIO_LINES lines, the last ending in "..." when there is more
- * (STYLES.md 7.12): a paragraph that rolled could not be read. */
+ * ARTIST_BIO_LINES lines (one fewer over the mini player), the last
+ * ending in "..." when there is more (STYLES.md 7.12): a paragraph that
+ * rolled could not be read. */
 static void parse_bio(const char *bio)
 {
 	static char wrapped[ARTIST_BIO_LINES][TEXT_WRAP_LINE_MAX];
-	bio_count = text_wrap(bio, (float)now_text_w(), ARTIST_BIO_LINES,
-	                      measure_meta, NULL, wrapped);
+	bio_count = text_wrap(bio, (float)now_text_w(),
+	                      now_detail_bio_lines(mini), measure_meta, NULL,
+	                      wrapped);
 	for (int i = 0; i < bio_count; i++) {
 		ui_parse(&bio_texts[i], text_buf, wrapped[i]);
 		C2D_TextOptimize(&bio_texts[i]);
@@ -394,7 +404,7 @@ static int bio_page_lines(void)
 	return n > BIO_PAGE_VISIBLE_MAX ? BIO_PAGE_VISIBLE_MAX : n;
 }
 
-static bool showing_page(const detail_doc *d)
+bool top_detail_showing_page(const detail_doc *d)
 {
 	return d && d->kind == DETAIL_ARTIST && d->state == DETAIL_READY &&
 	       !d->preview && d->bio && d->bio_open;
@@ -438,6 +448,11 @@ int top_detail_bio_page_lines(void)
 	return bio_page_lines();
 }
 
+void top_detail_set_mini(bool on)
+{
+	mini = on;
+}
+
 static void draw_bio_page(const detail_doc *d)
 {
 	if (!wrap_page(d))
@@ -446,7 +461,8 @@ static void draw_bio_page(const detail_doc *d)
 	int max = page_total - visible > 0 ? page_total - visible : 0;
 	int first = d->bio_scroll < 0 ? 0 : d->bio_scroll > max ? max
 	                                                      : d->bio_scroll;
-	if (first != page_first || page_lang != lang_get()) {
+	if (first != page_first || visible != page_visible ||
+	    page_lang != lang_get()) {
 		C2D_TextBufClear(page_buf);
 		ui_parse(&page_note, page_buf, tr(STR_BIO_ENGLISH_ONLY));
 		C2D_TextOptimize(&page_note);
@@ -458,6 +474,7 @@ static void draw_bio_page(const detail_doc *d)
 			page_shown++;
 		}
 		page_first = first;
+		page_visible = visible;
 	}
 	ui_rect r = bio_page_rect();
 	int line_h = ui_line_height(TXT_CUERPO);
@@ -485,7 +502,7 @@ bool top_detail_dirty(const detail_doc *doc, const artwork_state *art)
 {
 	if (!drawn_valid || changed(doc))
 		return true;
-	bool page = showing_page(doc);
+	bool page = top_detail_showing_page(doc);
 	if (page != drawn_page || (page && doc->bio_scroll != drawn_bio_scroll))
 		return true;
 	if (page)
@@ -506,10 +523,11 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y)
 		parsed_state = doc->state;
 		parsed_count = doc->count;
 		parsed_listeners = doc->listeners;
+		parsed_mini = mini;
 		parsed_lang = lang_get();
 		parsed_ms = osGetTime();
 	}
-	drawn_page = showing_page(doc);
+	drawn_page = top_detail_showing_page(doc);
 	drawn_bio_scroll = doc->bio_scroll;
 	if (drawn_page) {
 		draw_bio_page(doc);
@@ -523,7 +541,8 @@ void top_detail_draw(const detail_doc *doc, artwork_state *art, int art_y)
 	const C2D_Text *bio[ARTIST_BIO_LINES];
 	for (int i = 0; i < bio_count; i++)
 		bio[i] = &bio_texts[i];
-	top_now_draw_header(art, true, art_y, &texts[0], lines, line_count,
-	                    drawn_rolls, placeholder(doc), bio, bio_count);
+	top_now_draw_header(art, true, mini, art_y, &texts[0], lines,
+	                    line_count, drawn_rolls, placeholder(doc), bio,
+	                    bio_count);
 	drawn_valid = true;
 }
