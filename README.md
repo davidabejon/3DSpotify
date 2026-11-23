@@ -2,6 +2,12 @@ Nota: Esta documentación también está disponible en español: `README_es.md`
 
 # 3DSpotify
 
+[![Release](https://img.shields.io/github/v/release/davidabejon/3DSpotify?label=Release&color=1DB954)](https://github.com/davidabejon/3DSpotify/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/davidabejon/3DSpotify/total?label=Downloads&color=007EC6)](https://github.com/davidabejon/3DSpotify/releases)
+[![License](https://img.shields.io/github/license/davidabejon/3DSpotify?label=License&color=8A8A8A)](LICENSE)
+[![Website](https://img.shields.io/website?url=https%3A%2F%2Fdavidabejon.github.io%2F3DSpotify%2F&label=Website&up_message=online&up_color=8A2BE2&down_message=offline&down_color=D12228)](https://davidabejon.github.io/3DSpotify/)
+
+
 Unofficial Spotify client for the Nintendo 3DS. The app connects directly to
 Spotify over HTTPS.
 
